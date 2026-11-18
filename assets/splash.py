@@ -21,7 +21,11 @@ except ImportError:
     _HAS_PIL = False
 
 SPLASH_DIR = Path(__file__).resolve().parent
-SPLASH_IMAGES = ["Splash_1.jpg", "Splash_2.jpg", "Splash_3.jpg"]
+# Auto-discover all Splash_N.jpg files — add new splash images by dropping Splash_N.jpg here
+SPLASH_IMAGES = sorted(
+    [p.name for p in SPLASH_DIR.glob("Splash_*.jpg")],
+    key=lambda n: int(n.replace("Splash_", "").replace(".jpg", "")),
+)
 SPLASH_W = 600
 SPLASH_H = 400
 
