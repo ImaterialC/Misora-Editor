@@ -267,7 +267,8 @@ class TestMisoraUIIntegration(unittest.TestCase):
         self.app.on_prev_box()
         self.assertTrue(self.app.is_box0_active)
         self.assertIn("Box: 0 / 39 (Story Metadata)", self.app.lbl_box_counter.cget("text"))
-        self.assertEqual(self.app.speaker_var.get(), "[Story Info]")
+        self.assertEqual(self.app.speaker_var.get(), "")
+        self.assertEqual(str(self.app.entry_speaker.cget("state")), "disabled")
 
         # Check fields populated
         self.assertEqual(self.app.var_box0_title.get(), "Hiyori Episode 5")
@@ -327,10 +328,12 @@ class TestMisoraUIIntegration(unittest.TestCase):
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
 
-        content = self.app.txt_continuous.get("1.0", "end-1c")
-        self.assertIn("◆ [BOX #000]", content)
-        self.assertIn("[STORY METADATA & SYNOPSIS]", content)
-        self.assertIn("Title: Hiyori Episode 5", content)
+        # In Box Card Stream, Box 0 is rendered in its dedicated metadata card (-1)
+        self.assertIn(-1, self.app._card_widgets)
+        card0 = self.app._card_widgets[-1]
+        self.assertEqual(card0["lbl_badge"].cget("text"), "◆ [BOX #000]")
+        self.assertEqual(card0["lbl_title"].cget("text"), "[STORY METADATA & SYNOPSIS]")
+        self.assertIn("sparring partner", card0["txt"].get("1.0", "end-1c"))
 
         # Test selecting Box 0 in Continuous View
         self.app._focus_continuous_box(-1, move_cursor=True)
@@ -502,7 +505,8 @@ class TestMisoraUIIntegration(unittest.TestCase):
             # Continuous View checkbox must toggle and render correctly
             splash_app.var_continuous_view.set(True)
             splash_app._on_toggle_continuous_view()
-            self.assertGreater(len(splash_app.txt_continuous.get("1.0", "end-1c")), 100)
+            self.assertGreater(len(splash_app.txt_continuous.get("1.0", "end-1c")), 10)
+            self.assertEqual(len(splash_app._card_widgets), 40)
         finally:
             splash_app.destroy()
 
@@ -580,6 +584,106 @@ class TestMisoraUIIntegration(unittest.TestCase):
         finally:
             misora_app.messagebox.askyesno = orig_ask
             misora_app.messagebox.showinfo = orig_info
+
+
+    def test_25_continuous_card_stream_edit_sync_and_retention(self):
+        """Edits in Card 5 are committed and view focus/caret are retained when toggling views."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+        self.app.open_file(bundle_path)
+
+        # Switch to Continuous View
+        self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
+
+        # Focus Card 5 and insert extra text
+        card5_txt = self.app._card_widgets[5]["txt"]
+        card5_txt.insert("end-1c", " [Tested Card Edit]")
+        self.app._on_card_text_edited(5, card5_txt)
+        self.assertTrue(self.app.is_dirty)
+
+        # Focus Card 5 at char offset 10
+        self.app._focus_continuous_box(5, move_cursor=True, char_offset=10)
+        self.assertEqual(self.app.current_box_idx, 5)
+
+        # Toggle back to Single Box View
+        self.app.var_continuous_view.set(False)
+        self.app._on_toggle_continuous_view()
+
+        # View must remain on Box 5 and contain the edit
+        self.assertEqual(self.app.current_box_idx, 5)
+        self.assertIn("Box: 6 / 39", self.app.lbl_box_counter.cget("text"))
+        self.assertIn("[Tested Card Edit]", self.app.txt_dialogue.get("1.0", "end-1c"))
+
+        # Toggle back to Continuous View
+        self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
+        self.assertEqual(self.app.current_box_idx, 5)
+
+    def test_26_paste_script_triple_enter(self):
+        """Triple-enter script copy and paste distributes cleanly across boxes preserving character names."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+        self.app.open_file(bundle_path)
+
+        orig_spk0 = self.app.current_doc.boxes[0].speaker
+        orig_spk1 = self.app.current_doc.boxes[1].speaker
+        orig_spk2 = self.app.current_doc.boxes[2].speaker
+
+        # Copy all boxes separated by triple enter
+        self.app.on_copy_script_triple_enter()
+        copied = self.app.clipboard_get()
+        self.assertIn("\n\n\n", copied)
+        self.assertNotIn("=== [BOX:", copied)
+
+        # Paste 3 triple-enter blocks
+        clip_content = "Triple Block 1\n\n\nTriple Block 2 with\ninternal newline\n\n\nTriple Block 3"
+        self.app.clipboard_get = lambda: clip_content
+        orig_ask = misora_app.messagebox.askyesno
+        orig_info = misora_app.messagebox.showinfo
+        misora_app.messagebox.askyesno = lambda *args, **kwargs: True
+        misora_app.messagebox.showinfo = lambda *args, **kwargs: None
+
+        try:
+            self.app.current_box_idx = 0
+            self.app.on_paste_cross_box()
+
+            doc = self.app.current_doc
+            self.assertEqual(doc.boxes[0].speaker, orig_spk0)
+            self.assertEqual(doc.boxes[0].clean_text, "Triple Block 1")
+            self.assertEqual(doc.boxes[1].speaker, orig_spk1)
+            self.assertEqual(doc.boxes[1].clean_text, "Triple Block 2 with\ninternal newline")
+            self.assertEqual(doc.boxes[2].speaker, orig_spk2)
+            self.assertEqual(doc.boxes[2].clean_text, "Triple Block 3")
+        finally:
+            misora_app.messagebox.askyesno = orig_ask
+            misora_app.messagebox.showinfo = orig_info
+
+    def test_27_box0_speaker_disabled_and_protected(self):
+        """On Box 0, speaker controls are disabled and dropdown menu cannot alter story text."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+        self.app.open_file(bundle_path)
+
+        # Navigate to Box 0
+        self.app.on_prev_box()
+        self.assertTrue(self.app.is_box0_active)
+        self.assertEqual(self.app.speaker_var.get(), "")
+        self.assertEqual(str(self.app.entry_speaker.cget("state")), "disabled")
+        self.assertEqual(str(self.app.btn_speaker_dropdown.cget("state")), "disabled")
+
+        # Attempt to click speaker dropdown or assign speaker
+        self.app._on_speaker_dropdown_clicked()
+        self.app._assign_speaker_to_current_box("Kokkoro")
+        self.assertEqual(self.app.speaker_var.get(), "")
+
+        # Box 1 speaker must not have changed
+        self.app.on_next_box()
+        self.assertFalse(self.app.is_box0_active)
+        self.assertEqual(self.app.speaker_var.get(), "Narration")
 
 
 if __name__ == "__main__":

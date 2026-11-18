@@ -1,9 +1,9 @@
 # MISORA — PROJECT STATE
-*Last updated: 2026-11-19 — Single-Root Tkinter Architecture, Speaker & Continuous Fix, and Smart Cross-Box Paste*
+*Last updated: 2026-11-19 — Box Card Stream Architecture, Triple-Enter Script Workflow, & Speaker Overhaul*
 
 **Repository Location**: `D:\Misora-Editor`  
 **Git Remote**: `https://github.com/ImaterialC/Misora-Editor.git` (Branch: `main`)  
-**Test Suite**: 35/35 Unit & Integration Tests Passing (0 Failures, 0 Errors, 0 Skipped)
+**Test Suite**: 38/38 Unit & Integration Tests Passing (0 Failures, 0 Errors, 0 Skipped)
 
 ---
 
@@ -29,7 +29,10 @@
 | **B14**| **Pink Highlight Artifact on Multi-Segment Boxes** | AST / Editor | **RESOLVED** | `inject_box()` fill argument changed from `" "` to `""`; intrusive pink `#ffd6d6` rectangle removed. |
 | **B15**| **Crisp 1px Editor Border** | GUI / Styling | **RESOLVED** | Text editors configured with `highlightthickness=0, bd=1, relief="solid"` eliminating thick 2px focus border. |
 | **B16**| **Plain `.txt` Save Verification & Automated Backups** | File I/O | **RESOLVED (Phase 2)** | Supported plain text file editing and dirty tracking across both Page View and Continuous View, saving with timestamped `.bak` backups. |
-| **B17**| **Smart Cross-Box Script Paste (`Ctrl+Shift+V`)** | Workflow / Editor | **RESOLVED** | Implemented `on_paste_cross_box()`: parses delimited scripts (`=== [BOX:x|Speaker:y] ===`) or smart plain text (splits by paragraphs or lines), preserving existing actor/speaker names in game binary, with preview confirmation and batch undo/redo. |
+| **B17**| **Smart Cross-Box Script Paste (`Ctrl+Shift+V`)** | Workflow / Editor | **RESOLVED** | Implemented `on_paste_cross_box()`: parses delimited scripts (`=== [BOX:x|Speaker:y] ===`), triple-enter blocks (`\n\n\n`), or smart plain text, preserving existing actor/speaker names in game binary, with preview confirmation and batch undo/redo. |
+| **B18**| **Continuous View Desync & Separator Vulnerability Overhaul** | GUI / Architecture | **RESOLVED** | Complete architectural overhaul from monolithic `tk.Text` to **Box Card Stream** (`tk.Canvas` + `tk.Frame`). Each box is rendered in an isolated card with native Tkinter UI frame separators and card headers. Text separators (`---`) and header string parsing inside dialogue buffers are completely eliminated, preventing any possibility of separator deletion, selection corruption, or header bleed into story text. |
+| **B19**| **Triple-Enter (`\n\n\n`) Script Copy & Paste Workflow** | Workflow / Editor | **RESOLVED** | Implemented `on_copy_script_triple_enter()` (`Ctrl+Shift+C`) and enhanced `on_paste_cross_box()` (`Ctrl+Shift+V`): Uses clean triple-enter (`\n\n\n`) as natural delimiter between boxes without tag or header clutter. Automatically distributes text across boxes preserving character names. Retains `[📋 AI Prompt]` for LLM character-voice context. |
+| **B20**| **Speaker Dropdown Simplification & Box 0 Invalidation** | GUI / Editor | **RESOLVED** | Removed redundant "Speaker Attributes / Variants" submenu cascade; story actors are listed directly at the top level of the popup menu. On Box 0 (Story Metadata), speaker entry and dropdown button are emptied and disabled (`state="disabled"`), and dropdown clicks do nothing, strictly preventing accidental dialogue or speaker alteration on cutscene metadata. |
 
 ---
 
@@ -46,6 +49,10 @@
 | **Strict DnD Scope Protection** | Dragging non-story files or empty folders will never alter `selected_search_folder`, `folder_path_var`, or `project_folder`. User is informed via toast/status without changing scope. |
 | **Caret Preservation on Undo/Redo** | Tkinter `INSERT` caret position is recorded prior to delta application and restored immediately after widget re-population. |
 | **High-Contrast Checkbox Styling** | Checkboxes use native `ttk.Checkbutton` with visible checkmarks (✓). |
+| **Box Card Stream Architecture** | Continuous View renders boxes as isolated UI cards within a scrollable canvas. Each card has its own native header, speaker badge, and independent `tk.Text` widget. `Ctrl+A` is scoped to the active card, eliminating accidental story-wide deletion. |
+| **Triple-Enter Script Delimiter** | Triple line-breaks (`\n\n\n`) represent box boundaries for external text editors and AI translation pipelines, avoiding header formatting conflicts and allowing pure text editing. |
+| **Box 0 Speaker Protection** | On Box 0 (Metadata), speaker fields are disabled (`state="disabled"`). Clicking dropdown or assigning speakers is an explicit no-op to protect metadata integrity. |
+| **Seamless View & Caret Retention** | Switching between Single Box View and Continuous View preserves the active box index and character cursor offset without loss of uncommitted edits. |
 | **In-Memory Search Target** | Search on "Current File(s)" queries active `open_documents` memory buffers, `Box.clean_text`, and cutscene metadata. |
 
 ---

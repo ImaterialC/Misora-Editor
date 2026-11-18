@@ -1075,6 +1075,7 @@ class MisoraApp(tk.Tk):
         self._modified_boxes: Set[int] = set()
         self._cont_header_spans: Dict[int, Tuple[str, str]] = {}
         self._suppress_continuous_events: bool = False
+        self._card_widgets: Dict[int, Dict[str, Any]] = {}
 
         # Side Drawer (Customization & NGUI Glossary) state
         self._side_drawer_visible: bool = False
@@ -2562,6 +2563,11 @@ class MisoraApp(tk.Tk):
         self.edit_menu.add_command(label="Insert {playername}", command=self.on_insert_playername, accelerator="Ctrl+P")
         self.edit_menu.add_separator()
         self.edit_menu.add_command(
+            label="Copy Script Across Boxes (Triple Enter)...",
+            command=self.on_copy_script_triple_enter,
+            accelerator="Ctrl+Shift+C",
+        )
+        self.edit_menu.add_command(
             label="Paste Script Across Boxes...",
             command=self.on_paste_cross_box,
             accelerator="Ctrl+Shift+V",
@@ -2574,7 +2580,6 @@ class MisoraApp(tk.Tk):
             label="Continuous Dialog View",
             variable=self.var_continuous_view,
             command=self._on_toggle_continuous_view,
-            accelerator="Ctrl+Shift+C",
             selectcolor=t["misora_pink"]
         )
         view_menu.add_checkbutton(
@@ -3851,6 +3856,29 @@ class MisoraApp(tk.Tk):
         self.cont_editor_row = tk.Frame(self.continuous_wrap, bg=t["bg_panel"])
         self.cont_editor_row.pack(fill="both", expand=True, padx=8, pady=(0, 6))
 
+        # Card Stream Canvas & Scrollbar for Multi-Box Story Documents
+        self.cont_canvas = tk.Canvas(self.cont_editor_row, bg=t["bg_panel"], highlightthickness=0, bd=0)
+        self.cont_scroll_y = tk.Scrollbar(self.cont_editor_row, orient="vertical", command=self.cont_canvas.yview)
+        self.cont_canvas.configure(yscrollcommand=self.cont_scroll_y.set)
+        self.cont_stream_frame = tk.Frame(self.cont_canvas, bg=t["bg_panel"])
+        self.cont_canvas_window = self.cont_canvas.create_window((0, 0), window=self.cont_stream_frame, anchor="nw")
+
+        def _on_cont_canvas_configure(event):
+            if hasattr(self, "cont_canvas") and hasattr(self, "cont_canvas_window"):
+                self.cont_canvas.itemconfig(self.cont_canvas_window, width=event.width)
+        self.cont_canvas.bind("<Configure>", _on_cont_canvas_configure)
+
+        def _on_cont_frame_configure(event):
+            if hasattr(self, "cont_canvas"):
+                self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
+        self.cont_stream_frame.bind("<Configure>", _on_cont_frame_configure)
+
+        def _on_cont_mousewheel(event):
+            if hasattr(self, "cont_canvas") and event.delta:
+                self.cont_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.cont_canvas.bind("<MouseWheel>", _on_cont_mousewheel)
+        self.cont_stream_frame.bind("<MouseWheel>", _on_cont_mousewheel)
+
         cont_scroll_y = tk.Scrollbar(self.cont_editor_row, orient="vertical")
         cont_scroll_y.pack(side="right", fill="y")
 
@@ -4040,53 +4068,25 @@ class MisoraApp(tk.Tk):
     # Speaker Attributes & Actor Quick Assignment
     # -------------------------------------------------------------------------
     def _on_speaker_dropdown_clicked(self) -> None:
-        """Display a rich popup menu of story actors, Priconne attributes/variants, and tools (#18)."""
+        """Display a clean popup menu of story actors and tools (#18)."""
+        if getattr(self, "is_box0_active", False):
+            return
+
         t = self.theme
         panel_fg = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         menu = tk.Menu(self, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=best_contrast_fg(t["misora_pink"]))
 
-        # 1. Known Story Actors
+        # Known Story Actors listed directly at top level
         if self.current_doc:
             actors = [a for a in sorted(self.current_doc.actors()) if a]
+            for act in actors:
+                menu.add_command(
+                    label=act,
+                    command=lambda a=act: self._assign_speaker_to_current_box(a),
+                )
             if actors:
-                act_menu = tk.Menu(menu, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=best_contrast_fg(t["misora_pink"]))
-                for act in actors:
-                    act_menu.add_command(
-                        label=act,
-                        command=lambda a=act: self._assign_speaker_to_current_box(a),
-                    )
-                menu.add_cascade(label="Known Story Actors", menu=act_menu)
+                menu.add_separator()
 
-        # 2. Priconne Character Attributes / Costumes / Variants
-        attr_menu = tk.Menu(menu, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=best_contrast_fg(t["misora_pink"]))
-        common_attrs = [
-            ("（サマー）", "Summer"),
-            ("（プリンセス）", "Princess"),
-            ("（ニューイヤー）", "New Year"),
-            ("（ハロウィン）", "Halloween"),
-            ("（クリスマス）", "Christmas"),
-            ("（バレンタイン）", "Valentine"),
-            ("（オーエド）", "Oedo"),
-            ("（マジカル）", "Magical"),
-            ("（儀装束）", "Ceremonial"),
-            ("（怪盗）", "Phantom Thief"),
-            ("（ワイルド）", "Wild"),
-            ("（エクス）", "X"),
-            ("（アストラル）", "Astral"),
-            ("（コマンダー）", "Commander"),
-            ("（レンジャー）", "Ranger"),
-            ("（カフェ）", "Cafe"),
-        ]
-        for jp_suf, en_name in common_attrs:
-            attr_menu.add_command(
-                label=f"{jp_suf}  [{en_name}]",
-                command=lambda s=jp_suf: self._append_speaker_attribute(s),
-            )
-        attr_menu.add_separator()
-        attr_menu.add_command(label="Append Custom Attribute...", command=self._prompt_append_speaker_attribute)
-        menu.add_cascade(label="Speaker Attributes / Variants", menu=attr_menu)
-
-        menu.add_separator()
         menu.add_command(label="Insert {playername}", command=lambda: self._assign_speaker_to_current_box("{playername}"))
         menu.add_command(label="Clear Speaker (Narration)", command=lambda: self._assign_speaker_to_current_box(""))
 
@@ -4098,6 +4098,8 @@ class MisoraApp(tk.Tk):
             menu.grab_release()
 
     def _assign_speaker_to_current_box(self, new_speaker: str) -> None:
+        if getattr(self, "is_box0_active", False):
+            return
         self.speaker_var.set(new_speaker)
         self._on_speaker_edited()
         self.show_toast(f"Assigned speaker: {new_speaker or '(Narration)'}")
@@ -5237,7 +5239,7 @@ class MisoraApp(tk.Tk):
         self._sync_gd_scroll_bounds()
 
     def _on_toggle_continuous_view(self) -> None:
-        """Switch Game Display between Page-by-Page mode and Continuous Dialog Stream with seamless caret sync."""
+        """Switch Game Display between Page-by-Page mode and Continuous Dialog Stream with seamless box & caret sync."""
         if self.var_continuous_view.get():
             char_offset = 0
             try:
@@ -5251,34 +5253,29 @@ class MisoraApp(tk.Tk):
             self.continuous_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
             self.lbl_gd_title.config(text="GAME VIEW (Continuous Stream)")
             self._update_views()
-            if self.is_box0_active:
-                self.after(50, lambda: self._focus_continuous_box(-1, move_cursor=True, char_offset=char_offset))
-            elif self.current_doc and self.current_doc.boxes:
-                self.after(50, lambda: self._focus_continuous_box(self.current_box_idx, move_cursor=True, char_offset=char_offset))
+            target_idx = -1 if self.is_box0_active else self.current_box_idx
+            self.after(50, lambda: self._focus_continuous_box(target_idx, move_cursor=True, char_offset=char_offset))
         else:
-            cur_box = self._find_continuous_box_at_index("insert")
-            if cur_box is None:
-                cur_box = self._nearest_continuous_box_to_index("insert")
+            # 1. Flush any uncommitted card edits
+            self._flush_continuous_card_edits()
 
+            # 2. Extract char offset from active card's text editor
             char_offset = 0
-            if cur_box == -1:
-                self.is_box0_active = True
-                if "box_start_meta" in self.txt_continuous.mark_names():
-                    try:
-                        diff = self.txt_continuous.count("box_start_meta", "insert", "chars")
+            active_idx = -1 if getattr(self, "is_box0_active", False) else self.current_box_idx
+            if hasattr(self, "_card_widgets") and active_idx in self._card_widgets:
+                try:
+                    txt_w = self._card_widgets[active_idx].get("txt")
+                    if txt_w:
+                        diff = txt_w.count("1.0", "insert", "chars")
                         char_offset = max(0, diff[0] if diff else 0)
-                    except Exception:
-                        char_offset = 0
-            elif cur_box is not None and self.current_doc and 0 <= cur_box < len(self.current_doc.boxes):
-                self.is_box0_active = False
-                self.current_box_idx = cur_box
-                s_mark = f"box_start_{cur_box}"
-                if s_mark in self.txt_continuous.mark_names():
-                    try:
-                        diff = self.txt_continuous.count(s_mark, "insert", "chars")
-                        char_offset = max(0, diff[0] if diff else 0)
-                    except Exception:
-                        char_offset = 0
+                except Exception:
+                    char_offset = 0
+            elif hasattr(self, "txt_continuous"):
+                try:
+                    diff = self.txt_continuous.count("1.0", "insert", "chars")
+                    char_offset = max(0, diff[0] if diff else 0)
+                except Exception:
+                    char_offset = 0
 
             self.continuous_wrap.pack_forget()
             self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
@@ -5357,6 +5354,8 @@ class MisoraApp(tk.Tk):
         self.bind("<Control-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-t>", lambda e: self.on_copy_ai_prompt())
+        self.bind("<Control-Shift-C>", lambda e: self.on_copy_script_triple_enter())
+        self.bind("<Control-Shift-c>", lambda e: self.on_copy_script_triple_enter())
         self.bind("<Control-Shift-V>", lambda e: self.on_paste_cross_box())
         self.bind("<Control-Shift-v>", lambda e: self.on_paste_cross_box())
         self.bind("<F8>", lambda e: self.on_translate_current_box())
@@ -5532,7 +5531,11 @@ class MisoraApp(tk.Tk):
                 self.is_box0_active = False
             else:
                 total_boxes = len(self.current_doc.boxes)
-                self.speaker_var.set("[Story Info]")
+                self.speaker_var.set("")
+                if hasattr(self, "entry_speaker"):
+                    self.entry_speaker.config(state="disabled")
+                if hasattr(self, "btn_speaker_dropdown"):
+                    self.btn_speaker_dropdown.config(state="disabled")
                 self.lbl_box_counter.config(text=f"Box: 0 / {total_boxes} (Story Metadata)")
                 self.lbl_voice_cue.config(text="")
                 if hasattr(self, "btn_prev"):
@@ -5578,6 +5581,10 @@ class MisoraApp(tk.Tk):
         self.current_box_idx = max(0, min(self.current_box_idx, total_boxes - 1))
         box = self.current_doc.boxes[self.current_box_idx]
 
+        if hasattr(self, "entry_speaker"):
+            self.entry_speaker.config(state="normal")
+        if hasattr(self, "btn_speaker_dropdown"):
+            self.btn_speaker_dropdown.config(state="normal")
         self.speaker_var.set(box.speaker)
         self.lbl_box_counter.config(text=f"Box: {self.current_box_idx + 1} / {total_boxes}")
         self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
@@ -5641,560 +5648,78 @@ class MisoraApp(tk.Tk):
         if first_active_line is not None:
             self.txt_raw.see(f"{first_active_line}.0")
 
-    def _render_continuous_view(self) -> None:
-        """Render all dialogue boxes sequentially with dividers, badges, repeating line numbers, and editable spans."""
-        compiled = self.var_preview_compiled.get()
-        self._suppress_continuous_events = True
-        prev_y = 0.0
-        try:
-            if hasattr(self, "txt_continuous"):
-                prev_y = self.txt_continuous.yview()[0]
-        except Exception:
-            pass
-        try:
-            self.txt_continuous.config(state="normal")
-            for mark_name in list(self.txt_continuous.mark_names()):
-                if mark_name.startswith(("box_start_", "box_end_")):
-                    self.txt_continuous.mark_unset(mark_name)
-            self._cont_header_spans.clear()
-            self.txt_continuous.delete("1.0", tk.END)
-
-            if not self.current_doc or not self.current_doc.boxes:
-                if hasattr(self, "gutter_cont"):
-                    self._update_gutter_cont([])
-                return
-
-            gutter_lines: List[str] = []
-            if self.current_doc.has_metadata():
-                meta = self.current_doc.get_metadata()
-                hdr_start = self.txt_continuous.index("end-1c")
-                badge = "◆ [BOX #000]"
-                speaker_disp = "[STORY METADATA & SYNOPSIS]"
-                self.txt_continuous.insert(tk.END, badge + "  ", ("cont_badge",))
-                self.txt_continuous.insert(tk.END, speaker_disp, ("cont_speaker",))
-                self.txt_continuous.insert(tk.END, "\n")
-                gutter_lines.append(" ◆ ")
-                hdr_end = self.txt_continuous.index("end-1c")
-                self._cont_header_spans[-1] = (hdr_start, hdr_end)
-
-                if getattr(self, "is_box0_active", False):
-                    self.txt_continuous.tag_add("cont_active_header", hdr_start, hdr_end)
-
-                body_start = self.txt_continuous.index("end-1c")
-                self.txt_continuous.mark_set("box_start_meta", body_start)
-                self.txt_continuous.mark_gravity("box_start_meta", tk.LEFT)
-
-                meta_text = f"Title: {meta.get('title', '')}\nSubtitle: {meta.get('subtitle', '')}\nSummary:\n{meta.get('summary', '')}"
-                self.txt_continuous.insert(tk.END, meta_text, ("cont_body",))
-
-                for _ in range(meta_text.count("\n") + 1):
-                    gutter_lines.append(" · ")
-
-                body_end = self.txt_continuous.index("end-1c")
-                self.txt_continuous.mark_set("box_end_meta", body_end)
-                self.txt_continuous.mark_gravity("box_end_meta", tk.RIGHT)
-
-                self.txt_continuous.insert(tk.END, "\n")
-                gutter_lines.append("   ")
-                self.txt_continuous.insert(tk.END, "━" * 72 + "\n", ("cont_divider",))
-                gutter_lines.append(" ─ ")
-
-            for i, box in enumerate(self.current_doc.boxes):
-                if i > 0:
-                    self.txt_continuous.insert(tk.END, "\n")
-                    gutter_lines.append("   ")
-                    # Clear prominent box demarcation (#13)
-                    self.txt_continuous.insert(tk.END, "━" * 72 + "\n", ("cont_divider",))
-                    gutter_lines.append(" ─ ")
-
-                hdr_start = self.txt_continuous.index("end-1c")
-                badge = f"◆ [BOX #{i + 1:03d}]"
-                speaker_disp = box.speaker if box.speaker else "(Narration)"
-                speaker_tag = "cont_speaker" if box.speaker else "cont_narrator"
-                voice_disp = f"   ♪ {box.voice_cue}" if box.voice_cue else ""
-
-                self.txt_continuous.insert(tk.END, badge + "  ", ("cont_badge",))
-                self.txt_continuous.insert(tk.END, speaker_disp, (speaker_tag,))
-                if voice_disp:
-                    self.txt_continuous.insert(tk.END, voice_disp, ("cont_voice",))
-                self.txt_continuous.insert(tk.END, "\n")
-                gutter_lines.append(" ◆ ")
-                hdr_end = self.txt_continuous.index("end-1c")
-                self._cont_header_spans[i] = (hdr_start, hdr_end)
-
-                if i == self.current_box_idx:
-                    self.txt_continuous.tag_add("cont_active_header", hdr_start, hdr_end)
-
-                body_start = self.txt_continuous.index("end-1c")
-                self.txt_continuous.mark_set(f"box_start_{i}", body_start)
-                self.txt_continuous.mark_gravity(f"box_start_{i}", tk.LEFT)
-
-                if compiled:
-                    self._insert_compiled_ngui_text(self.txt_continuous, tk.END, box.clean_text, ("cont_body",))
-                else:
-                    self.txt_continuous.insert(tk.END, box.clean_text, ("cont_body",))
-
-                # Track repeating line numbers per box (#12)
-                lines_in_box = max(1, box.clean_text.count("\n") + 1)
-                for ln in range(1, lines_in_box + 1):
-                    gutter_lines.append(f"{ln:>2} ")
-
-                body_end = self.txt_continuous.index("end-1c")
-                self.txt_continuous.mark_set(f"box_end_{i}", body_end)
-                self.txt_continuous.mark_gravity(f"box_end_{i}", tk.LEFT)
-
-                self.txt_continuous.insert(tk.END, "\n")
-                self.txt_continuous.mark_gravity(f"box_end_{i}", tk.RIGHT)
-
-            self._update_gutter_cont(gutter_lines)
-
-            if compiled:
-                self.txt_continuous.config(state="disabled")
-            else:
-                self._highlight_ngui_tags()
-                self._highlight_continuous_matches()
-                self._highlight_secret_whitespace(self.txt_continuous)
-        finally:
-            self._suppress_continuous_events = False
-            if prev_y > 0.0 and hasattr(self, "txt_continuous"):
-                try:
-                    self.txt_continuous.yview_moveto(prev_y)
-                except Exception:
-                    pass
-
-    def _focus_continuous_box(
-        self,
-        box_idx: int,
-        move_cursor: bool = True,
-        char_offset: int = 0,
-        explicit_span: Optional[Tuple[int, int]] = None
-    ) -> None:
-        """Scroll Continuous View to `box_idx`, highlight its header, and sync metadata."""
-        if not self.current_doc or not self.current_doc.boxes:
-            return
-
-        if box_idx == -1:
-            self.is_box0_active = True
-            total = len(self.current_doc.boxes)
-            self.speaker_var.set("[Story Info]")
-            self.lbl_box_counter.config(text=f"Box: 0 / {total} (Story Metadata)")
-            self.lbl_voice_cue.config(text="")
-            if hasattr(self, "btn_prev"):
-                self.btn_prev.config(state="disabled")
-            if hasattr(self, "btn_next"):
-                self.btn_next.config(state="normal" if total > 0 else "disabled")
-
-            self.txt_continuous.tag_remove("cont_active_header", "1.0", tk.END)
-            span = self._cont_header_spans.get(-1)
-            if span:
-                self.txt_continuous.tag_add("cont_active_header", span[0], span[1])
-                self.txt_continuous.see(span[0])
-            start_mark = "box_start_meta"
-            if start_mark in self.txt_continuous.mark_names():
-                target_idx = f"{start_mark} + {max(0, char_offset)}c"
-                if move_cursor and not self.var_preview_compiled.get():
-                    self.txt_continuous.mark_set("insert", target_idx)
-                self.txt_continuous.see(target_idx)
-            self._update_raw_view()
-            return
-
-        self.is_box0_active = False
-        total = len(self.current_doc.boxes)
-        box_idx = max(0, min(box_idx, total - 1))
-        self.current_box_idx = box_idx
-        box = self.current_doc.boxes[box_idx]
-
-        self.speaker_var.set(box.speaker)
-        self.lbl_box_counter.config(text=f"Box: {box_idx + 1} / {total}")
-        self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
-        if hasattr(self, "btn_prev"):
-            can_prev = (box_idx > 0) or (self.current_doc and self.current_doc.has_metadata())
-            self.btn_prev.config(state="normal" if can_prev else "disabled")
-        if hasattr(self, "btn_next"):
-            self.btn_next.config(state="normal" if box_idx < total - 1 else "disabled")
-
-        self.txt_continuous.tag_remove("cont_active_header", "1.0", tk.END)
-        span = self._cont_header_spans.get(box_idx)
-        if span:
-            self.txt_continuous.tag_add("cont_active_header", span[0], span[1])
-
-        start_mark = f"box_start_{box_idx}"
-        if start_mark in self.txt_continuous.mark_names():
-            target_idx = f"{start_mark} + {max(0, char_offset)}c"
-            if move_cursor and not self.var_preview_compiled.get():
-                self.txt_continuous.mark_set("insert", target_idx)
-            if span:
-                self.txt_continuous.see(span[0])
-            self.txt_continuous.see(target_idx)
-
-            if explicit_span is not None and not self.var_preview_compiled.get():
-                s, e = explicit_span
-                if e > s:
-                    self.txt_continuous.tag_remove("search_hit", "1.0", tk.END)
-                    self.txt_continuous.tag_add(
-                        "search_hit",
-                        f"{start_mark} + {s}c",
-                        f"{start_mark} + {e}c",
-                    )
-
-        self._update_raw_view()
-
-    def _find_continuous_box_at_index(self, tk_index: str) -> Optional[int]:
-        """Return the box index containing `tk_index` inside its editable body, or None."""
-        if not self.current_doc or not self.current_doc.boxes:
-            return None
-        marks = set(self.txt_continuous.mark_names())
-        if "box_start_meta" in marks and "box_end_meta" in marks:
-            if (
-                self.txt_continuous.compare(tk_index, ">=", "box_start_meta")
-                and self.txt_continuous.compare(tk_index, "<=", "box_end_meta")
-            ):
-                return -1
-        for i in range(len(self.current_doc.boxes)):
-            s_mark = f"box_start_{i}"
-            e_mark = f"box_end_{i}"
-            if s_mark in marks and e_mark in marks:
-                if (
-                    self.txt_continuous.compare(tk_index, ">=", s_mark)
-                    and self.txt_continuous.compare(tk_index, "<=", e_mark)
-                ):
-                    return i
-        return None
-
-    def _nearest_continuous_box_to_index(self, tk_index: str) -> int:
-        """Find the closest box index for a click/cursor landing on a divider or header line."""
-        if not self.current_doc or not self.current_doc.boxes:
-            return 0
-        total = len(self.current_doc.boxes)
-        # Check header spans first - if clicked on header of box i, return i
-        for i, (h_s, h_e) in self._cont_header_spans.items():
-            if self.txt_continuous.compare(tk_index, ">=", h_s) and self.txt_continuous.compare(tk_index, "<=", h_e):
-                return i
-        if self.current_doc and self.current_doc.has_metadata() and "box_start_meta" in self.txt_continuous.mark_names():
-            if self.txt_continuous.compare(tk_index, "<", "box_start_0"):
-                return -1
-        # If before first box body
-        if total > 0 and "box_start_0" in self.txt_continuous.mark_names():
-            if self.txt_continuous.compare(tk_index, "<", "box_start_0"):
-                return 0
-        # If in a divider between box i-1 and box i, map to preceding box so Up movement escapes
-        for i in range(1, total):
-            s_mark = f"box_start_{i}"
-            if s_mark in self.txt_continuous.mark_names():
-                if self.txt_continuous.compare(tk_index, "<", s_mark):
-                    return i - 1
-        return max(0, total - 1)
-
-    def _on_continuous_cursor_moved(self, event: Optional[tk.Event] = None) -> None:
-        """Sync active box indicator, speaker bar, and Raw AST View when clicking in Continuous View."""
-        if self._suppress_continuous_events or not self.current_doc or not self.current_doc.boxes:
-            return
-        click_idx = f"@{event.x},{event.y}" if event is not None else "insert"
-        box_idx = self._find_continuous_box_at_index(click_idx)
-        if box_idx is None:
-            box_idx = self._nearest_continuous_box_to_index(click_idx)
-            # Only snap cursor to start_mark on explicit mouse click, NOT keyboard navigation
-            if event is not None and not self.var_preview_compiled.get():
-                start_mark = "box_start_meta" if box_idx == -1 else f"box_start_{box_idx}"
-                if start_mark in self.txt_continuous.mark_names():
-                    self.txt_continuous.mark_set("insert", start_mark)
-
-        if box_idx == -1:
-            if not getattr(self, "is_box0_active", False):
-                self._focus_continuous_box(-1, move_cursor=False)
-        elif box_idx != self.current_box_idx or getattr(self, "is_box0_active", False):
-            self._focus_continuous_box(box_idx, move_cursor=False)
-
-    def _on_continuous_key_guard(self, event: tk.Event) -> Optional[str]:
-        """Protect read-only dividers & box headers from accidental deletion or corruption."""
-        if self.var_preview_compiled.get():
-            return "break"
-        if self._suppress_continuous_events or not self.current_doc or not self.current_doc.boxes:
-            return "break"
-
-        keysym = event.keysym
-        ctrl = bool(event.state & 0x4)
-
-        nav_keys = {
-            "Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next",
-            "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
-            "Caps_Lock", "Num_Lock", "Scroll_Lock", "Escape",
-            "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
-        }
-
-        # Up / Down smooth box navigation (#14)
-        if keysym == "Up":
-            box_idx = self._find_continuous_box_at_index("insert")
-            if box_idx is None:
-                box_idx = self._nearest_continuous_box_to_index("insert")
-            if box_idx == 0 and self.current_doc and self.current_doc.has_metadata():
-                s_mark = "box_start_0"
-                if self.txt_continuous.compare("insert linestart", "<=", f"{s_mark} linestart"):
-                    prev_end = "box_end_meta"
-                    if prev_end in self.txt_continuous.mark_names():
-                        self.txt_continuous.mark_set("insert", prev_end)
-                        self.txt_continuous.see(prev_end)
-                        self._focus_continuous_box(-1, move_cursor=False)
-                        return "break"
-            elif box_idx is not None and box_idx > 0:
-                s_mark = f"box_start_{box_idx}"
-                if self.txt_continuous.compare("insert linestart", "<=", f"{s_mark} linestart"):
-                    prev_end = f"box_end_{box_idx - 1}"
-                    if prev_end in self.txt_continuous.mark_names():
-                        self.txt_continuous.mark_set("insert", prev_end)
-                        self.txt_continuous.see(prev_end)
-                        self._focus_continuous_box(box_idx - 1, move_cursor=False)
-                        return "break"
-        elif keysym == "Down":
-            box_idx = self._find_continuous_box_at_index("insert")
-            if box_idx is None:
-                box_idx = self._nearest_continuous_box_to_index("insert")
-            if box_idx == -1:
-                e_mark = "box_end_meta"
-                if self.txt_continuous.compare("insert lineend", ">=", f"{e_mark} lineend"):
-                    next_start = "box_start_0"
-                    if next_start in self.txt_continuous.mark_names():
-                        self.txt_continuous.mark_set("insert", next_start)
-                        self.txt_continuous.see(next_start)
-                        self._focus_continuous_box(0, move_cursor=False)
-                        return "break"
-            elif box_idx is not None and box_idx < len(self.current_doc.boxes) - 1:
-                e_mark = f"box_end_{box_idx}"
-                if self.txt_continuous.compare("insert lineend", ">=", f"{e_mark} lineend"):
-                    next_start = f"box_start_{box_idx + 1}"
-                    if next_start in self.txt_continuous.mark_names():
-                        self.txt_continuous.mark_set("insert", next_start)
-                        self.txt_continuous.see(next_start)
-                        self._focus_continuous_box(box_idx + 1, move_cursor=False)
-                        return "break"
-                        self.txt_continuous.see(next_start)
-                        self._focus_continuous_box(box_idx + 1, move_cursor=False)
-                        return "break"
-
-        if keysym in nav_keys:
-            self.after_idle(self._on_continuous_cursor_moved)
-            return None
-
-        if ctrl and keysym.lower() in {"c", "a", "f", "o", "s", "q", "r", "p", "b", "i", "u", "t"}:
-            return None
-
-        if ctrl and keysym.lower() in {"z", "y"}:
-            if keysym.lower() == "z":
-                if bool(event.state & 0x1):  # Ctrl+Shift+Z -> Redo
-                    self.on_redo()
-                else:
-                    self.on_undo()
-            elif keysym.lower() == "y":
-                self.on_redo()
-            return "break"
-
-        # Check for full selection delete (Keep skeleton only prompt)
-        try:
-            sel_first = self.txt_continuous.index("sel.first")
-            sel_last = self.txt_continuous.index("sel.last")
-            is_full_select = (
-                self.txt_continuous.compare(sel_first, "==", "1.0")
-                and self.txt_continuous.compare(sel_last, ">=", "end-1c")
-            )
-            if is_full_select and keysym in ("Delete", "BackSpace"):
-                self.on_clear_dialogue_skeleton()
-                return "break"
-
-            b1 = self._find_continuous_box_at_index(sel_first)
-            b2 = self._find_continuous_box_at_index(sel_last)
-            if b1 is None or b1 != b2:
-                return "break"
-        except tk.TclError:
-            pass
-
-        box_idx = self._find_continuous_box_at_index("insert")
-        if box_idx is None:
-            nearest = self._nearest_continuous_box_to_index("insert")
-            self._focus_continuous_box(nearest, move_cursor=True)
-            if keysym in ("BackSpace", "Delete"):
-                return "break"
-            box_idx = nearest
-
-        s_mark = f"box_start_{box_idx}"
-        e_mark = f"box_end_{box_idx}"
-
-        if keysym == "BackSpace" and self.txt_continuous.compare("insert", "==", s_mark):
-            return "break"
-        if keysym == "Delete" and self.txt_continuous.compare("insert", "==", e_mark):
-            return "break"
-
-        return None
-
-    def _on_continuous_copy(self, _event: Optional[tk.Event] = None) -> Optional[str]:
-        """Format multi-box continuous selection with placeholder delimiters for cross-box paste (#17)."""
-        if not self.current_doc or not self.current_doc.boxes:
-            return None
-        try:
-            sel_s = self.txt_continuous.index("sel.first")
-            sel_e = self.txt_continuous.index("sel.last")
-        except tk.TclError:
-            return None
-
-        b_start = self._find_continuous_box_at_index(sel_s)
-        b_end = self._find_continuous_box_at_index(sel_e)
-        if b_start is None:
-            b_start = self._nearest_continuous_box_to_index(sel_s)
-        if b_end is None:
-            b_end = self._nearest_continuous_box_to_index(sel_e)
-
-        if b_start is not None and b_end is not None and b_start != b_end:
-            blocks = []
-            for b_idx in range(min(b_start, b_end), max(b_start, b_end) + 1):
-                box = self.current_doc.boxes[b_idx]
-                s_mark = f"box_start_{b_idx}"
-                e_mark = f"box_end_{b_idx}"
-                if s_mark in self.txt_continuous.mark_names() and e_mark in self.txt_continuous.mark_names():
-                    seg_s = s_mark if self.txt_continuous.compare(s_mark, ">", sel_s) else sel_s
-                    seg_e = e_mark if self.txt_continuous.compare(e_mark, "<", sel_e) else sel_e
-                    if self.txt_continuous.compare(seg_s, "<", seg_e):
-                        b_text = self.txt_continuous.get(seg_s, seg_e).strip()
-                        blocks.append(f"=== [BOX:{b_idx}|Speaker:{box.speaker}] ===\n{b_text}")
-            if blocks:
-                formatted = "\n\n".join(blocks) + "\n"
-                self.clipboard_clear()
-                self.clipboard_append(formatted)
-                self.show_toast(f"📋 Copied dialogue across {len(blocks)} boxes (#17)")
-                return "break"
-        return None
-
-    def _on_continuous_paste_guard(self, _event: tk.Event) -> Optional[str]:
-        """Ensure paste operations inside Continuous View handle single-box and multi-box placeholder paste (#17)."""
-        if self.var_preview_compiled.get() or not self.current_doc or not self.current_doc.boxes:
-            return "break"
-        try:
-            clip = self.clipboard_get()
-        except tk.TclError:
-            return "break"
-
-        # Check for multi-box delimiter format (#17)
-        if "=== [BOX:" in clip or "[BOX:" in clip:
-            pattern = re.compile(
-                r"(?:=== )?\[BOX:(\d+)(?:\|Speaker:([^\]]*))?\]\s*(?:===)?\s*\n(.*?)(?=\n(?:=== )?\[BOX:|\Z)",
-                re.DOTALL
-            )
-            matches = list(pattern.finditer(clip))
-            if matches:
-                cur_target = self._find_continuous_box_at_index("insert")
-                if cur_target is None:
-                    cur_target = self._nearest_continuous_box_to_index("insert")
-                self.undo_journal.begin_batch(f"Multi-box paste ({len(matches)} boxes)")
-                count = 0
-                for idx, m in enumerate(matches):
-                    target_box_idx = cur_target + idx
-                    if target_box_idx >= len(self.current_doc.boxes):
-                        break
-                    new_sp = m.group(2) if m.group(2) else None
-                    new_text = m.group(3).strip()
-                    old_box = self.current_doc.boxes[target_box_idx]
-                    self.undo_journal.record(
-                        BoxEditDelta(
-                            box_index=target_box_idx,
-                            old_speaker=old_box.speaker,
-                            new_speaker=new_sp if new_sp is not None else old_box.speaker,
-                            old_text=old_box.clean_text,
-                            new_text=new_text,
-                            file_path=str(self.current_file_path) if self.current_file_path else "",
-                        )
-                    )
-                    self.current_doc.inject_box(target_box_idx, new_sp, new_text)
-                    self._modified_boxes.add(target_box_idx)
-                    count += 1
-                self.undo_journal.end_batch()
-                self.is_dirty = True
-                self._update_views()
-                self.show_toast(f"✓ Pasted dialogue across {count} boxes (#17)")
-                return "break"
-
-        try:
-            sel_first = self.txt_continuous.index("sel.first")
-            sel_last = self.txt_continuous.index("sel.last")
-            b1 = self._find_continuous_box_at_index(sel_first)
-            b2 = self._find_continuous_box_at_index(sel_last)
-            if b1 is None or b1 != b2:
-                return "break"
-        except tk.TclError:
-            pass
-
-        if self._find_continuous_box_at_index("insert") is None:
-            nearest = self._nearest_continuous_box_to_index("insert")
-            self._focus_continuous_box(nearest, move_cursor=True)
-
-        self.after_idle(self._sync_continuous_box_from_widget)
-        return None
-
-    def _on_continuous_cut_guard(self, _event: tk.Event) -> Optional[str]:
-        """Prevent cutting across box headers/dividers."""
-        if self.var_preview_compiled.get():
-            return "break"
-        try:
-            sel_first = self.txt_continuous.index("sel.first")
-            sel_last = self.txt_continuous.index("sel.last")
-            b1 = self._find_continuous_box_at_index(sel_first)
-            b2 = self._find_continuous_box_at_index(sel_last)
-            if b1 is None or b1 != b2:
-                return "break"
-        except tk.TclError:
-            return "break"
-
-        self.after_idle(self._sync_continuous_box_from_widget)
-        return None
-
-    def _on_continuous_key_release(self, _event: tk.Event) -> None:
-        """Persist inline edits from Continuous View back into StoryDocument."""
-        if self._suppress_continuous_events or self.var_preview_compiled.get():
-            return
-        self._sync_continuous_box_from_widget()
-
-    def _sync_continuous_box_from_widget(self) -> None:
-        """Read edited text for the active box in Continuous View and update StoryDocument or plain text."""
-        if self.var_preview_compiled.get():
-            return
-
+    # -------------------------------------------------------------------------
+    # Continuous View: Box Card Stream Architecture & Two-Way Sync
+    # -------------------------------------------------------------------------
+    def _flush_continuous_card_edits(self) -> None:
+        """Flush any uncommitted edits from active Box Cards or plain text back into model."""
         if not self.current_doc:
-            new_tx = self.txt_continuous.get("1.0", "end-1c")
-            if self._plain_text_content != new_tx:
-                old_tx = self._plain_text_content
-                self.undo_journal.record(
-                    PlainTextDelta(
-                        file_path=str(self.current_file_path or ""),
-                        old_content=old_tx,
-                        new_content=new_tx,
-                    ),
-                    label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
-                )
-                self._plain_text_content = new_tx
-                self.is_dirty = True
-                if self.current_file_path and self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
+            if hasattr(self, "txt_continuous") and self.txt_continuous.winfo_exists():
+                new_tx = self.txt_continuous.get("1.0", "end-1c")
+                if self._plain_text_content != new_tx:
+                    old_tx = self._plain_text_content
+                    self.undo_journal.record(
+                        PlainTextDelta(
+                            file_path=str(self.current_file_path or ""),
+                            old_content=old_tx,
+                            new_content=new_tx,
+                        ),
+                        label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
+                    )
+                    self._plain_text_content = new_tx
+                    self.is_dirty = True
+                    if self.current_file_path and self.current_file_path in self.open_documents:
+                        self.open_documents[self.current_file_path]["dirty"] = True
+                        self._refresh_opened_files_list()
             return
 
-        if not self.current_doc.boxes:
+        if not getattr(self, "_card_widgets", None):
             return
 
-        box_idx = self._find_continuous_box_at_index("insert")
-        if box_idx is None:
+        for b_idx, card_info in list(self._card_widgets.items()):
+            if b_idx == -1:
+                continue
+            if 0 <= b_idx < len(self.current_doc.boxes):
+                txt_w = card_info.get("txt")
+                if txt_w and txt_w.winfo_exists():
+                    new_tx = txt_w.get("1.0", "end-1c")
+                    box = self.current_doc.boxes[b_idx]
+                    if box.clean_text != new_tx:
+                        old_sp = box.speaker
+                        old_tx = box.clean_text
+                        self.undo_journal.record(
+                            BoxEditDelta(
+                                box_index=b_idx,
+                                old_speaker=old_sp,
+                                new_speaker=old_sp,
+                                old_text=old_tx,
+                                new_text=new_tx,
+                                file_path=str(self.current_file_path or ""),
+                            ),
+                            label=f"Edit box #{b_idx + 1}"
+                        )
+                        self.is_dirty = True
+                        self._modified_boxes.add(b_idx)
+                        if self.current_file_path and self.current_file_path in self.open_documents:
+                            self.open_documents[self.current_file_path]["dirty"] = True
+                            self._refresh_opened_files_list()
+                        try:
+                            self.current_doc.inject_box(b_idx, None, new_tx)
+                        except Exception:
+                            pass
+
+    def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text) -> None:
+        """Handle inline typing inside a Box Card."""
+        if getattr(self, "_suppress_continuous_events", False) or self.var_preview_compiled.get():
+            return
+        if not self.current_doc or not (0 <= box_idx < len(self.current_doc.boxes)):
             return
 
-        if box_idx != self.current_box_idx:
-            self._focus_continuous_box(box_idx, move_cursor=False)
-
-        s_mark = f"box_start_{box_idx}"
-        e_mark = f"box_end_{box_idx}"
-        if s_mark not in self.txt_continuous.mark_names() or e_mark not in self.txt_continuous.mark_names():
-            return
-
-        new_tx = self.txt_continuous.get(s_mark, e_mark)
-        self.txt_continuous.tag_add("cont_body", s_mark, e_mark)
-
-        if self.current_doc.boxes[box_idx].clean_text != new_tx:
-            old_sp = self.current_doc.boxes[box_idx].speaker
-            old_tx = self.current_doc.boxes[box_idx].clean_text
+        new_tx = txt_w.get("1.0", "end-1c")
+        box = self.current_doc.boxes[box_idx]
+        if box.clean_text != new_tx:
+            old_sp = box.speaker
+            old_tx = box.clean_text
             self.undo_journal.record(
                 BoxEditDelta(
                     box_index=box_idx,
@@ -6217,8 +5742,404 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
 
-        self._highlight_ngui_tags()
-        self._highlight_continuous_matches()
+        # Dynamically adjust text widget height to fit content (min 2, max 10)
+        line_count = max(2, min(10, new_tx.count("\n") + 1))
+        try:
+            if int(txt_w.cget("height")) != line_count:
+                txt_w.config(height=line_count)
+        except Exception:
+            pass
+
+        self._highlight_ngui_tags_for_widget(txt_w)
+
+    def _on_card_focus_in(self, box_idx: int) -> None:
+        """Update active indicators and controls when a Box Card gains focus."""
+        if getattr(self, "_suppress_continuous_events", False) or not self.current_doc:
+            return
+
+        self.is_box0_active = (box_idx == -1)
+        if box_idx != -1 and 0 <= box_idx < len(self.current_doc.boxes):
+            self.current_box_idx = box_idx
+
+        self._highlight_active_card_header(box_idx)
+        self._sync_header_controls_for_card(box_idx)
+        self._update_raw_view()
+
+    def _highlight_active_card_header(self, active_idx: int) -> None:
+        """Highlight the header background of the active card in Continuous View."""
+        t = self.theme
+        if not hasattr(self, "_card_widgets"):
+            return
+        for b_idx, card_info in self._card_widgets.items():
+            hdr = card_info.get("hdr")
+            if not hdr or not hdr.winfo_exists():
+                continue
+            is_active = (b_idx == active_idx)
+            bg_col = t["highlight_bg"] if is_active else t["bg_panel"]
+            try:
+                hdr.configure(bg=bg_col)
+                for child in hdr.winfo_children():
+                    if isinstance(child, (tk.Label, tk.Frame)):
+                        child.configure(bg=bg_col)
+            except Exception:
+                pass
+
+    def _sync_header_controls_for_card(self, box_idx: int) -> None:
+        """Sync top ribbon controls (speaker, voice cue, box counter) to active card."""
+        if not self.current_doc:
+            return
+        total = len(self.current_doc.boxes) if self.current_doc.boxes else 0
+        if box_idx == -1:
+            self.speaker_var.set("")
+            if hasattr(self, "entry_speaker"):
+                self.entry_speaker.config(state="disabled")
+            if hasattr(self, "btn_speaker_dropdown"):
+                self.btn_speaker_dropdown.config(state="disabled")
+            self.lbl_box_counter.config(text=f"Box: 0 / {total} (Story Metadata)")
+            self.lbl_voice_cue.config(text="")
+            if hasattr(self, "btn_prev"):
+                self.btn_prev.config(state="disabled")
+            if hasattr(self, "btn_next"):
+                self.btn_next.config(state="normal" if total > 0 else "disabled")
+        elif 0 <= box_idx < total:
+            box = self.current_doc.boxes[box_idx]
+            if hasattr(self, "entry_speaker"):
+                self.entry_speaker.config(state="normal")
+            if hasattr(self, "btn_speaker_dropdown"):
+                self.btn_speaker_dropdown.config(state="normal")
+            self.speaker_var.set(box.speaker)
+            self.lbl_box_counter.config(text=f"Box: {box_idx + 1} / {total}")
+            self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
+            if hasattr(self, "btn_prev"):
+                can_prev = (box_idx > 0) or (self.current_doc and self.current_doc.has_metadata())
+                self.btn_prev.config(state="normal" if can_prev else "disabled")
+            if hasattr(self, "btn_next"):
+                self.btn_next.config(state="normal" if box_idx < total - 1 else "disabled")
+
+    def _copy_single_card_dialogue(self, box_idx: int) -> None:
+        """Copy dialogue from a single Box Card to clipboard."""
+        if self.current_doc and 0 <= box_idx < len(self.current_doc.boxes):
+            text = self.current_doc.boxes[box_idx].clean_text
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.show_toast(f"📋 Copied dialogue from Box #{box_idx + 1}")
+
+    def _card_shortcut_wrap(self, w: tk.Text, open_t: str, close_t: str) -> None:
+        """Wrap selected text in card editor with NGUI tags."""
+        try:
+            sel_first = w.index("sel.first")
+            sel_last = w.index("sel.last")
+            txt = w.get(sel_first, sel_last)
+            w.delete(sel_first, sel_last)
+            w.insert(sel_first, f"{open_t}{txt}{close_t}")
+        except tk.TclError:
+            w.insert(tk.INSERT, f"{open_t}{close_t}")
+
+    def _highlight_ngui_tags_for_widget(self, w: tk.Text) -> None:
+        """Syntax-color NGUI tags within a specific Text widget."""
+        if self.var_preview_compiled.get() or not w.winfo_exists():
+            return
+        w.tag_remove("ngui_tag", "1.0", tk.END)
+        tx = w.get("1.0", "end-1c")
+        for m in NGUI_TAG_RE.finditer(tx):
+            w.tag_add("ngui_tag", f"1.0 + {m.start()}c", f"1.0 + {m.end()}c")
+        w.tag_raise("ngui_tag")
+
+    def on_copy_script_triple_enter(self) -> None:
+        """Copy pure dialogue across all boxes separated by triple enters (\\n\\n\\n) without headers (#17)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            self.show_toast("No story document loaded")
+            return
+
+        self._flush_continuous_card_edits()
+        dialogues = [b.clean_text for b in self.current_doc.boxes]
+        script_text = "\n\n\n".join(dialogues) + "\n"
+        self.clipboard_clear()
+        self.clipboard_append(script_text)
+        box_count = len(dialogues)
+        self.show_toast(f"📋 Copied {box_count} boxes (separated by triple-enter)")
+        self.lbl_status.config(text=f"Copied script ({box_count} boxes separated by triple-enter) to clipboard")
+
+    def _render_continuous_view(self) -> None:
+        """Render all dialogue boxes sequentially as a Box Card Stream."""
+        compiled = self.var_preview_compiled.get()
+        self._suppress_continuous_events = True
+        t = self.theme
+        d_fam = self.var_font_family.get() if hasattr(self, "var_font_family") else "Segoe UI"
+        d_sz = int(self.prefs.get("dialogue_font_size", 12))
+
+        try:
+            # If plain text file: keep legacy txt_continuous view
+            if not self.is_bundle_file and not self.current_doc:
+                if hasattr(self, "cont_canvas") and self._is_widget_packed(self.cont_canvas):
+                    self.cont_canvas.pack_forget()
+                    self.cont_scroll_y.pack_forget()
+                if hasattr(self, "txt_continuous") and not self._is_widget_packed(self.txt_continuous):
+                    self.txt_continuous.pack(side="left", fill="both", expand=True)
+                self.txt_continuous.config(state="normal")
+                self.txt_continuous.delete("1.0", tk.END)
+                if compiled:
+                    self._insert_compiled_ngui_text(self.txt_continuous, "1.0", self._plain_text_content)
+                    self.txt_continuous.config(state="disabled")
+                else:
+                    self.txt_continuous.insert("1.0", self._plain_text_content)
+                    self._highlight_ngui_tags_for_widget(self.txt_continuous)
+                return
+
+            # Multi-Box Story Documents: Box Card Stream
+            if hasattr(self, "txt_continuous") and self._is_widget_packed(self.txt_continuous):
+                self.txt_continuous.pack_forget()
+            if hasattr(self, "gutter_cont") and self._is_widget_packed(self.gutter_cont):
+                self.gutter_cont.pack_forget()
+
+            if hasattr(self, "cont_scroll_y") and not self._is_widget_packed(self.cont_scroll_y):
+                self.cont_scroll_y.pack(side="right", fill="y")
+            if hasattr(self, "cont_canvas") and not self._is_widget_packed(self.cont_canvas):
+                self.cont_canvas.pack(side="left", fill="both", expand=True)
+
+            # Clear existing cards
+            if hasattr(self, "cont_stream_frame"):
+                for child in self.cont_stream_frame.winfo_children():
+                    child.destroy()
+            self._card_widgets.clear()
+
+            if not self.current_doc or not self.current_doc.boxes:
+                return
+
+            # 1. Card #0: Story Metadata Card
+            if self.current_doc.has_metadata():
+                meta = self.current_doc.get_metadata()
+                card_0 = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
+                is_active_0 = getattr(self, "is_box0_active", False)
+                hdr_bg_0 = t["highlight_bg"] if is_active_0 else t["bg_panel"]
+                hdr_0 = tk.Frame(card_0, bg=hdr_bg_0, padx=6, pady=4)
+                lbl_badge_0 = tk.Label(hdr_0, text="◆ [BOX #000]", font=("Consolas", max(9, d_sz - 1), "bold"), fg=t["misora_pink"], bg=hdr_bg_0)
+                lbl_badge_0.pack(side="left")
+                lbl_title_0 = tk.Label(hdr_0, text="[STORY METADATA & SYNOPSIS]", font=(d_fam, max(9, d_sz - 1), "bold"), fg=t["fg_text"], bg=hdr_bg_0)
+                lbl_title_0.pack(side="left", padx=(8, 4))
+                hdr_0.pack(fill="x")
+
+                meta_body = tk.Frame(card_0, bg=t["bg_panel"], padx=6, pady=4)
+                tk.Label(meta_body, text=f"Title: {meta.get('title', '')}   |   Subtitle: {meta.get('subtitle', '')}", font=(d_fam, max(8, d_sz - 2)), fg=t["fg_muted"], bg=t["bg_panel"]).pack(anchor="w")
+                summary_lines = max(2, min(8, meta.get("summary", "").count("\n") + 1))
+                txt_summary = tk.Text(
+                    meta_body,
+                    wrap="word",
+                    undo=False,
+                    height=summary_lines,
+                    font=(d_fam, d_sz),
+                    bg=t["bg_editor"],
+                    fg=t["fg_text"],
+                    insertbackground=t["misora_pink"],
+                    selectbackground=t["highlight_bg"],
+                    selectforeground=t["misora_pink"],
+                    bd=1,
+                    relief="solid",
+                    highlightthickness=0,
+                    padx=10,
+                    pady=6
+                )
+                txt_summary.insert("1.0", meta.get("summary", ""))
+                txt_summary.pack(fill="x", pady=(2, 2))
+                meta_body.pack(fill="x")
+
+                # Bindings for Card #0
+                txt_summary.bind("<FocusIn>", lambda e: self._on_card_focus_in(-1))
+                txt_summary.bind("<Control-a>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
+                txt_summary.bind("<Control-A>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
+                txt_summary.bind("<MouseWheel>", lambda e: self._on_cont_mousewheel(e))
+
+                card_0.pack(fill="x", padx=12, pady=(6, 4))
+                sep_0 = tk.Frame(self.cont_stream_frame, height=1, bg=t["border"])
+                sep_0.pack(fill="x", padx=12, pady=(4, 8))
+
+                self._card_widgets[-1] = {
+                    "card": card_0,
+                    "hdr": hdr_0,
+                    "txt": txt_summary,
+                    "lbl_badge": lbl_badge_0,
+                    "lbl_title": lbl_title_0,
+                }
+
+            # 2. Cards #1..N: Dialogue Box Cards
+            for i, box in enumerate(self.current_doc.boxes):
+                is_active = (not getattr(self, "is_box0_active", False) and i == self.current_box_idx)
+                hdr_bg = t["highlight_bg"] if is_active else t["bg_panel"]
+                card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
+                hdr = tk.Frame(card_frame, bg=hdr_bg, padx=6, pady=4)
+
+                lbl_badge = tk.Label(hdr, text=f"◆ [BOX #{i+1:03d}]", font=("Consolas", max(9, d_sz - 1), "bold"), fg=t["misora_pink"], bg=hdr_bg)
+                lbl_badge.pack(side="left")
+
+                sp_text = box.speaker if box.speaker else "(Narration)"
+                sp_fg = t["fg_text"] if box.speaker else t["fg_muted"]
+                sp_font = (d_fam, max(9, d_sz - 1), "bold" if box.speaker else "italic")
+                lbl_sp = tk.Label(hdr, text=sp_text, font=sp_font, fg=sp_fg, bg=hdr_bg)
+                lbl_sp.pack(side="left", padx=(8, 4))
+
+                vc_text = f"♪ {box.voice_cue}" if box.voice_cue else ""
+                lbl_vc = tk.Label(hdr, text=vc_text, font=("Segoe UI", max(8, d_sz - 2)), fg=t["accent_blue"], bg=hdr_bg)
+                lbl_vc.pack(side="left", padx=(4, 4))
+
+                btn_cp = ttk.Button(hdr, text="📋", width=2, style="Small.TButton", command=lambda idx=i: self._copy_single_card_dialogue(idx))
+                btn_cp.pack(side="right", padx=(2, 0))
+                hdr.pack(fill="x")
+
+                lines = max(2, min(10, box.clean_text.count("\n") + 1))
+                txt = tk.Text(
+                    card_frame,
+                    wrap="word",
+                    undo=False,
+                    height=lines,
+                    font=(d_fam, d_sz),
+                    bg=t["bg_editor"],
+                    fg=t["fg_text"],
+                    insertbackground=t["misora_pink"],
+                    selectbackground=t["highlight_bg"],
+                    selectforeground=t["misora_pink"],
+                    bd=1,
+                    relief="solid",
+                    highlightthickness=0,
+                    padx=10,
+                    pady=6
+                )
+                self._configure_editor_rich_tags(txt, d_fam, d_sz)
+                if compiled:
+                    self._insert_compiled_ngui_text(txt, "1.0", box.clean_text)
+                    txt.config(state="disabled")
+                else:
+                    txt.insert("1.0", box.clean_text)
+                    self._highlight_ngui_tags_for_widget(txt)
+
+                # Event bindings
+                txt.bind("<KeyRelease>", lambda e, idx=i, w=txt: self._on_card_text_edited(idx, w))
+                txt.bind("<FocusIn>", lambda e, idx=i: self._on_card_focus_in(idx))
+                txt.bind("<Control-a>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
+                txt.bind("<Control-A>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
+                txt.bind("<Control-Shift-C>", lambda e: (self.on_copy_script_triple_enter(), "break")[1])
+                txt.bind("<Control-Shift-c>", lambda e: (self.on_copy_script_triple_enter(), "break")[1])
+                txt.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
+                txt.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
+                txt.bind("<Control-b>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[b]", "[/b]"), "break")[1])
+                txt.bind("<Control-i>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[i]", "[/i]"), "break")[1])
+                txt.bind("<Control-u>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[u]", "[/u]"), "break")[1])
+                txt.bind("<MouseWheel>", lambda e: self._on_cont_mousewheel(e))
+
+                txt.pack(fill="x", padx=6, pady=(2, 4))
+                card_frame.pack(fill="x", padx=12, pady=(4, 4))
+
+                sep = tk.Frame(self.cont_stream_frame, height=1, bg=t["border"])
+                sep.pack(fill="x", padx=12, pady=(4, 8))
+
+                self._card_widgets[i] = {
+                    "card": card_frame,
+                    "hdr": hdr,
+                    "txt": txt,
+                    "lbl_badge": lbl_badge,
+                    "lbl_sp": lbl_sp,
+                    "lbl_vc": lbl_vc,
+                }
+
+            # Backwards compatibility: keep txt_continuous pointing to active card
+            if self.current_box_idx in self._card_widgets:
+                self.txt_continuous = self._card_widgets[self.current_box_idx]["txt"]
+
+            self._highlight_continuous_matches()
+        finally:
+            self._suppress_continuous_events = False
+
+    def _focus_continuous_box(
+        self,
+        box_idx: int,
+        move_cursor: bool = True,
+        char_offset: int = 0,
+        explicit_span: Optional[Tuple[int, int]] = None
+    ) -> None:
+        """Scroll Continuous View to `box_idx`, highlight its card header, and sync metadata."""
+        if not self.current_doc:
+            return
+
+        total = len(self.current_doc.boxes) if self.current_doc.boxes else 0
+        if box_idx == -1:
+            self.is_box0_active = True
+            target_idx = -1
+        else:
+            self.is_box0_active = False
+            self.current_box_idx = max(0, min(box_idx, total - 1)) if total > 0 else 0
+            target_idx = self.current_box_idx
+
+        self._highlight_active_card_header(target_idx)
+        self._sync_header_controls_for_card(target_idx)
+        self._update_raw_view()
+
+        if hasattr(self, "_card_widgets") and target_idx in self._card_widgets:
+            card_info = self._card_widgets[target_idx]
+            card = card_info["card"]
+            self.update_idletasks()
+            try:
+                total_h = self.cont_stream_frame.winfo_height()
+                if total_h > 0:
+                    card_y = card.winfo_y()
+                    fraction = max(0.0, min(1.0, card_y / total_h))
+                    self.cont_canvas.yview_moveto(fraction)
+            except Exception:
+                pass
+
+            txt_w = card_info["txt"]
+            self.txt_continuous = txt_w
+            if move_cursor and str(txt_w.cget("state")) != "disabled":
+                try:
+                    target_pos = f"1.0 + {max(0, char_offset)}c"
+                    txt_w.mark_set("insert", target_pos)
+                    txt_w.see("insert")
+                    txt_w.focus_set()
+                except Exception:
+                    pass
+
+            if explicit_span is not None and not self.var_preview_compiled.get():
+                s, e = explicit_span
+                if e > s:
+                    txt_w.tag_remove("search_hit", "1.0", tk.END)
+                    txt_w.tag_add("search_hit", f"1.0 + {s}c", f"1.0 + {e}c")
+                    txt_w.see(f"1.0 + {s}c")
+
+    def _find_continuous_box_at_index(self, tk_index: str) -> Optional[int]:
+        """Return active box index (compatibility shim for Card Stream architecture)."""
+        if getattr(self, "is_box0_active", False):
+            return -1
+        return self.current_box_idx
+
+    def _nearest_continuous_box_to_index(self, tk_index: str) -> int:
+        """Return active box index (compatibility shim for Card Stream architecture)."""
+        return self.current_box_idx
+
+    def _on_continuous_cursor_moved(self, event: Optional[tk.Event] = None) -> None:
+        """Compatibility shim for Card Stream (handled via _on_card_focus_in)."""
+        pass
+
+    def _on_continuous_key_guard(self, event: tk.Event) -> Optional[str]:
+        """Compatibility shim for Card Stream."""
+        return None
+
+    def _on_continuous_copy(self, _event: Optional[tk.Event] = None) -> Optional[str]:
+        """Compatibility shim for Card Stream."""
+        return None
+
+    def _on_continuous_paste_guard(self, _event: tk.Event) -> Optional[str]:
+        """Compatibility shim for Card Stream."""
+        return None
+
+    def _on_continuous_cut_guard(self, _event: tk.Event) -> Optional[str]:
+        """Compatibility shim for Card Stream."""
+        return None
+
+    def _on_continuous_key_release(self, _event: tk.Event) -> None:
+        """Compatibility shim for Card Stream."""
+        self._flush_continuous_card_edits()
+
+    def _sync_continuous_box_from_widget(self) -> None:
+        """Persist card edits to StoryDocument or plain text."""
+        self._flush_continuous_card_edits()
 
     def _highlight_dialogue_matches(self, explicit_span: Optional[Tuple[int, int]] = None) -> None:
         """Highlight active search keyword spans inside the single-box dialogue editor."""
@@ -6255,42 +6176,37 @@ class MisoraApp(tk.Tk):
             pass
 
     def _highlight_continuous_matches(self) -> None:
-        """Highlight active search keyword spans across all boxes in Continuous Dialog View."""
+        """Highlight active search keyword spans across all cards in Continuous View."""
         if self.var_preview_compiled.get():
             return
-
-        self.txt_continuous.tag_remove("search_hit", "1.0", tk.END)
-        if not self.active_search_options or not self.active_search_options.query.strip():
+        if not hasattr(self, "_card_widgets") or not self._card_widgets:
             return
 
-        try:
-            matcher = self.search_engine._compile_matcher(self.active_search_options)
-        except Exception:
-            return
+        matcher = None
+        if self.active_search_options and self.active_search_options.query.strip():
+            try:
+                matcher = self.search_engine._compile_matcher(self.active_search_options)
+            except Exception:
+                matcher = None
 
-        if not self.current_doc or not self.current_doc.boxes:
-            text = self.txt_continuous.get("1.0", "end-1c")
-            for s, e, _ in matcher(text):
-                if e > s:
-                    self.txt_continuous.tag_add("search_hit", f"1.0 + {s}c", f"1.0 + {e}c")
-            return
-
-        marks = set(self.txt_continuous.mark_names())
-        for i in range(len(self.current_doc.boxes)):
-            s_mark = f"box_start_{i}"
-            e_mark = f"box_end_{i}"
-            if s_mark in marks and e_mark in marks:
-                box_tx = self.txt_continuous.get(s_mark, e_mark)
-                for s, e, _ in matcher(box_tx):
-                    if e > s:
-                        self.txt_continuous.tag_add(
-                            "search_hit",
-                            f"{s_mark} + {s}c",
-                            f"{s_mark} + {e}c",
-                        )
+        for b_idx, card_info in self._card_widgets.items():
+            txt_w = card_info.get("txt")
+            if not txt_w:
+                continue
+            try:
+                txt_w.tag_remove("search_hit", "1.0", tk.END)
+                if matcher:
+                    box_tx = txt_w.get("1.0", "end-1c")
+                    for s, e, _ in matcher(box_tx):
+                        if e > s:
+                            txt_w.tag_add("search_hit", f"1.0 + {s}c", f"1.0 + {e}c")
+            except Exception:
+                pass
 
     def _on_speaker_edited(self) -> None:
         """Triggered when editing the pinned Speaker entry in either Page or Continuous mode."""
+        if getattr(self, "is_box0_active", False):
+            return
         self.is_dirty = True
         if self.current_file_path and self.current_file_path in self.open_documents:
             self.open_documents[self.current_file_path]["dirty"] = True
@@ -6305,16 +6221,10 @@ class MisoraApp(tk.Tk):
         self._modified_boxes.add(idx)
 
         if self.var_continuous_view.get():
-            if self.var_preview_compiled.get():
-                cur_tx = self.current_doc.boxes[idx].clean_text
+            if hasattr(self, "_card_widgets") and idx in self._card_widgets:
+                cur_tx = self._card_widgets[idx]["txt"].get("1.0", "end-1c")
             else:
-                s_mark = f"box_start_{idx}"
-                e_mark = f"box_end_{idx}"
-                cur_tx = (
-                    self.txt_continuous.get(s_mark, e_mark)
-                    if s_mark in self.txt_continuous.mark_names()
-                    else self.current_doc.boxes[idx].clean_text
-                )
+                cur_tx = self.current_doc.boxes[idx].clean_text
             if old_sp != new_sp:
                 self.undo_journal.record(
                     BoxEditDelta(
@@ -6361,41 +6271,16 @@ class MisoraApp(tk.Tk):
         """Update a single box header in Continuous View in-place when its speaker changes."""
         if not self.current_doc or not (0 <= box_idx < len(self.current_doc.boxes)):
             return
-        span = self._cont_header_spans.get(box_idx)
-        if not span:
+        if not hasattr(self, "_card_widgets") or box_idx not in self._card_widgets:
             return
-
-        was_disabled = str(self.txt_continuous.cget("state")) == "disabled"
-        self._suppress_continuous_events = True
-        try:
-            if was_disabled:
-                self.txt_continuous.config(state="normal")
-            box = self.current_doc.boxes[box_idx]
-            hdr_start, hdr_end = span
-            self.txt_continuous.delete(hdr_start, hdr_end)
-
-            badge = f"[Box #{box_idx + 1:03d}]"
+        box = self.current_doc.boxes[box_idx]
+        card_info = self._card_widgets[box_idx]
+        lbl_sp = card_info.get("lbl_sp")
+        if lbl_sp:
+            t = self.theme
             speaker_disp = box.speaker if box.speaker else "(Narration)"
-            speaker_tag = "cont_speaker" if box.speaker else "cont_narrator"
-            voice_disp = f"   ♪ {box.voice_cue}" if box.voice_cue else ""
-
-            self.txt_continuous.insert(hdr_start, badge + "  ", ("cont_badge",))
-            cur = self.txt_continuous.index(f"{hdr_start} + {len(badge) + 2}c")
-            self.txt_continuous.insert(cur, speaker_disp, (speaker_tag,))
-            cur = self.txt_continuous.index(f"{cur} + {len(speaker_disp)}c")
-            if voice_disp:
-                self.txt_continuous.insert(cur, voice_disp, ("cont_voice",))
-                cur = self.txt_continuous.index(f"{cur} + {len(voice_disp)}c")
-            self.txt_continuous.insert(cur, "\n")
-            new_end = self.txt_continuous.index(f"{cur} + 1c")
-
-            self._cont_header_spans[box_idx] = (hdr_start, new_end)
-            if box_idx == self.current_box_idx:
-                self.txt_continuous.tag_add("cont_active_header", hdr_start, new_end)
-        finally:
-            if was_disabled:
-                self.txt_continuous.config(state="disabled")
-            self._suppress_continuous_events = False
+            speaker_color = t["misora_pink"] if box.speaker else t["fg_muted"]
+            lbl_sp.config(text=speaker_disp, fg=speaker_color)
 
     def _on_dialogue_key_up(self, _event: tk.Event) -> Optional[str]:
         """Navigate to previous box when pressing Up at top line of Clean Dialogue View."""
@@ -8418,7 +8303,10 @@ class MisoraApp(tk.Tk):
             messagebox.showinfo("Translation Applied", f"Successfully applied translations to {applied} boxes.")
         else:
             clean_clip = clip.strip()
-            if "\n\n" in clean_clip or re.search(r"\n\s*\n", clean_clip):
+            if re.search(r"\n\s*\n\s*\n+", clean_clip):
+                raw_items = [p.strip() for p in re.split(r"\n\s*\n\s*\n+", clean_clip) if p.strip()]
+                mode_desc = "triple-enter blocks (\n\n\n)"
+            elif "\n\n" in clean_clip or re.search(r"\n\s*\n", clean_clip):
                 raw_items = [p.strip() for p in re.split(r"\n\s*\n", clean_clip) if p.strip()]
                 mode_desc = "paragraphs (separated by blank lines)"
             else:
