@@ -14,9 +14,9 @@
 
 ---
 
-<img align="right" width="135" src="assets/misora_chibi.png" alt="Misora Chibi">
+<img align="right" width="85" src="assets/misora_chibi.png" alt="Misora Chibi">
 
-## 📖 Overview
+## <img src="assets/icons/caravan_icon_buff_126501.png" width="24" height="24" valign="middle"> Overview
 
 In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D asset bundles (`.unity3d`). When proofreading or correcting translations after assets have already been packed into `BepInEx\Translation\en\RedirectedResources\story\...`, making revisions traditionally required a tedious, multi-step pipeline:
 
@@ -29,32 +29,32 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 ---
 
-## ✨ Key Features
+## <img src="assets/icons/caravan_icon_buff_118201.png" width="24" height="24" valign="middle"> Key Features
 
 ### 1. Zero-Pipeline In-Place Repacking
-* <img src="assets/icons/caravan_icon_buff_100201.png" width="20" height="20" valign="middle"> **Instant Patching**: Open any `.unity3d` story asset directly. Edit the dialogue text or speaker name and hit **Ctrl+S**; Misora repacks the bundle in-memory with byte-exact binary serialization (`>H` command IDs, base64 bit-inverted payloads). No intermediate files or extraction needed.
-* <img src="assets/icons/caravan_icon_buff_118201.png" width="20" height="20" valign="middle"> **Bi-directional XUAT Sync**: When saving a bundle correction, Misora can automatically locate and update the matching community translation dictionary (`.txt`) under `Translation\en\Text\`, creating automated `.bak` backups.
+* **Instant Patching**: Open any `.unity3d` story asset directly. Edit the dialogue text or speaker name and hit **Ctrl+S**; Misora repacks the bundle in-memory with byte-exact binary serialization (`>H` command IDs, base64 bit-inverted payloads). No intermediate files or extraction needed.
+* **Bi-directional XUAT Sync**: When saving a bundle correction, Misora can automatically locate and update the matching community translation dictionary (`.txt`) under `Translation\en\Text\`, creating automated `.bak` backups.
 
 ### 2. Dual-View Story Editor
-* <img src="assets/icons/caravan_icon_buff_126401.png" width="20" height="20" valign="middle"> **Game Display View (Clean Dialogue)**: Displays the dialogue exactly as the player sees it in-game, uninterrupted by technical script cues for lip-sync (`lip_sync`), animations (`chara_anim`), camera pans, or voice cues (`voice`).
-* <img src="assets/icons/caravan_icon_buff_126501.png" width="20" height="20" valign="middle"> **Raw AST Script View (Technical Records)**: Displays the full sequence of underlying engine command records with line markers and decoded arguments.
-* <img src="assets/icons/caravan_icon_buff_102001.png" width="20" height="20" valign="middle"> **Placeholder Insertion**: Insert `{playername}` with a single click or shortcut (**Ctrl+P**). Misora automatically maps `{playername}` $\leftrightarrow$ `{0}` between community dictionaries and the game engine.
+* **Game Display View (Clean Dialogue)**: Displays the dialogue exactly as the player sees it in-game, uninterrupted by technical script cues for lip-sync (`lip_sync`), animations (`chara_anim`), camera pans, or voice cues (`voice`).
+* **Raw AST Script View (Technical Records)**: Displays the full sequence of underlying engine command records with line markers and decoded arguments.
+* **Placeholder Insertion**: Insert `{playername}` with a single click or shortcut (**Ctrl+P**). Misora automatically maps `{playername}` $\leftrightarrow$ `{0}` between community dictionaries and the game engine.
 
 ### 3. Notepad++ Style Multi-File Search
-* <img src="assets/icons/caravan_icon_buff_103601.png" width="20" height="20" valign="middle"> **Multi-Scope**: Search within the active file, a target folder, or across the whole project (`RedirectedResources` + `Text`).
-* <img src="assets/icons/caravan_icon_buff_101401.png" width="20" height="20" valign="middle"> **Regex & Case-Sensitivity**: Full regular expression and case-sensitive matching support.
-* <img src="assets/icons/caravan_icon_buff_132501.png" width="20" height="20" valign="middle"> **XUnity Auto Translator (XUAT) Matching**:
+* **Multi-Scope**: Search within the active file, a target folder, or across the whole project (`RedirectedResources` + `Text`).
+* **Regex & Case-Sensitivity**: Full regular expression and case-sensitive matching support.
+* **XUnity Auto Translator (XUAT) Matching**:
   * Respects `IgnoreWhitespaceInDialogue`: Matches text across lines regardless of newlines (`\n`), spaces, or Japanese full-width spaces (`\u3000`).
   * Seamlessly matches `{playername}` in translations against `{0}` in raw game assets.
-* <img src="assets/icons/caravan_icon_buff_100701.png" width="20" height="20" valign="middle"> **Interactive Results Tree**: Grouped by file with dialogue box indices and speaker tags; click any search result to immediately jump to and edit that dialogue box.
+* **Interactive Results Tree**: Grouped by file with dialogue box indices and speaker tags; click any search result to immediately jump to and edit that dialogue box.
 
 ### 4. Standalone & Extensible
-* <img src="assets/icons/caravan_icon_buff_118201.png" width="20" height="20" valign="middle"> **Self-Contained**: Stored in its own dedicated standalone repository, completely independent and ready to deploy.
-* <img src="assets/icons/caravan_icon_buff_104901.png" width="20" height="20" valign="middle"> **Misora Character Aesthetic**: Styled with a dark palette (`#1e1e24`) and Misora's signature bubblegum pink accents (`#ff7da7`).
+* **Self-Contained**: Stored in its own dedicated standalone repository, completely independent and ready to deploy.
+* **Misora Character Aesthetic**: Styled with a dark palette (`#1e1e24`) and Misora's signature bubblegum pink accents (`#ff7da7`).
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+## <img src="assets/icons/caravan_icon_buff_126401.png" width="24" height="24" valign="middle"> Keyboard Shortcuts
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
@@ -70,7 +70,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 ---
 
-## 🚀 Quickstart
+## <img src="assets/icons/caravan_icon_buff_100201.png" width="24" height="24" valign="middle"> Quickstart
 
 ### Prerequisites
 * **Python 3.11+** installed (Python 3.12 recommended).
@@ -92,14 +92,14 @@ misora.bat "C:\Gacha\PriconneRe-TL\src\BepInEx\Translation\en\RedirectedResource
 
 ---
 
-## 📁 Project Structure
+## <img src="assets/icons/caravan_icon_buff_103601.png" width="24" height="24" valign="middle"> Project Structure
 
 ```
 Misora-Editor/
 ├── assets/
 │   ├── banner.jpg              # Readme header banner
 │   ├── misora_chibi.png        # Chibi mascot artwork
-│   ├── icons/                  # Caravan buff bullet icons
+│   ├── icons/                  # Caravan buff section header icons
 │   ├── Splash_1.jpg            # Application splash art 1
 │   ├── Splash_2.jpg            # Application splash art 2
 │   ├── Splash_3.jpg            # Application splash art 3
@@ -131,7 +131,7 @@ Misora-Editor/
 
 ---
 
-## 🧪 Running Unit Tests
+## <img src="assets/icons/caravan_icon_buff_132501.png" width="24" height="24" valign="middle"> Running Unit Tests
 
 Run the test suite:
 ```bash
@@ -140,6 +140,6 @@ py -3.12 -m unittest discover -s tests
 
 ---
 
-## 📄 License
+## <img src="assets/icons/caravan_icon_buff_133101.png" width="24" height="24" valign="middle"> License
 
 This project is licensed under the MIT License. Princess Connect! Re:Dive and its character assets are trademarks and copyright of Cygames, Inc.
