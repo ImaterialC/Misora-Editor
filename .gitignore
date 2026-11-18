@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE and Editor configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local Misora runtime state & user configuration
+misora_config.json
+misora_debug.log
+*.log
+
+# Diagnostic & temporary dumps
+*.missing.txt
+*.report.txt
+*.probe.txt
+*.keys.txt
+gcm-diagnose.log
+
+# Game asset binary payloads (do not commit proprietary/binary files)
+*.unity3d
+*.asset
+
+# Backup files
+*.bak
+*.bak*
+
+# Design, mockup & work files
+*.psd
+New folder/
+_archive/
