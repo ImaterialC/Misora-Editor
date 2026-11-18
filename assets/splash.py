@@ -34,11 +34,20 @@ class MisoraSplashScreen:
     """
     Lightweight, instant splash placeholder for Misora Editor.
     Fixed 600x400 window with minimal text and a thin progress line.
+    Can run as a Toplevel of the main MisoraApp or standalone Tk.
     """
 
-    def __init__(self):
-        self._root = tk.Tk()
+    def __init__(self, parent: Optional[tk.Tk] = None):
+        self._is_toplevel = parent is not None
+        if self._is_toplevel:
+            self._root = tk.Toplevel(parent)
+        else:
+            self._root = tk.Tk()
         self._root.overrideredirect(True)
+        try:
+            self._root.attributes("-topmost", True)
+        except Exception:
+            pass
 
         # Center on screen
         sw = self._root.winfo_screenwidth()

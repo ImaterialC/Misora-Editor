@@ -370,6 +370,217 @@ class TestMisoraUIIntegration(unittest.TestCase):
         self.app._apply_theme_preset("Custom")
         self.assertIn("Applied custom theme colors", self.app.lbl_status.cget("text"))
 
+    def test_19_opened_files_context_menu_close_others_and_all(self):
+        """Right-click actions Close Others, Close All Unmodified, Close All work cleanly."""
+        f1 = Path(tempfile.gettempdir()) / "test_doc1.txt"
+        f2 = Path(tempfile.gettempdir()) / "test_doc2.txt"
+        f3 = Path(tempfile.gettempdir()) / "test_doc3.txt"
+        f1.write_text("Doc 1 content", encoding="utf-8")
+        f2.write_text("Doc 2 content", encoding="utf-8")
+        f3.write_text("Doc 3 content", encoding="utf-8")
+
+        try:
+            self.app.open_file(f1)
+            self.app.open_file(f2)
+            self.app.open_file(f3)
+            self.assertEqual(len(self.app.open_documents), 3)
+
+            # Close Others keeping f2
+            self.app.close_others(f2)
+            self.assertEqual(len(self.app.open_documents), 1)
+            self.assertIn(f2, self.app.open_documents)
+
+            # Re-open f1 and mark it dirty
+            self.app.open_file(f1)
+            self.app.is_dirty = True
+            self.app.open_documents[f1]["dirty"] = True
+
+            # Close all unmodified (should close f2, keep dirty f1)
+            self.app.close_all_unmodified()
+            self.assertEqual(len(self.app.open_documents), 1)
+            self.assertIn(f1, self.app.open_documents)
+
+            # Clean up dirty flag to avoid blocking prompt
+            self.app.is_dirty = False
+            self.app.open_documents[f1]["dirty"] = False
+            self.app.close_file(f1)
+            self.assertEqual(len(self.app.open_documents), 0)
+        finally:
+            for f in (f1, f2, f3):
+                if f.exists():
+                    f.unlink()
+
+    def test_20_seamless_cursor_and_box_sync(self):
+        """Switching between Page View and Continuous View preserves exact box and character offset."""
+        bundle_path = Path(__file__).resolve().parent.parent / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            self.skipTest(f"Bundle not found: {bundle_path}")
+
+        self.app.open_file(bundle_path)
+        # Select Box 2 (0-indexed 1)
+        self.app.current_box_idx = 1
+        self.app._update_views()
+
+        # Position caret at character 5 in Page View
+        self.app.txt_dialogue.mark_set("insert", "1.0 + 5c")
+
+        # Toggle to Continuous View
+        self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
+
+        self.assertEqual(self.app.current_box_idx, 1)
+
+        # Toggle back to Page View
+        self.app.var_continuous_view.set(False)
+        self.app._on_toggle_continuous_view()
+
+        self.assertEqual(self.app.current_box_idx, 1)
+        ins = self.app.txt_dialogue.index("insert")
+        self.assertTrue(ins.startswith("1.") or ins.startswith("2."))
+
+    def test_21_plain_text_editing_and_save_continuous_and_page(self):
+        """Plain text files track dirty state in Continuous and Page View and save with backup."""
+        txt_path = Path(tempfile.gettempdir()) / "test_plain_edit.txt"
+        txt_path.write_text("Hello World\nLine 2\n", encoding="utf-8")
+
+        try:
+            self.app.open_file(txt_path)
+            self.assertFalse(self.app.is_dirty)
+
+            # Edit in Page View
+            self.app.txt_dialogue.insert("end-1c", "Extra Page Text\n")
+            self.app._on_dialogue_edited()
+            self.assertTrue(self.app.is_dirty)
+
+            # Save in Page View
+            self.app.on_save()
+            self.assertFalse(self.app.is_dirty)
+            saved_content = txt_path.read_text(encoding="utf-8")
+            self.assertIn("Extra Page Text", saved_content)
+
+            # Toggle Continuous View
+            self.app.var_continuous_view.set(True)
+            self.app._on_toggle_continuous_view()
+
+            # Edit in Continuous View
+            self.app.txt_continuous.insert("end-1c", "Extra Continuous Text\n")
+            self.app._sync_continuous_box_from_widget()
+            self.assertTrue(self.app.is_dirty)
+
+            # Save in Continuous View
+            self.app.on_save()
+            self.assertFalse(self.app.is_dirty)
+            saved_content = txt_path.read_text(encoding="utf-8")
+            self.assertIn("Extra Continuous Text", saved_content)
+
+            # Revert to Page View
+            self.app.var_continuous_view.set(False)
+            self.app._on_toggle_continuous_view()
+        finally:
+            if txt_path.exists():
+                txt_path.unlink()
+
+    def test_22_single_root_splash_speaker_and_continuous_binding(self):
+        """Single-root Toplevel splash architecture preserves StringVar and BooleanVar bindings."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+
+        splash_app = misora_app.MisoraApp(restore_session=False, show_splash=True)
+        splash_app.withdraw()
+        try:
+            splash_app.open_file(bundle_path)
+            # The speaker entry widget must NOT be empty string!
+            self.assertEqual(splash_app.entry_speaker.get(), "Narration")
+            self.assertEqual(splash_app.speaker_var.get(), "Narration")
+
+            # Navigating next must update entry widget
+            splash_app.on_next_box()
+            self.assertEqual(splash_app.entry_speaker.get(), "Hiyori")
+            self.assertEqual(splash_app.speaker_var.get(), "Hiyori")
+
+            # Continuous View checkbox must toggle and render correctly
+            splash_app.var_continuous_view.set(True)
+            splash_app._on_toggle_continuous_view()
+            self.assertGreater(len(splash_app.txt_continuous.get("1.0", "end-1c")), 100)
+        finally:
+            splash_app.destroy()
+
+    def test_23_paste_cross_box_smart_plain_text(self):
+        """Smart Plain Text paste updates consecutive boxes and preserves character speaker names."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+        self.app.open_file(bundle_path)
+
+        orig_spk0 = self.app.current_doc.boxes[0].speaker
+        orig_spk1 = self.app.current_doc.boxes[1].speaker
+        orig_spk2 = self.app.current_doc.boxes[2].speaker
+
+        # Mock clipboard and confirmation dialogs
+        clip_content = "Translated paragraph 1\n\nTranslated paragraph 2\n\nTranslated paragraph 3"
+        self.app.clipboard_get = lambda: clip_content
+        orig_ask = misora_app.messagebox.askyesno
+        orig_info = misora_app.messagebox.showinfo
+        misora_app.messagebox.askyesno = lambda *args, **kwargs: True
+        misora_app.messagebox.showinfo = lambda *args, **kwargs: None
+
+        try:
+            self.app.on_paste_cross_box()
+            doc = self.app.current_doc
+            self.assertEqual(doc.boxes[0].clean_text, "Translated paragraph 1")
+            self.assertEqual(doc.boxes[1].clean_text, "Translated paragraph 2")
+            self.assertEqual(doc.boxes[2].clean_text, "Translated paragraph 3")
+            # Original speakers MUST be preserved
+            self.assertEqual(doc.boxes[0].speaker, orig_spk0)
+            self.assertEqual(doc.boxes[1].speaker, orig_spk1)
+            self.assertEqual(doc.boxes[2].speaker, orig_spk2)
+
+            # Undo reverts all 3 boxes simultaneously
+            self.app.on_undo()
+            self.assertNotEqual(doc.boxes[0].clean_text, "Translated paragraph 1")
+            self.assertNotEqual(doc.boxes[1].clean_text, "Translated paragraph 2")
+            self.assertNotEqual(doc.boxes[2].clean_text, "Translated paragraph 3")
+
+            # Redo restores all 3 boxes simultaneously
+            self.app.on_redo()
+            self.assertEqual(doc.boxes[0].clean_text, "Translated paragraph 1")
+            self.assertEqual(doc.boxes[1].clean_text, "Translated paragraph 2")
+            self.assertEqual(doc.boxes[2].clean_text, "Translated paragraph 3")
+        finally:
+            misora_app.messagebox.askyesno = orig_ask
+            misora_app.messagebox.showinfo = orig_info
+
+    def test_24_paste_cross_box_delimited(self):
+        """Delimited script paste updates both speaker and dialogue across boxes."""
+        bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not bundle_path.exists():
+            return
+        self.app.open_file(bundle_path)
+
+        clip_content = (
+            "=== [BOX:0|Speaker:Kokkoro] ===\n"
+            "Master, breakfast is ready!\n\n"
+            "=== [BOX:1|Speaker:Yuuki] ===\n"
+            "Thank you Kokkoro!"
+        )
+        self.app.clipboard_get = lambda: clip_content
+        orig_ask = misora_app.messagebox.askyesno
+        orig_info = misora_app.messagebox.showinfo
+        misora_app.messagebox.askyesno = lambda *args, **kwargs: True
+        misora_app.messagebox.showinfo = lambda *args, **kwargs: None
+
+        try:
+            self.app.on_paste_cross_box()
+            doc = self.app.current_doc
+            self.assertEqual(doc.boxes[0].speaker, "Kokkoro")
+            self.assertEqual(doc.boxes[0].clean_text, "Master, breakfast is ready!")
+            self.assertEqual(doc.boxes[1].speaker, "Yuuki")
+            self.assertEqual(doc.boxes[1].clean_text, "Thank you Kokkoro!")
+        finally:
+            misora_app.messagebox.askyesno = orig_ask
+            misora_app.messagebox.showinfo = orig_info
+
 
 if __name__ == "__main__":
     unittest.main()

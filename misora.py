@@ -977,20 +977,35 @@ class NguiColorPickerPopup(tk.Toplevel):
 class MisoraApp(tk.Tk):
     """Main Application Window for Misora: Unity3D Revision Tool."""
 
-    def __init__(self, initial_path: Optional[str] = None, _progress_callback=None, restore_session: bool = True):
+    def __init__(self, initial_path: Optional[str] = None, show_splash: bool = True, _progress_callback=None, restore_session: bool = True):
         super().__init__()
         self.title("Misora Editor: Unity3D Revision Tool & Story Editor")
         self.geometry("1280x820")
         self.minsize(980, 620)
-        self.withdraw()   # stay hidden until splash closes
+        self.withdraw()   # stay hidden until splash closes or ready
+
+        splash = None
+        if show_splash and _progress_callback is None:
+            try:
+                splash = MisoraSplashScreen(parent=self)
+                splash.process_events()
+            except Exception:
+                splash = None
 
         def _rpt(val: float, msg: str = ""):
-            if _progress_callback:
+            if splash:
+                try:
+                    splash.set_progress(val, msg)
+                    splash.process_events()
+                except Exception:
+                    pass
+            elif _progress_callback:
                 try:
                     _progress_callback(val, msg)
                 except Exception:
                     pass
 
+        _rpt(0.10, "Loading core modules…")
         # Central Logger initialized early so startup & config load are recorded
         self.logger = MisoraLogger(DEBUG_LOG_PATH)
         self._install_exception_hooks()
@@ -1038,8 +1053,8 @@ class MisoraApp(tk.Tk):
         self.current_text_obj: Any = None
         self.current_box_idx: int = 0
         self.is_box0_active: bool = False
-        self.var_box0_title: tk.StringVar = tk.StringVar(value="")
-        self.var_box0_subtitle: tk.StringVar = tk.StringVar(value="")
+        self.var_box0_title: tk.StringVar = tk.StringVar(master=self, value="")
+        self.var_box0_subtitle: tk.StringVar = tk.StringVar(master=self, value="")
         self.is_bundle_file: bool = False
         self.is_dirty: bool = False
         self._plain_text_content: str = ""
@@ -1077,15 +1092,15 @@ class MisoraApp(tk.Tk):
 
         # Debug Console state
         self._console_visible: bool = bool(dbg_cfg.get("console_visible", False))
-        self.var_console_visible = tk.BooleanVar(value=self._console_visible)
-        self.var_log_to_file = tk.BooleanVar(value=bool(dbg_cfg.get("log_to_file", False)))
-        self.var_log_level = tk.StringVar(value=str(dbg_cfg.get("level", "Info")))
-        self.var_console_autoscroll = tk.BooleanVar(value=True)
+        self.var_console_visible = tk.BooleanVar(master=self, value=self._console_visible)
+        self.var_log_to_file = tk.BooleanVar(master=self, value=bool(dbg_cfg.get("log_to_file", False)))
+        self.var_log_level = tk.StringVar(master=self, value=str(dbg_cfg.get("level", "Info")))
+        self.var_console_autoscroll = tk.BooleanVar(master=self, value=True)
         self.var_log_categories: Dict[str, tk.BooleanVar] = {}
         saved_cats = dbg_cfg.get("categories", {}) if isinstance(dbg_cfg.get("categories"), dict) else {}
         for cat in LOG_CATEGORIES:
             enabled = True if cat == ALWAYS_ON_CATEGORY else bool(saved_cats.get(cat, True))
-            self.var_log_categories[cat] = tk.BooleanVar(value=enabled)
+            self.var_log_categories[cat] = tk.BooleanVar(master=self, value=enabled)
 
         # Background search worker & highlighting state
         self.search_engine = ProjectSearchEngine()
@@ -1170,6 +1185,9 @@ class MisoraApp(tk.Tk):
 
         _rpt(1.00, "Ready!")
         self.logger.info("UI / Theme / Config", f"Misora initialized. Config path: {CONFIG_PATH}")
+
+        if splash:
+            splash.close()
 
         # Reveal the main window (was hidden during splash)
         self.deiconify()
@@ -2499,8 +2517,8 @@ class MisoraApp(tk.Tk):
         panel_fg = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         accent_fg = best_contrast_fg(t["misora_pink"])
 
-        self.var_continuous_view = tk.BooleanVar(value=False)
-        self.var_preview_compiled = tk.BooleanVar(value=False)
+        self.var_continuous_view = tk.BooleanVar(master=self, value=False)
+        self.var_preview_compiled = tk.BooleanVar(master=self, value=False)
         self._all_menus: List[tk.Menu] = []
 
         menubar = tk.Menu(
@@ -2542,6 +2560,12 @@ class MisoraApp(tk.Tk):
         self.edit_menu.add_command(label="Wrap Selection with Ruby ([rub:...]...[/rub])", command=self.on_insert_ruby, accelerator="Ctrl+R")
         self.edit_menu.add_command(label="NGUI Color & Gradient Picker...", command=self.on_open_color_picker)
         self.edit_menu.add_command(label="Insert {playername}", command=self.on_insert_playername, accelerator="Ctrl+P")
+        self.edit_menu.add_separator()
+        self.edit_menu.add_command(
+            label="Paste Script Across Boxes...",
+            command=self.on_paste_cross_box,
+            accelerator="Ctrl+Shift+V",
+        )
         menubar.add_cascade(label="Edit", menu=self.edit_menu)
         self._all_menus.append(self.edit_menu)
 
@@ -2873,7 +2897,7 @@ class MisoraApp(tk.Tk):
             "label_accent"
         ).pack(side="left", padx=(0, 6))
 
-        self.search_var = tk.StringVar()
+        self.search_var = tk.StringVar(master=self)
         self.search_entry = self._tag_role(
             tk.Entry(
                 row1,
@@ -2909,7 +2933,7 @@ class MisoraApp(tk.Tk):
             "label_voice"
         ).pack(side="left", padx=(0, 6))
 
-        self.replace_var = tk.StringVar()
+        self.replace_var = tk.StringVar(master=self)
         self.replace_entry = self._tag_role(
             tk.Entry(
                 self.row_replace,
@@ -2939,11 +2963,11 @@ class MisoraApp(tk.Tk):
         row2 = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
         row2.pack(fill="x", padx=8, pady=(0, 4))
 
-        self.var_case = tk.BooleanVar(value=False)
-        self.var_regex = tk.BooleanVar(value=False)
-        self.var_ignore_ws = tk.BooleanVar(value=True)
-        self.var_inc_bundles = tk.BooleanVar(value=True)
-        self.var_inc_text = tk.BooleanVar(value=True)
+        self.var_case = tk.BooleanVar(master=self, value=False)
+        self.var_regex = tk.BooleanVar(master=self, value=False)
+        self.var_ignore_ws = tk.BooleanVar(master=self, value=True)
+        self.var_inc_bundles = tk.BooleanVar(master=self, value=True)
+        self.var_inc_text = tk.BooleanVar(master=self, value=True)
 
         cb_case = ttk.Checkbutton(row2, text="Match Case", variable=self.var_case, style="Panel.TCheckbutton")
         cb_case.pack(side="left", padx=4)
@@ -3288,7 +3312,7 @@ class MisoraApp(tk.Tk):
             "label_muted"
         ).pack(side="left", padx=(0, 4))
 
-        self.speaker_var = tk.StringVar()
+        self.speaker_var = tk.StringVar(master=self)
         self.entry_speaker = self._tag_role(
             tk.Entry(
                 speaker_ribbon_row,
@@ -3658,6 +3682,8 @@ class MisoraApp(tk.Tk):
         self.txt_dialogue.bind("<Control-b>", lambda e: self._shortcut_wrap("[b]", "[/b]"))
         self.txt_dialogue.bind("<Control-i>", lambda e: self._shortcut_wrap("[i]", "[/i]"))
         self.txt_dialogue.bind("<Control-u>", lambda e: self._shortcut_wrap("[u]", "[/u]"))
+        self.txt_dialogue.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
+        self.txt_dialogue.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
 
         # Dedicated Box 0 Story Metadata Panel (Option 1)
         self.panel_box0_metadata = self._tag_role(tk.Frame(text_container, bg=t["bg_panel"]), "panel")
@@ -3929,6 +3955,8 @@ class MisoraApp(tk.Tk):
         self.txt_continuous.bind("<Control-b>", lambda e: self._shortcut_wrap("[b]", "[/b]"))
         self.txt_continuous.bind("<Control-i>", lambda e: self._shortcut_wrap("[i]", "[/i]"))
         self.txt_continuous.bind("<Control-u>", lambda e: self._shortcut_wrap("[u]", "[/u]"))
+        self.txt_continuous.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
+        self.txt_continuous.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
 
         # BOTTOM VIEW: Raw AST Script View (Technical Records)
         bottom_view = self._tag_role(tk.Frame(self.v_paned, bg=t["bg_panel"]), "panel")
@@ -4537,7 +4565,7 @@ class MisoraApp(tk.Tk):
         fam_row.pack(fill="x", padx=8, pady=3)
         self._tag_role(tk.Label(fam_row, text="Dialogue Font:", bg=t["bg_panel"], fg=t["fg_text"]), "label_panel").pack(side="left")
 
-        self.var_font_family = tk.StringVar(value=self.prefs["dialogue_font_family"])
+        self.var_font_family = tk.StringVar(master=self, value=self.prefs["dialogue_font_family"])
         cb_font = ttk.Combobox(
             fam_row,
             textvariable=self.var_font_family,
@@ -4548,9 +4576,9 @@ class MisoraApp(tk.Tk):
         cb_font.pack(side="right")
         cb_font.bind("<<ComboboxSelected>>", lambda _e: self._on_font_pref_changed())
 
-        self.var_dlg_font_sz = tk.IntVar(value=int(self.prefs["dialogue_font_size"]))
-        self.var_raw_font_sz = tk.IntVar(value=int(self.prefs["raw_font_size"]))
-        self.var_ui_font_sz = tk.IntVar(value=int(self.prefs["ui_font_size"]))
+        self.var_dlg_font_sz = tk.IntVar(master=self, value=int(self.prefs["dialogue_font_size"]))
+        self.var_raw_font_sz = tk.IntVar(master=self, value=int(self.prefs["raw_font_size"]))
+        self.var_ui_font_sz = tk.IntVar(master=self, value=int(self.prefs["ui_font_size"]))
 
         font_rows = [
             ("Dialogue Size (pt):", self.var_dlg_font_sz, 8, 28),
@@ -4586,7 +4614,7 @@ class MisoraApp(tk.Tk):
 
         preset_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
         preset_row.pack(fill="x", padx=8, pady=3)
-        self.var_preset = tk.StringVar(value=self._detect_active_preset_name())
+        self.var_preset = tk.StringVar(master=self, value=self._detect_active_preset_name())
         cb_preset = ttk.Combobox(
             preset_row,
             textvariable=self.var_preset,
@@ -4638,7 +4666,7 @@ class MisoraApp(tk.Tk):
             swatch.pack(side="right", padx=(4, 0))
             self._theme_swatch_buttons[key] = swatch
 
-            hvar = tk.StringVar(value=t[key])
+            hvar = tk.StringVar(master=self, value=t[key])
             self._theme_hex_vars[key] = hvar
             hex_ent = self._tag_role(
                 tk.Entry(
@@ -4676,7 +4704,7 @@ class MisoraApp(tk.Tk):
         filter_row.pack(fill="x", padx=6, pady=(2, 4))
 
         self._tag_role(tk.Label(filter_row, text="Filter:", bg=t["bg_panel"], fg=t["fg_muted"]), "label_muted").pack(side="left", padx=(0, 4))
-        self.var_glossary_filter = tk.StringVar()
+        self.var_glossary_filter = tk.StringVar(master=self)
         ent_filter = self._tag_role(
             tk.Entry(
                 filter_row,
@@ -5209,27 +5237,61 @@ class MisoraApp(tk.Tk):
         self._sync_gd_scroll_bounds()
 
     def _on_toggle_continuous_view(self) -> None:
-        """Switch Game Display between Page-by-Page mode and Continuous Dialog Stream.
-        Bug 6 fix: always call _update_views() so all state is properly refreshed."""
+        """Switch Game Display between Page-by-Page mode and Continuous Dialog Stream with seamless caret sync."""
         if self.var_continuous_view.get():
+            char_offset = 0
+            try:
+                target_w = self.txt_box0_summary if self.is_box0_active else self.txt_dialogue
+                diff = target_w.count("1.0", "insert", "chars")
+                char_offset = max(0, diff[0] if diff else 0)
+            except Exception:
+                char_offset = 0
+
             self.gd_scroll_wrap.pack_forget()
             self.continuous_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
             self.lbl_gd_title.config(text="GAME VIEW (Continuous Stream)")
-            self._update_views()  # Bug 6: use _update_views not bare _render_continuous_view
-            # Focus active box when switching to continuous view
-            if self.current_doc and self.current_doc.boxes:
-                self.after(50, lambda: self._focus_continuous_box(self.current_box_idx, move_cursor=True))
+            self._update_views()
+            if self.is_box0_active:
+                self.after(50, lambda: self._focus_continuous_box(-1, move_cursor=True, char_offset=char_offset))
+            elif self.current_doc and self.current_doc.boxes:
+                self.after(50, lambda: self._focus_continuous_box(self.current_box_idx, move_cursor=True, char_offset=char_offset))
         else:
-            # Sync active box from cursor position in continuous view
             cur_box = self._find_continuous_box_at_index("insert")
             if cur_box is None:
                 cur_box = self._nearest_continuous_box_to_index("insert")
-            if cur_box is not None and self.current_doc and 0 <= cur_box < len(self.current_doc.boxes):
+
+            char_offset = 0
+            if cur_box == -1:
+                self.is_box0_active = True
+                if "box_start_meta" in self.txt_continuous.mark_names():
+                    try:
+                        diff = self.txt_continuous.count("box_start_meta", "insert", "chars")
+                        char_offset = max(0, diff[0] if diff else 0)
+                    except Exception:
+                        char_offset = 0
+            elif cur_box is not None and self.current_doc and 0 <= cur_box < len(self.current_doc.boxes):
+                self.is_box0_active = False
                 self.current_box_idx = cur_box
+                s_mark = f"box_start_{cur_box}"
+                if s_mark in self.txt_continuous.mark_names():
+                    try:
+                        diff = self.txt_continuous.count(s_mark, "insert", "chars")
+                        char_offset = max(0, diff[0] if diff else 0)
+                    except Exception:
+                        char_offset = 0
+
             self.continuous_wrap.pack_forget()
             self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
             self.lbl_gd_title.config(text="GAME VIEW (Clean Dialogue)")
             self._update_views()
+
+            try:
+                target_w = self.txt_box0_summary if self.is_box0_active else self.txt_dialogue
+                target_w.mark_set("insert", f"1.0 + {max(0, char_offset)}c")
+                target_w.see("insert")
+                target_w.focus_set()
+            except Exception:
+                pass
 
     # -------------------------------------------------------------------------
     # Status & Action Bar
@@ -5248,7 +5310,7 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_status.pack(side="left", padx=8, pady=6)
 
-        self.var_sync_xuat = tk.BooleanVar(value=True)
+        self.var_sync_xuat = tk.BooleanVar(master=self, value=True)
         cb_sync = ttk.Checkbutton(
             action_bar,
             text="Also update matching XUAT .txt dictionary on Save",
@@ -5295,6 +5357,8 @@ class MisoraApp(tk.Tk):
         self.bind("<Control-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-t>", lambda e: self.on_copy_ai_prompt())
+        self.bind("<Control-Shift-V>", lambda e: self.on_paste_cross_box())
+        self.bind("<Control-Shift-v>", lambda e: self.on_paste_cross_box())
         self.bind("<F8>", lambda e: self.on_translate_current_box())
 
     def _toggle_continuous_shortcut(self) -> None:
@@ -6087,8 +6151,30 @@ class MisoraApp(tk.Tk):
         self._sync_continuous_box_from_widget()
 
     def _sync_continuous_box_from_widget(self) -> None:
-        """Read edited text for the active box in Continuous View and update StoryDocument."""
-        if self.var_preview_compiled.get() or not self.current_doc or not self.current_doc.boxes:
+        """Read edited text for the active box in Continuous View and update StoryDocument or plain text."""
+        if self.var_preview_compiled.get():
+            return
+
+        if not self.current_doc:
+            new_tx = self.txt_continuous.get("1.0", "end-1c")
+            if self._plain_text_content != new_tx:
+                old_tx = self._plain_text_content
+                self.undo_journal.record(
+                    PlainTextDelta(
+                        file_path=str(self.current_file_path or ""),
+                        old_content=old_tx,
+                        new_content=new_tx,
+                    ),
+                    label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
+                )
+                self._plain_text_content = new_tx
+                self.is_dirty = True
+                if self.current_file_path and self.current_file_path in self.open_documents:
+                    self.open_documents[self.current_file_path]["dirty"] = True
+                    self._refresh_opened_files_list()
+            return
+
+        if not self.current_doc.boxes:
             return
 
         box_idx = self._find_continuous_box_at_index("insert")
@@ -6486,7 +6572,7 @@ class MisoraApp(tk.Tk):
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
-                content = self.txt_dialogue.get("1.0", "end-1c")
+                content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
                 self.current_file_path.write_text(content, encoding="utf-8")
                 self.is_dirty = False
                 self._plain_text_content = content
@@ -7620,6 +7706,27 @@ class MisoraApp(tk.Tk):
 
         self._refresh_opened_files_list()
 
+    def close_others(self, keep_path: Path) -> None:
+        """Close all opened files except keep_path."""
+        to_close = [p for p in list(self.open_documents.keys()) if p != keep_path]
+        for p in to_close:
+            self.close_file(p)
+
+    def close_all_unmodified(self) -> None:
+        """Close all opened files that do not have unsaved changes."""
+        to_close = []
+        for p, info in list(self.open_documents.items()):
+            is_dirty = (p == self.current_file_path and self.is_dirty) or info.get("dirty", False)
+            if not is_dirty:
+                to_close.append(p)
+        for p in to_close:
+            self.close_file(p)
+
+    def close_all_files(self) -> None:
+        """Close all opened files, prompting on any unsaved changes."""
+        for p in list(self.open_documents.keys()):
+            self.close_file(p)
+
     # -------------------------------------------------------------------------
     # Right-Click Context Menus & External Editor Launching (#4D)
     # -------------------------------------------------------------------------
@@ -7651,16 +7758,25 @@ class MisoraApp(tk.Tk):
         return "break"
 
     def _show_file_context_menu(self, event: tk.Event, target_path: Path) -> None:
-        """Show right-click context menu with Open Containing Folder, Open With, Copy Path."""
+        """Show right-click context menu with Close, Close Others, Reveal in Explorer, etc."""
         t = self.theme
         panel_fg = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         accent_fg = best_contrast_fg(t["misora_pink"])
 
         menu = tk.Menu(self, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
 
-        menu.add_command(label=f"Open '{target_path.name}' in Misora", command=lambda: self.open_file(target_path))
-        menu.add_command(label="Open Containing Folder", command=lambda: self._open_containing_folder(target_path))
+        menu.add_command(label=f"Switch to '{target_path.name}'", command=lambda: self.open_file(target_path))
+        if target_path in self.open_documents:
+            menu.add_command(label="Close File", command=lambda: self.close_file(target_path))
+            menu.add_command(label="Close Others", command=lambda: self.close_others(target_path))
+            menu.add_command(label="Close All Unmodified", command=self.close_all_unmodified)
+            menu.add_command(label="Close All", command=self.close_all_files)
+            menu.add_separator()
+            if target_path == self.current_file_path:
+                menu.add_command(label="Save File (Ctrl+S)", command=self.on_save)
+
         menu.add_separator()
+        menu.add_command(label="Reveal in File Explorer", command=lambda: self._open_containing_folder(target_path))
 
         open_with = tk.Menu(menu, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
         open_with.add_command(label="Notepad", command=lambda: self._launch_editor_on_file("notepad.exe", target_path))
@@ -7674,8 +7790,7 @@ class MisoraApp(tk.Tk):
 
         menu.add_separator()
         menu.add_command(label="Copy Full Path", command=lambda: self._copy_to_clipboard(str(target_path)))
-        if target_path in self.open_documents:
-            menu.add_command(label="Close File", command=lambda: self.close_file(target_path))
+        menu.add_command(label="Copy File Name", command=lambda: self._copy_to_clipboard(target_path.name))
 
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -8302,13 +8417,75 @@ class MisoraApp(tk.Tk):
             self.show_toast(f"✓ Applied translation to {applied} boxes")
             messagebox.showinfo("Translation Applied", f"Successfully applied translations to {applied} boxes.")
         else:
-            ans = messagebox.askyesno(
-                "No Box Delimiters Found",
-                "Clipboard text does not contain '=== [BOX:x] ===' delimiters.\n\n"
-                "Do you want to paste the clipboard text directly into the current dialogue box?"
+            clean_clip = clip.strip()
+            if "\n\n" in clean_clip or re.search(r"\n\s*\n", clean_clip):
+                raw_items = [p.strip() for p in re.split(r"\n\s*\n", clean_clip) if p.strip()]
+                mode_desc = "paragraphs (separated by blank lines)"
+            else:
+                raw_items = [line.strip() for line in clean_clip.splitlines() if line.strip()]
+                mode_desc = "lines (separated by newlines)"
+
+            if len(raw_items) <= 1:
+                ans = messagebox.askyesno(
+                    "Paste Text to Current Box",
+                    f"Clipboard has 1 block of text.\n\nDo you want to paste it directly into the current dialogue box (Box {self.current_box_idx + 1})?",
+                    parent=self
+                )
+                if ans:
+                    self.apply_clean_text_edit(clean_clip)
+                return
+
+            total_boxes = len(self.current_doc.boxes)
+            start_idx = max(0, self.current_box_idx)
+            available = total_boxes - start_idx
+            count = min(len(raw_items), available)
+            excess = max(0, len(raw_items) - available)
+
+            preview_lines = []
+            for k in range(min(count, 3)):
+                preview_lines.append(f"  • Box {start_idx + k + 1}: {raw_items[k][:45]}...")
+            if count > 3:
+                preview_lines.append(f"  ... and {count - 3} more boxes")
+
+            prompt = (
+                f"Detected multi-item plain text ({len(raw_items)} items split by {mode_desc}).\n\n"
+                f"Target range: Box {start_idx + 1} to Box {start_idx + count} (of {total_boxes}).\n"
+                f"✓ Original speaker/character names will be PRESERVED.\n\n"
+                f"Preview:\n" + "\n".join(preview_lines) + "\n\n"
             )
-            if ans:
-                self.apply_clean_text_edit(clip.strip())
+            if excess > 0:
+                prompt += f"⚠️ Warning: {excess} excess items at end will be skipped.\n\n"
+            prompt += "Do you want to paste across these boxes?"
+
+            ans = messagebox.askyesno("Paste Across Boxes (Smart)", prompt, parent=self)
+            if not ans:
+                return
+
+            self.undo_journal.begin_batch(f"Paste Plain Text Across {count} Boxes")
+            for k in range(count):
+                b_idx = start_idx + k
+                old_box = self.current_doc.boxes[b_idx]
+                new_text = raw_items[k]
+                self.undo_journal.record(
+                    BoxEditDelta(
+                        box_index=b_idx,
+                        old_speaker=old_box.speaker,
+                        new_speaker=old_box.speaker,
+                        old_text=old_box.clean_text,
+                        new_text=new_text,
+                        file_path=str(self.current_file_path) if self.current_file_path else "",
+                    )
+                )
+                self.current_doc.inject_box(b_idx, old_box.speaker, new_text)
+                self._modified_boxes.add(b_idx)
+            self.undo_journal.end_batch()
+            self.is_dirty = True
+            self._update_views()
+            self.show_toast(f"✓ Pasted script across {count} boxes")
+            messagebox.showinfo("Paste Complete", f"Successfully pasted script across {count} boxes.", parent=self)
+
+    # Universal alias for cross-box script pasting
+    on_paste_cross_box = on_apply_translation_clipboard
 
     def on_clear_dialogue_skeleton(self) -> None:
         """Clear all dialogue text across all boxes, keeping speaker names and skeleton intact."""
@@ -9244,9 +9421,9 @@ def main():
     """
     Application entry point.
 
-    Shows a splash screen with artwork and an animated progress bar while
-    the main MisoraApp window initializes. The splash fades out as soon as
-    the editor is ready, so there is never a frozen black window on startup.
+    Initializes MisoraApp with a fast, lightweight splash screen
+    running as a Toplevel of the root application window to avoid
+    multi-root Tkinter event loop conflicts and variable orphaning.
     """
     initial_file = None
     show_splash = True
@@ -9256,31 +9433,7 @@ def main():
         elif not arg.startswith("-") and initial_file is None:
             initial_file = arg
 
-    # -- Show splash -------------------------------------------------------
-    splash = None
-    if show_splash:
-        try:
-            splash = MisoraSplashScreen()
-        except Exception:
-            splash = None
-
-    def _report(progress: float, msg: str):
-        if splash:
-            splash.set_progress(progress, msg)
-            splash.process_events()
-
-    # -- Build the main window with splash progress updates ---------------
-    _report(0.10, "Loading core modules…")
-    _report(0.25, "Preparing theme engine…")
-    _report(0.40, "Initializing undo journal…")
-
-    app = MisoraApp(initial_file, _progress_callback=_report)
-
-    _report(1.00, "Ready!")
-
-    if splash:
-        splash.close()
-
+    app = MisoraApp(initial_file, show_splash=show_splash)
     app.mainloop()
 
 
