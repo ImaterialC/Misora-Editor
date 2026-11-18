@@ -14,9 +14,7 @@
 
 ---
 
-<img align="right" width="85" src="assets/misora_chibi.png" alt="Misora Chibi">
-
-## <img src="assets/icons/caravan_icon_buff_126501.png" width="24" height="24" valign="middle"> Overview
+## <img src="assets/icons/caravan_buddy_icon_118201.png" width="28" height="28" valign="middle"> Overview
 
 In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D asset bundles (`.unity3d`). When proofreading or correcting translations after assets have already been packed into `BepInEx\Translation\en\RedirectedResources\story\...`, making revisions traditionally required a tedious, multi-step pipeline:
 
@@ -25,11 +23,13 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 3. Edit the text while carefully managing engine command tags.
 4. Repack the asset using separate command-line utilities.
 
+<img align="right" width="95" src="assets/misora_chibi.png" alt="Misora Chibi">
+
 **Misora** completely eliminates this pipeline. It loads `.unity3d` bundles directly into memory, exposes dialogue in a clean **Game Display View** side-by-side with a **Raw AST Script View**, and allows you to patch the bundle in-place in under **100 milliseconds** (`Ctrl+S`).
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_118201.png" width="24" height="24" valign="middle"> Key Features
+## <img src="assets/icons/caravan_buddy_icon_100101.png" width="28" height="28" valign="middle"> Key Features
 
 ### 1. Zero-Pipeline In-Place Repacking
 * **Instant Patching**: Open any `.unity3d` story asset directly. Edit the dialogue text or speaker name and hit **Ctrl+S**; Misora repacks the bundle in-memory with byte-exact binary serialization (`>H` command IDs, base64 bit-inverted payloads). No intermediate files or extraction needed.
@@ -54,7 +54,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_126401.png" width="24" height="24" valign="middle"> Keyboard Shortcuts
+## <img src="assets/icons/caravan_buddy_icon_126401.png" width="28" height="28" valign="middle"> Keyboard Shortcuts
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
@@ -70,7 +70,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_100201.png" width="24" height="24" valign="middle"> Quickstart
+## <img src="assets/icons/caravan_buddy_icon_100201.png" width="28" height="28" valign="middle"> Quickstart
 
 ### Prerequisites
 * **Python 3.11+** installed (Python 3.12 recommended).
@@ -92,14 +92,14 @@ misora.bat "C:\Gacha\PriconneRe-TL\src\BepInEx\Translation\en\RedirectedResource
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_103601.png" width="24" height="24" valign="middle"> Project Structure
+## <img src="assets/icons/caravan_buddy_icon_103601.png" width="28" height="28" valign="middle"> Project Structure
 
 ```
 Misora-Editor/
 ├── assets/
 │   ├── banner.jpg              # Readme header banner
 │   ├── misora_chibi.png        # Chibi mascot artwork
-│   ├── icons/                  # Caravan buff section header icons
+│   ├── icons/                  # Caravan buddy section header icons
 │   ├── Splash_1.jpg            # Application splash art 1
 │   ├── Splash_2.jpg            # Application splash art 2
 │   ├── Splash_3.jpg            # Application splash art 3
@@ -131,7 +131,7 @@ Misora-Editor/
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_132501.png" width="24" height="24" valign="middle"> Running Unit Tests
+## <img src="assets/icons/caravan_buddy_icon_132501.png" width="28" height="28" valign="middle"> Running Unit Tests
 
 Run the test suite:
 ```bash
@@ -140,6 +140,6 @@ py -3.12 -m unittest discover -s tests
 
 ---
 
-## <img src="assets/icons/caravan_icon_buff_133101.png" width="24" height="24" valign="middle"> License
+## <img src="assets/icons/caravan_buddy_icon_133101.png" width="28" height="28" valign="middle"> License
 
 This project is licensed under the MIT License. Princess Connect! Re:Dive and its character assets are trademarks and copyright of Cygames, Inc.
