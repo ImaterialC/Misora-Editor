@@ -81,16 +81,37 @@
 - [x] **2.3 Plain `.txt` Save Verification & Automated Backups (B16)**
   - Enhanced dirty-state detection, continuous-stream editing, and timestamped `.bak` backup verification when saving `.txt` files.
 
-### Phase 3: Machine Translation (MTL) & AI Prompt Integration (READY FOR EXPLORATION)
-- [ ] **3.1 DeepL, Google GTX & Local Sugoi MTL Connectivity & Verification**
-- [ ] **3.2 Tag Masking & Entity Shielding (`{playername}`, NGUI tags, Ruby)**
-- [ ] **3.3 AI / LLM Prompt Header Exporter & Customizer**
-- [ ] **3.4 Dedicated Floating Translation Assistant Workspace**
-- [ ] **3.5 Batch Story Translation Sweep with Cancellation**
+### Phase 3: Box Card Stream Overhaul & Triple-Enter Script Workflow (COMPLETED)
+- [x] **3.1 Overhaul Continuous View from monolithic text to Box Card Stream (`tk.Canvas` + `tk.Frame`)**
+- [x] **3.2 Physical elimination of separator lines and header bleed inside dialogue buffers**
+- [x] **3.3 Triple-Enter (`\n\n\n`) Script Copy (`Ctrl+Shift+C`) and Paste (`Ctrl+Shift+V`)**
+- [x] **3.4 Card-Scoped `Ctrl+A` selection to prevent accidental story-wide deletion**
+- [x] **3.5 Simplified Speaker Dropdown (direct actor list) and Box 0 invalidation/protection**
+- [x] **3.6 Seamless View Switch and exact box/caret character offset retention**
+
+### Phase 4: Continuous UX Refinements, Box-Level Tools & Caret Multi-Box Workflow (ACTIVE / PLANNED)
+- [ ] **4.1 Fix Line Number Gutter in Continuous View**: Remove obsolete `gutter_cont`; add per-card line numbering without breaking canvas layout.
+- [ ] **4.2 Global Mousewheel Canvas Scrolling**: Implement first-class `_on_cont_mousewheel` on `MisoraApp` returning `"break"` across all card widgets.
+- [ ] **4.3 Remove Duplicate Scrollbar**: Eliminate unmanaged ghost scrollbar on right side of Game View.
+- [ ] **4.4 Box 0 Distinct Background Tint**: Apply soft, slightly darker tint (`#dfd1f5` / `#2d1d29`) to Story Metadata Card.
+- [ ] **4.5 Compact Card Spacing & Snug Headers**: Eliminate vertical separator frames, tighten padding (`pady=(1, 2)`), and reduce badge font size.
+- [ ] **4.6 PanedWindow Resizing Lag Optimization**: Eliminate drag stutter via `opaqueresize=False` and debounced canvas configure handling.
+- [ ] **4.7 Remove Individual Box Copy Button**: Remove redundant `[📋]` button from card headers.
+- [ ] **4.8 Edit Menu & Shortcuts for Text and Box Actions**: Add menu commands and global shortcuts; integrate approved icon buttons.
+- [ ] **4.9 'Select Box' Multi-Box Mode**: Add checkbox next to Continuous View for multi-box batch Cut, Copy, Paste, and Delete.
+- [ ] **4.10 Caret-Aware Multi-Box Delimiter Paste (`\n\n\n+`)**: Split delimiter blocks from exact caret position across consecutive boxes on `Ctrl+V`.
+- [ ] **4.11 Mid-Dialogue Font Size Tags & Toolbar**: Support `<size=...>` and `[size=...]` in syntax highlighting, add `[Size]` ribbon button, and render scaled font in Compiled Preview.
+
+### Phase 5: Machine Translation (MTL) & AI Prompt Integration (PLANNED)
+- [ ] **5.1 DeepL, Google GTX & Local Sugoi MTL Connectivity & Verification**
+- [ ] **5.2 Tag Masking & Entity Shielding (`{playername}`, NGUI tags, Ruby)**
+- [ ] **5.3 AI / LLM Prompt Header Exporter & Customizer**
+- [ ] **5.4 Dedicated Floating Translation Assistant Workspace**
+- [ ] **5.5 Batch Story Translation Sweep with Cancellation**
 
 ---
 
 ## WORK STYLE & VERIFICATION PROTOCOL
 1. Run syntax verification (`py -3.12 -m py_compile misora.py core/*.py`).
 2. Run test suites (`py -3.12 -m unittest discover -s tests`).
-3. Maintain zero code regressions across all 32 tests.
+3. Maintain zero code regressions across all 38 tests.
