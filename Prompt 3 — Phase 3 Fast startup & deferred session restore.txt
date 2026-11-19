@@ -1,0 +1,41 @@
+/goal Execute Phase 3 of PROJECT_STATE.md: fast startup, lazy imports, deferred session restore, config recovery, and logger safety.
+
+CONTEXT
+@AGENTS.md @PROJECT_STATE.md @misora.py @misora.bat @assets/splash.py @core/bundle_io.py @core/logger.py @tests/
+
+SCOPE IN
+misora.bat
+misora.py bootstrap/import/session-restore paths
+assets/splash.py
+core/bundle_io.py lazy import only
+core/logger.py
+tests/
+
+SCOPE OUT
+New editor features, CSIF, MTL drawer, Prompt Studio.
+
+TASKS
+1. Read actual assets/splash.py and measure baseline before changing it.
+2. Remove UnityPy probes from misora.bat; keep interpreter detection safe for paths containing brackets/spaces.
+3. Lazy-load UnityPy under a module-level lock; set fallback version inside the lock; decouple core package imports so pure AST tests do not require UnityPy.
+4. Paint splash before heavy imports; keep ONE process and ONE tk.Tk root.
+5. Defer session restore until after main window visible; restore one file per tick with status progress.
+6. Validate saved window geometry against the virtual screen before deiconify.
+7. Preserve a recovery copy of parse-failed config before using defaults; never silently overwrite recoverable settings.
+8. Move logger file writes to a background writer queue; make stdout printing conditional.
+9. Benchmark large-story rendering before adding virtualization/LRU.
+
+VERIFY
+py -3.12 -m compileall -q misora.py core assets tests
+py -3.12 -m unittest discover -s tests -v
+Run startup with --perf three times and report actual millisecond traces.
+
+ACCEPTANCE
+- No second Tk root or splash subprocess.
+- Session restore still opens saved files and active file.
+- Config parse failure creates recovery copy.
+- Pure AST import does not require UnityPy.
+- Startup claims are backed by measured traces, not assumptions.
+
+DELIVER
+Before/after trace table, changed files, test output, limitations, updated PROJECT_STATE.md.

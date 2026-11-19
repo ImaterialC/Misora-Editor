@@ -1,0 +1,79 @@
+/plan Audit the current Misora workspace and reconcile the canonical
+defect ledger. Make NO application code changes.
+
+CONTEXT
+@AGENTS.md @PROJECT_STATE.md @misora.py @core/story_ast.py @core/bundle_io.py
+@core/xunity_sync.py @core/mtl_engine.py @core/search_engine.py
+@core/undo_journal.py @core/logger.py @assets/splash.py @misora.bat @tests/
+
+GOAL
+Verify the ledger in PROJECT_STATE.md against the actual files on disk.
+Produce a corrected audit report and a proposed PROJECT_STATE.md update.
+Do not implement fixes yet.
+
+RULES
+1. The source on disk is authority. Chat transcripts and legacy
+   PROJECT_STATE variants are claims to verify.
+2. Use stable slugs, not new B-numbers.
+3. Classify each item as CONFIRMED / CONDITIONAL / DESIGN INVARIANT / RETRACTED.
+4. Provide file:line evidence and the smallest reproducible test.
+5. Do not invent fixture outcomes or Windows/Tk behavior.
+6. Do not edit application source code in this pass.
+
+VERIFY THESE HIGH-PRIORITY ITEMS (existing-code defects)
+AST-INDEX-SHIFT, BOX-STRUCTURAL-OPS, BOX-PASTE-DEAD,
+BUNDLE-SAVE-WRITES-BEFORE-VERIFY, BOX0-SAVE-CORRUPTION, V2-ROUNDTRIP-LOSS,
+XUAT-SYNC-LINE-CORRUPTION, EMPTY-ARG-ARITY, NARRATION-EMPTY-PHANTOM,
+PLAINTEXT-SAVE-FALLTHROUGH, PAGE-BREAK-NOT-SPLIT, RAW-TAIL-FROZEN,
+CMD0-SPECIAL-CASE, DIRTY-EXIT-DROPS-EDITS, RELOAD-REVERT-HIT-CACHE,
+REPLACE-ALL-BUNDLE-PREFILTER, REPLACE-ALL-UNDO-GAP,
+TLS-VERIFICATION-DISABLED, API-KEYS-PLAINTEXT, TAGMASKER-INCOMPLETE,
+SIZE-RIBBON-NO-COMMIT, CONTINUOUS-RIBBON-TARGET-STALE,
+TRANSLATOR-SOURCE-SEED, UNDO-STORM, SEARCH-RACE, CLIP-SHADOW,
+FOLDER-DROP-EXTRA-IGNORED, DEEPL-TEST-COST, CORE-IMPORT-COUPLING,
+CONFIG-RECOVERY-OVERWRITE, STALE-CARD-REGISTRY, SHORTCUT-BINDTAG-ORDER,
+RIBBON-CUT-PASTE-NO-COMMIT, GRADIENT-COMMA-EMITTER, MULTI-TEXTASSET-TARGET,
+TEXTASSET-STR-DECODE-FIDELITY, SPAN-NFKC-PER-CHAR, UNDO-COALESCE-CROSS-SOURCE,
+GENERIC-PLACEHOLDER-GAP, LOGGER-SYNC-IO, BULK-DELTA-NONATOMIC,
+HARDCODED-PROJECT-PATH.
+
+ALSO VERIFY THESE RETRACTIONS (do NOT hunt them again)
+- Double paste dispatch: NOT PRESENT, on_text_paste returns "break".
+- Internal box clipboard CLIP-SHADOW is currently LATENT because
+  on_box_paste aborts at the missing _push_undo before reaching it.
+- Lowercase hex rejection: NOT PRESENT, patterns already accept a-f.
+- translate_async location: NOT PRESENT, it is module-level.
+- Uploaded config JSON malformed: RETRACTED as paste artifact;
+  CONFIG-RECOVERY-OVERWRITE remains valid.
+- SEG-TARGET-STALE: treat as DESIGN INVARIANT until fixture proves otherwise.
+
+MACHINE-CONFIRMED BY THE USER (record as evidence, do not re-test blindly)
+- Ctrl+H inside a card deletes a character (SHORTCUT-BINDTAG-ORDER).
+- Ribbon Cut then navigate away and back restores the text
+  (RIBBON-CUT-PASTE-NO-COMMIT).
+- Paste Box does nothing in either Page or Continuous view (BOX-PASTE-DEAD).
+- Copy Box works and round-trips through Notepad++ (copy path is healthy).
+
+FIXTURE / PLATFORM QUESTIONS (list, do not assume)
+metadata command semantics and extra args, narration record kind,
+break convention (real newline vs escaped), choice command args,
+TextAsset str decode fidelity, base64 raw preservation, Windows clipboard
+CRLF, Tk class bindings on installed Windows/Tk, game/AV file locks,
+large-story render and search performance.
+
+BASELINE
+Run:
+py -3.12 -m compileall -q misora.py core assets tests
+py -3.12 -m unittest discover -s tests -v
+Record actual count/failures/errors/skips, Python version, OS,
+dependency availability, and fixture availability.
+If UnityPy is missing, report an environment blocker; do not invent results.
+
+DELIVER
+1. Reconciliation table: slug / verdict / file:line evidence / correction.
+2. Updated prioritized defect ledger using stable slugs.
+3. Explicit disagreements with prior audits, if any.
+4. Proposed PROJECT_STATE.md update (separate Existing Bugs from Design
+   Invariants from Retracted claims).
+5. Unresolved fixture/platform tests.
+Wait for my approval before writing PROJECT_STATE.md.

@@ -1,0 +1,28 @@
+/goal Execute Phase 4: File Import/Export, importer registry, full Paste Preview, empty state, ribbon polish, tooltips and version unification.
+
+CONTEXT: @AGENTS.md @PROJECT_STATE.md @core/script_codec.py @docs/SCRIPT_FORMAT.md @misora.py @assets/splash.py @__init__.py @tests/
+DEPENDS ON: Phase 2 gate passed. The codec already exists; do NOT rewrite it.
+
+SCOPE IN: new core/importers/, misora.py, root __init__.py, assets/splash.py (version consumption only), tests/
+SCOPE OUT: MTL providers, Prompt Studio, termbase/TM, Xuat2Raw implementation, further AST changes.
+
+TASKS
+1. File menu Interchange group: Import Script (Ctrl+Shift+I), Export Script (Ctrl+Shift+E), Export AI Prompt, Import Translation (apply_speakers=False), Export/Import XUAT Dictionary.
+2. core/importers/ registry: ScriptImporter protocol (name, extensions, sniff, parse) with CSIFImporter, LegacyImporter, XUATDictionaryImporter. Menu code iterates the registry.
+3. core/importers/xuat2raw.py: documented stub raising NotImplementedError, an xuat2raw_path config field, and a disabled menu slot.
+4. Upgrade the Phase 2 minimal confirm into a full Paste Preview: detected format, block count, target range, per-box old->new diff with checkboxes, speaker toggle, explicit Box 0 routing indicator, codec warnings, integrity warnings, overflow Create/Ignore/Cancel, and a sparse remap dialog when addressing is invalid.
+5. Scoped export: whole story, checked boxes, or dock right-click selection.
+6. Empty-state overlay in files_container: "No files open", Open File / Open Folder, "Drag & drop .unity3d files here"; auto-hide; must not intercept HWND drag-and-drop.
+7. Remove the redundant [-] ribbon button; keep the capability in NGUI Glossary and the Edit menu.
+8. Player button icon-only with a tooltip and a text fallback when get_icon returns None.
+9. ToolTip: 450 ms delay, theme contrast via best_contrast_fg, cancel the pending after_id on Destroy, check winfo_exists; attach to every icon-only control.
+10. Version: __version__ = "1.4.0" in root __init__.py with a backward-compatible alias; consumed by splash, About, window title and the color picker. Remove every hardcoded version string.
+11. Re-measure the ribbon: <= 425 px, no clipping at ui_font_size 8 through 16.
+
+VERIFY
+py -3.12 -m compileall -q misora.py core assets tests
+py -3.12 -m unittest discover -s tests -v
+Tests: export->import identity; registry discovery; sparse remap rejection; empty-state visibility; no version string outside __version__; no legacy emitter outside the legacy adapter.
+Manual: screenshots of the empty dock, the new File menu, the ribbon at font 8 and 16, and About plus splash both showing 1.4.0.
+
+DELIVER changed files, test output, screenshots, updated PROJECT_STATE.md.

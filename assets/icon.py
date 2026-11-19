@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Misora Theme Palette & Window Icon
-====================================
-Official Misora Purple & White UI palette.
-Window icon uses the real Misora chibi head (assets/misora.ico) with a
-procedural PhotoImage fallback for platforms that don't support .ico files.
+Misora Theme Palette, Window Icon & Illustrated Icon Manager
+=============================================================
+Official Misora Purple & White UI palette, chibi window icon, and
+32-bit RGBA illustrated icon asset manager (offline Twemoji suite).
 """
 from __future__ import annotations
 
 import sys
 import tkinter as tk
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 THEME: Dict[str, str] = {
     "bg_dark": "#f3eefb",
@@ -32,6 +31,8 @@ THEME: Dict[str, str] = {
 
 # Path to the real Misora chibi-head .ico (multi-size: 16/24/32/48/64/128/256 px)
 _ICO_PATH: Path = Path(__file__).resolve().parent / "misora.ico"
+_ICONS_DIR: Path = Path(__file__).resolve().parent / "icons"
+_ICON_CACHE: Dict[Tuple[str, int, int], tk.PhotoImage] = {}
 
 
 def _create_fallback_icon(size: int = 32) -> tk.PhotoImage:
@@ -39,10 +40,9 @@ def _create_fallback_icon(size: int = 32) -> tk.PhotoImage:
     img = tk.PhotoImage(width=size, height=size)
     bg_outer = "#612ea0"
     bg_inner = "#7b42bc"
-    border_hi = "#d4c4ec"
+    border_hi = "#b98aff"
     fg_white = "#ffffff"
 
-    rows = []
     for y in range(size):
         row = []
         for x in range(size):
@@ -62,9 +62,7 @@ def _create_fallback_icon(size: int = 32) -> tk.PhotoImage:
                 row.append(fg_white)
             else:
                 row.append(bg_inner)
-        rows.append("{" + " ".join(row) + "}")
-
-    img.put(" ".join(rows))
+        img.put("{" + " ".join(row) + "}", to=(0, y))
     return img
 
 
@@ -79,22 +77,18 @@ def apply_window_icon(window: tk.Tk) -> None:
       1. iconbitmap() with the real .ico file — gives the best taskbar / Alt-Tab icon.
       2. iconphoto() with a PhotoImage — works on all platforms as a fallback.
     """
-    # --- Windows: use the real .ico for crisp taskbar / Alt-Tab icon ---
     if sys.platform == "win32" and _ICO_PATH.is_file():
         try:
             window.iconbitmap(default=str(_ICO_PATH))
-            return  # iconbitmap handles all sizes; no need for iconphoto as well
+            return
         except Exception:
-            pass  # fall through to PhotoImage fallback
+            pass
 
-    # --- Cross-platform fallback: PhotoImage (also used if .ico is missing) ---
     try:
-        # Try loading the .ico via Pillow/ImageTk for a nicer result
         try:
             from PIL import Image, ImageTk  # type: ignore
             if _ICO_PATH.is_file():
                 pil_img = Image.open(_ICO_PATH)
-                # Pick the best available size (prefer 32, fall back to first)
                 sizes = getattr(pil_img, "n_frames", 1)
                 best = None
                 if hasattr(pil_img, "size"):
@@ -112,9 +106,51 @@ def apply_window_icon(window: tk.Tk) -> None:
         except Exception:
             pass
 
-        # Last resort: draw the procedural 'M' emblem
         icon_img = _create_fallback_icon(32)
         window.iconphoto(True, icon_img)
         setattr(window, "_misora_icon_ref", icon_img)
     except Exception:
         pass
+
+
+def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Widget] = None) -> Optional[tk.PhotoImage]:
+    """Retrieve a cached Tkinter PhotoImage for the given illustrated icon name and size."""
+    root = master
+    if root is not None:
+        try:
+            root = root.winfo_toplevel()
+        except Exception:
+            pass
+    if root is None:
+        root = getattr(tk, "_default_root", None)
+
+    root_id = id(root) if root else 0
+    cache_key = (root_id, name, size[0], size[1])
+    if cache_key in _ICON_CACHE:
+        img = _ICON_CACHE[cache_key]
+        try:
+            if root:
+                root.tk.call("image", "type", img._name)
+            return img
+        except Exception:
+            _ICON_CACHE.pop(cache_key, None)
+
+    img_path = _ICONS_DIR / f"{name}.png"
+    if not img_path.is_file():
+        return None
+
+    try:
+        from PIL import Image, ImageTk
+        pil_im = Image.open(img_path).convert("RGBA")
+        if pil_im.size != size:
+            pil_im = pil_im.resize(size, Image.Resampling.LANCZOS)
+        tk_im = ImageTk.PhotoImage(pil_im, master=root) if root else ImageTk.PhotoImage(pil_im)
+        _ICON_CACHE[cache_key] = tk_im
+        return tk_im
+    except Exception:
+        return None
+
+
+def clear_icon_cache() -> None:
+    """Clear all cached PhotoImage references."""
+    _ICON_CACHE.clear()

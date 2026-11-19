@@ -44,7 +44,7 @@ if str(SCRIPT_DIR.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 try:
-    from misora.assets.icon import THEME, apply_window_icon
+    from misora.assets.icon import THEME, apply_window_icon, get_icon
     from misora.assets.splash import MisoraSplashScreen
     from misora.core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BundleIOError,
@@ -55,7 +55,7 @@ try:
         MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT,
     )
 except ImportError:
-    from assets.icon import THEME, apply_window_icon
+    from assets.icon import THEME, apply_window_icon, get_icon
     from assets.splash import MisoraSplashScreen
     from core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BundleIOError,
@@ -70,21 +70,68 @@ CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
 DEBUG_LOG_PATH = SCRIPT_DIR / "misora_debug.log"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+class ToolTip:
+    """Lightweight hover tooltip for Tkinter widgets."""
+    def __init__(self, widget: tk.Widget, text: str):
+        self.widget = widget
+        self.text = text
+        self.tip_window: Optional[tk.Toplevel] = None
+        widget.bind("<Enter>", self.show_tip, add="+")
+        widget.bind("<Leave>", self.hide_tip, add="+")
+
+    def show_tip(self, _event=None) -> None:
+        if self.tip_window or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 8
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{x}+{y}")
+            label = tk.Label(
+                tw, text=self.text, justify="left",
+                background="#201a33", foreground="#ffffff",
+                relief="solid", borderwidth=1,
+                font=("Segoe UI", 8), padx=6, pady=3
+            )
+            label.pack(ipadx=1)
+        except Exception:
+            pass
+
+    def hide_tip(self, _event=None) -> None:
+        if self.tip_window:
+            try:
+                self.tip_window.destroy()
+            except Exception:
+                pass
+            self.tip_window = None
+
+
+def create_tooltip(widget: tk.Widget, text: str) -> ToolTip:
+    """Convenience helper to attach a hover tooltip to a widget."""
+    return ToolTip(widget, text)
+
+
 # Matches Priconne/NGUI rich-text tags (including shorthand [/]) and placeholders
 NGUI_TAG_RE = re.compile(
     r"(\[(?:/|/?(?:"
     r"rub(?::[^\]]*)?|"
+    r"size(?:=[^\]]*)?|"
     r"b|i|u|s|sub|sup|c|"
     r"url(?:=[^\]]*)?|"
     r"-|"
     r"[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?(?:[-,][0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?)?"
-    r"))\]|\{playername\}|\{\d+\})"
+    r"))\]|"
+    r"<(?:/|/?)size(?:=[^>]*)?>|"
+    r"\{playername\}|\{\d+\})"
 )
 
 # Tokenizer for compiled NGUI preview rendering
 NGUI_TOKEN_RE = re.compile(
     r"(\[rub:([^\]]*)\](.*?)\[/rub\]|"
     r"\[/?(?:b|i|u|s|sub|sup|c)\]|"
+    r"\[/?size(?:=[^\]]*)?\]|"
+    r"</?size(?:=[^>]*)?>|"
     r"\[/\]|"
     r"\[url=[^\]]*\]|\[/url\]|"
     r"\[-\]|"
@@ -1076,6 +1123,12 @@ class MisoraApp(tk.Tk):
         self._cont_header_spans: Dict[int, Tuple[str, str]] = {}
         self._suppress_continuous_events: bool = False
         self._card_widgets: Dict[int, Dict[str, Any]] = {}
+        self.var_select_box_mode: tk.BooleanVar = tk.BooleanVar(master=self, value=False)
+        self._selected_boxes: Set[int] = set()
+        self._box_clipboard: List[Any] = []
+        self._is_speaker_pinned: bool = False
+        self._icon_cache: dict = {}
+        self._cont_resize_job: Optional[str] = None
 
         # Side Drawer (Customization & NGUI Glossary) state
         self._side_drawer_visible: bool = False
@@ -1192,6 +1245,10 @@ class MisoraApp(tk.Tk):
 
         # Reveal the main window (was hidden during splash)
         self.deiconify()
+
+    def get_icon(self, name: str, size: Tuple[int, int] = (18, 18)) -> Optional[tk.PhotoImage]:
+        """Retrieve an illustrated icon PhotoImage bound to this MisoraApp Tk instance."""
+        return get_icon(name, size, master=self)
 
     # -------------------------------------------------------------------------
     # Global Exception Hooks & Exit Lifecycle
@@ -2922,13 +2979,15 @@ class MisoraApp(tk.Tk):
         self.search_entry.bind("<Return>", lambda e: self.on_start_search())
         self.search_entry.bind("<Escape>", lambda e: self._hide_search_bar())
 
-        self.btn_find = ttk.Button(row1, text="Find in Files", style="Pink.TButton", command=self.on_start_search)
+        self.ico_find = self.get_icon("search", (14, 14))
+        self.btn_find = ttk.Button(row1, text=" Find in Files", image=self.ico_find, compound="left", style="Pink.TButton", command=self.on_start_search)
         self.btn_find.pack(side="left", padx=4)
 
         self.btn_cancel = ttk.Button(row1, text="Cancel", style="TButton", command=self.on_cancel_search, state="disabled")
         self.btn_cancel.pack(side="left", padx=4)
 
-        btn_close_search = ttk.Button(row1, text="✕", style="Small.TButton", command=self._hide_search_bar, width=3)
+        self.ico_close = self.get_icon("close", (12, 12))
+        btn_close_search = ttk.Button(row1, image=self.ico_close, style="Small.TButton", command=self._hide_search_bar, width=3)
         btn_close_search.pack(side="left", padx=(4, 0))
 
         # Row 1.5: Replace row (shown when Ctrl+H / Replace is activated)
@@ -3052,7 +3111,7 @@ class MisoraApp(tk.Tk):
                 bg=t["border"],
                 sashwidth=6,
                 sashrelief="flat",
-                opaqueresize=True
+                opaqueresize=False
             ),
             "sash"
         )
@@ -3200,7 +3259,8 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_files_title.pack(side="left", fill="x", expand=True)
 
-        btn_open_more = ttk.Button(files_header, text="Open...", style="Small.TButton", command=self.on_open_file)
+        self.ico_folder = self.get_icon("folder", (13, 13))
+        btn_open_more = ttk.Button(files_header, text=" Open...", image=self.ico_folder, compound="left", style="Small.TButton", command=self.on_open_file)
         btn_open_more.pack(side="right")
 
         self.files_container = self._tag_role(tk.Frame(self.tab_files_frame, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
@@ -3287,15 +3347,20 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_box_counter.pack(side="right", padx=(6, 0))
 
-        self.btn_next = ttk.Button(gd_header, text="Next >", style="Nav.TButton", command=self.on_next_box)
+        self.ico_next = get_icon("nav_next", (14, 14))
+        self.btn_next = ttk.Button(gd_header, text="Next ", image=self.ico_next, compound="right", style="Nav.TButton", command=self.on_next_box)
         self.btn_next.pack(side="right", padx=(2, 0))
-        self.btn_prev = ttk.Button(gd_header, text="< Prev", style="Nav.TButton", command=self.on_prev_box)
+
+        self.ico_prev = get_icon("nav_prev", (14, 14))
+        self.btn_prev = ttk.Button(gd_header, text=" Prev", image=self.ico_prev, compound="left", style="Nav.TButton", command=self.on_prev_box)
         self.btn_prev.pack(side="right", padx=(4, 2))
 
-        btn_ai_prompt = ttk.Button(gd_header, text="📋 AI Prompt", style="Small.TButton", command=self.on_copy_ai_prompt)
+        self.ico_ai = get_icon("ai", (16, 16))
+        btn_ai_prompt = ttk.Button(gd_header, text=" AI Prompt", image=self.ico_ai, compound="left", style="Small.TButton", command=self.on_copy_ai_prompt)
         btn_ai_prompt.pack(side="right", padx=(4, 2))
 
-        btn_translate = ttk.Button(gd_header, text="🌐 MTL", style="Small.TButton", command=self.on_open_translator_assistant)
+        self.ico_mtl = get_icon("mtl", (16, 16))
+        btn_translate = ttk.Button(gd_header, text=" MTL", image=self.ico_mtl, compound="left", style="Small.TButton", command=self.on_open_translator_assistant)
         btn_translate.pack(side="right", padx=(2, 2))
 
         cb_cont = ttk.Checkbutton(
@@ -3306,7 +3371,17 @@ class MisoraApp(tk.Tk):
             style="Accent.TCheckbutton",
             cursor="hand2"
         )
-        cb_cont.pack(side="right", padx=(4, 6))
+        cb_cont.pack(side="right", padx=(4, 4))
+
+        cb_sel_box = ttk.Checkbutton(
+            gd_header,
+            text="Select Box",
+            variable=self.var_select_box_mode,
+            command=self._on_toggle_select_box_mode,
+            style="Accent.TCheckbutton",
+            cursor="hand2"
+        )
+        cb_sel_box.pack(side="right", padx=(4, 4))
 
         # Combined Row for Speaker + Compact NGUI Ribbon (#7 & #10)
         speaker_ribbon_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
@@ -3344,7 +3419,21 @@ class MisoraApp(tk.Tk):
             width=2,
             command=self._on_speaker_dropdown_clicked,
         )
-        self.btn_speaker_dropdown.pack(side="left", padx=(2, 4))
+        self.btn_speaker_dropdown.pack(side="left", padx=(2, 2))
+
+        self.ico_pin = get_icon("pin", (16, 16))
+        self.btn_pin_speaker = tk.Button(
+            speaker_ribbon_row,
+            image=self.ico_pin,
+            bg=t["bg_panel"],
+            activebackground=t["highlight_bg"],
+            bd=0,
+            relief="flat",
+            cursor="hand2",
+            command=self._on_toggle_pin_speaker,
+        )
+        self.btn_pin_speaker.pack(side="left", padx=(1, 4))
+        create_tooltip(self.btn_pin_speaker, "Pin Speaker (locks current speaker across box navigation)")
 
         self.lbl_voice_cue = self._tag_role(
             tk.Label(speaker_ribbon_row, text="", bg=t["bg_panel"], fg=t["accent_blue"], font=("Segoe UI", max(8, u_sz - 1))),
@@ -3380,10 +3469,13 @@ class MisoraApp(tk.Tk):
         )
         self.btn_ribbon_swatch.pack(side="left", padx=(2, 1), pady=1)
 
+        self.ico_palette = get_icon("palette", (16, 16))
         btn_color = self._tag_role(
             tk.Button(
                 ribbon,
-                text="Color",
+                text=" Color",
+                image=self.ico_palette,
+                compound="left",
                 font=("Segoe UI", 8, "bold"),
                 bg=accent_bg,
                 fg=fg_accent,
@@ -3399,6 +3491,7 @@ class MisoraApp(tk.Tk):
             "ribbon_primary_btn",
         )
         btn_color.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_color, "Apply hex color tag [RRGGBB]")
 
         btn_grad = self._tag_role(
             tk.Button(
@@ -3419,7 +3512,98 @@ class MisoraApp(tk.Tk):
             "ribbon_primary_btn",
         )
         btn_grad.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_grad, "Apply vertical gradient tag [top-bottom]")
 
+        self.ico_eyedropper = get_icon("eyedropper", (16, 16))
+        btn_eyedropper = self._tag_role(
+            tk.Button(
+                ribbon,
+                image=self.ico_eyedropper,
+                bg=btn_bg,
+                activebackground=btn_hover,
+                bd=1,
+                relief="raised",
+                cursor="hand2",
+                command=self.on_open_color_picker,
+            ),
+            "ribbon_btn",
+        )
+        btn_eyedropper.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_eyedropper, "Open NGUI Color & Gradient Picker")
+
+        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # Text Actions Group (Select Whole Story, Cut, Copy, Paste)
+        self.ico_sel_story = get_icon("select_story", (16, 16))
+        btn_sel_story = self._tag_role(
+            tk.Button(ribbon, image=self.ico_sel_story, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_select_whole_story),
+            "ribbon_btn"
+        )
+        btn_sel_story.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_sel_story, "Select Whole Story Dialogue (Ctrl+Alt+A)")
+
+        self.ico_cut = get_icon("cut", (16, 16))
+        btn_cut = self._tag_role(
+            tk.Button(ribbon, image=self.ico_cut, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_cut),
+            "ribbon_btn"
+        )
+        btn_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_cut, "Cut Text (Ctrl+X)")
+
+        self.ico_copy = get_icon("copy", (16, 16))
+        btn_copy = self._tag_role(
+            tk.Button(ribbon, image=self.ico_copy, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_copy),
+            "ribbon_btn"
+        )
+        btn_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_copy, "Copy Text (Ctrl+C)")
+
+        self.ico_paste = get_icon("paste", (16, 16))
+        btn_paste = self._tag_role(
+            tk.Button(ribbon, image=self.ico_paste, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_paste),
+            "ribbon_btn"
+        )
+        btn_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_paste, "Paste Text / Multi-Box Delimiter Split (Ctrl+V)")
+
+        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # Box Actions Group (New Box, Cut Box, Copy Box, Paste Box)
+        self.ico_plus = get_icon("plus", (16, 16))
+        btn_box_new = self._tag_role(
+            tk.Button(ribbon, image=self.ico_plus, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
+            "ribbon_btn"
+        )
+        btn_box_new.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_box_new, "New Dialogue Box (Ctrl+N)")
+
+        self.ico_box_cut = get_icon("box_cut", (18, 18))
+        btn_box_cut = self._tag_role(
+            tk.Button(ribbon, image=self.ico_box_cut, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
+            "ribbon_btn"
+        )
+        btn_box_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
+
+        self.ico_box_copy = get_icon("box_copy", (18, 18))
+        btn_box_copy = self._tag_role(
+            tk.Button(ribbon, image=self.ico_box_copy, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
+            "ribbon_btn"
+        )
+        btn_box_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
+
+        self.ico_box_paste = get_icon("box_paste", (18, 18))
+        btn_box_paste = self._tag_role(
+            tk.Button(ribbon, image=self.ico_box_paste, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
+            "ribbon_btn"
+        )
+        btn_box_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
+
+        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # NGUI Formatting Buttons
         btn_ruby = self._tag_role(
             tk.Button(
                 ribbon,
@@ -3460,10 +3644,13 @@ class MisoraApp(tk.Tk):
         )
         btn_dash.pack(side="left", padx=1, pady=1)
 
+        self.ico_player = get_icon("player", (14, 14))
         btn_player = self._tag_role(
             tk.Button(
                 ribbon,
-                text="{player}",
+                text=" {0}",
+                image=self.ico_player,
+                compound="left",
                 font=("Segoe UI", 8, "bold"),
                 bg=btn_bg,
                 fg=btn_fg,
@@ -3479,8 +3666,6 @@ class MisoraApp(tk.Tk):
             "ribbon_btn",
         )
         btn_player.pack(side="left", padx=1, pady=1)
-
-        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         mini_style_buttons = [
             ("B", "[b]", "[/b]"),
@@ -3514,57 +3699,73 @@ class MisoraApp(tk.Tk):
             )
             b_mini.pack(side="left", padx=1, pady=1)
 
+        btn_size = self._tag_role(
+            tk.Button(
+                ribbon,
+                text="Size",
+                font=("Segoe UI", 8, "bold"),
+                bg=btn_bg,
+                fg=btn_fg,
+                activebackground=btn_hover,
+                activeforeground=btn_fg,
+                bd=1,
+                relief="raised",
+                padx=2,
+                pady=0,
+                cursor="hand2",
+                command=self._on_size_dropdown_clicked,
+            ),
+            "ribbon_btn"
+        )
+        btn_size.pack(side="left", padx=1, pady=1)
+        create_tooltip(btn_size, "Change Font Size (<size=...>)")
+
         self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
-        # Explicit Undo & Redo buttons per Image 2 specification
+        # History: Undo & Redo with illustrated icons
+        self.ico_undo = get_icon("undo", (16, 16))
         self.btn_ribbon_undo = self._tag_role(
             tk.Button(
                 ribbon,
-                text="↶",
-                font=("Segoe UI", 9, "bold"),
+                image=self.ico_undo,
                 bg=btn_bg,
-                fg=accent_green,
                 activebackground=btn_hover,
-                activeforeground=accent_green,
                 bd=1,
                 relief="raised",
-                width=2,
-                padx=0,
-                pady=0,
                 cursor="hand2",
                 command=self.on_undo,
             ),
             "ribbon_undo_btn",
         )
         self.btn_ribbon_undo.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_ribbon_undo, "Undo (Ctrl+Z)")
 
+        self.ico_redo = get_icon("redo", (16, 16))
         self.btn_ribbon_redo = self._tag_role(
             tk.Button(
                 ribbon,
-                text="↷",
-                font=("Segoe UI", 9, "bold"),
+                image=self.ico_redo,
                 bg=btn_bg,
-                fg=accent_green,
                 activebackground=btn_hover,
-                activeforeground=accent_green,
                 bd=1,
                 relief="raised",
-                width=2,
-                padx=0,
-                pady=0,
                 cursor="hand2",
                 command=self.on_redo,
             ),
             "ribbon_redo_btn",
         )
         self.btn_ribbon_redo.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_ribbon_redo, "Redo (Ctrl+Y)")
 
         self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
+        self.ico_preview = get_icon("preview", (16, 16))
         cb_compiled = self._tag_role(
             tk.Checkbutton(
                 ribbon,
-                text="Preview",
+                text=" Preview",
+                image=self.ico_preview,
+                compound="left",
                 variable=self.var_preview_compiled,
                 command=self._on_toggle_preview_compiled,
                 font=("Segoe UI", max(8, u_sz - 2), "bold"),
@@ -3865,7 +4066,13 @@ class MisoraApp(tk.Tk):
 
         def _on_cont_canvas_configure(event):
             if hasattr(self, "cont_canvas") and hasattr(self, "cont_canvas_window"):
-                self.cont_canvas.itemconfig(self.cont_canvas_window, width=event.width)
+                new_w = event.width
+                if getattr(self, "_cont_resize_job", None) is not None:
+                    try:
+                        self.after_cancel(self._cont_resize_job)
+                    except Exception:
+                        pass
+                self._cont_resize_job = self.after(20, lambda w=new_w: self._resize_cont_canvas(w))
         self.cont_canvas.bind("<Configure>", _on_cont_canvas_configure)
 
         def _on_cont_frame_configure(event):
@@ -3873,16 +4080,10 @@ class MisoraApp(tk.Tk):
                 self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
         self.cont_stream_frame.bind("<Configure>", _on_cont_frame_configure)
 
-        def _on_cont_mousewheel(event):
-            if hasattr(self, "cont_canvas") and event.delta:
-                self.cont_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.cont_canvas.bind("<MouseWheel>", _on_cont_mousewheel)
-        self.cont_stream_frame.bind("<MouseWheel>", _on_cont_mousewheel)
+        self.cont_canvas.bind("<MouseWheel>", self._on_cont_mousewheel)
+        self.cont_stream_frame.bind("<MouseWheel>", self._on_cont_mousewheel)
 
-        cont_scroll_y = tk.Scrollbar(self.cont_editor_row, orient="vertical")
-        cont_scroll_y.pack(side="right", fill="y")
-
-        # Vertical Line Numbers Gutter for Continuous View (#12)
+        # Vertical Line Numbers Gutter for Continuous View (Plain text fallback)
         self.gutter_cont = tk.Text(
             self.cont_editor_row,
             width=4,
@@ -3900,8 +4101,6 @@ class MisoraApp(tk.Tk):
             spacing3=4,
         )
         self.gutter_cont.config(state="disabled")
-        if self.show_line_numbers:
-            self.gutter_cont.pack(side="left", fill="y", padx=(0, 2))
 
         self.txt_continuous = tk.Text(
             self.cont_editor_row,
@@ -3919,10 +4118,8 @@ class MisoraApp(tk.Tk):
             spacing3=4,
             bd=1,
             relief="solid",
-            yscrollcommand=lambda *args: (cont_scroll_y.set(*args), self._sync_continuous_gutter_scroll(*args)),
+            yscrollcommand=lambda *args: (self.cont_scroll_y.set(*args), self._sync_continuous_gutter_scroll(*args)),
         )
-        self.txt_continuous.pack(side="left", fill="both", expand=True)
-        cont_scroll_y.config(command=self._on_continuous_vscroll)
 
         self.txt_continuous.tag_configure(
             "cont_divider",
@@ -4157,6 +4354,8 @@ class MisoraApp(tk.Tk):
         """Toggle line number gutter visibility with safe layout anchoring."""
         visible = bool(self.var_show_line_numbers.get())
         self.show_line_numbers = visible
+
+        # Clean View gutter
         if hasattr(self, "gutter_clean"):
             if visible:
                 if hasattr(self, "txt_dialogue") and not self._is_widget_packed(self.gutter_clean):
@@ -4168,16 +4367,35 @@ class MisoraApp(tk.Tk):
             else:
                 if self._is_widget_packed(self.gutter_clean):
                     self.gutter_clean.pack_forget()
-        if hasattr(self, "gutter_cont"):
-            if visible:
-                if hasattr(self, "txt_continuous") and not self._is_widget_packed(self.gutter_cont):
-                    try:
-                        self.gutter_cont.pack(before=self.txt_continuous, side="left", fill="y", padx=(0, 2))
-                    except Exception:
-                        self.gutter_cont.pack(side="left", fill="y", padx=(0, 2))
-            else:
-                if self._is_widget_packed(self.gutter_cont):
-                    self.gutter_cont.pack_forget()
+
+        # Continuous View card gutters
+        if hasattr(self, "_card_widgets"):
+            for idx, cdata in self._card_widgets.items():
+                gutter = cdata.get("gutter")
+                txt = cdata.get("txt")
+                if gutter and txt:
+                    if visible:
+                        if not self._is_widget_packed(gutter):
+                            try:
+                                gutter.pack(before=txt, side="left", fill="y", padx=(0, 2))
+                            except Exception:
+                                gutter.pack(side="left", fill="y", padx=(0, 2))
+                    else:
+                        if self._is_widget_packed(gutter):
+                            gutter.pack_forget()
+
+        # Plain text fallback gutter
+        if hasattr(self, "gutter_cont") and hasattr(self, "txt_continuous"):
+            if visible and self._is_widget_packed(self.txt_continuous) and not self._is_widget_packed(self.gutter_cont):
+                try:
+                    self.gutter_cont.pack(before=self.txt_continuous, side="left", fill="y", padx=(0, 2))
+                except Exception:
+                    self.gutter_cont.pack(side="left", fill="y", padx=(0, 2))
+            elif not visible and self._is_widget_packed(self.gutter_cont):
+                self.gutter_cont.pack_forget()
+
+        if hasattr(self, "cont_canvas"):
+            self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
         if hasattr(self, "gd_inner"):
             self.gd_inner.update_idletasks()
             self._sync_gd_scroll_bounds()
@@ -4342,14 +4560,17 @@ class MisoraApp(tk.Tk):
         strike: bool,
         sub_mode: int,
         fg_color: Optional[str],
+        font_scale: float = 1.0,
     ) -> str:
         """Return a cached Tkinter tag name configured with the requested compiled NGUI style."""
-        d_fam = self.prefs["dialogue_font_family"]
-        d_sz = int(self.prefs["dialogue_font_size"])
+        d_fam = self.prefs.get("dialogue_font_family", "Segoe UI")
+        d_sz = int(self.prefs.get("dialogue_font_size", 12))
         eff_sz = max(7, d_sz - 2) if sub_mode != 0 else d_sz
+        if font_scale != 1.0:
+            eff_sz = max(7, int(round(eff_sz * font_scale)))
         eff_offset = -3 if sub_mode < 0 else (4 if sub_mode > 0 else 0)
         color_key = fg_color.lower() if fg_color else "default"
-        tag_name = f"cstyle_{int(bold)}_{int(italic)}_{int(underline)}_{int(strike)}_{sub_mode}_{color_key}_{d_fam}_{d_sz}"
+        tag_name = f"cstyle_{int(bold)}_{int(italic)}_{int(underline)}_{int(strike)}_{sub_mode}_{color_key}_{d_fam}_{eff_sz}"
 
         if tag_name not in widget.tag_names():
             weight = "bold" if bold else "normal"
@@ -4383,6 +4604,7 @@ class MisoraApp(tk.Tk):
         underline = False
         strike = False
         sub_mode = 0
+        font_scale = 1.0
         color_stack: List[Tuple[str, Optional[str]]] = []
 
         def emit_styled_run(chunk: str) -> None:
@@ -4391,7 +4613,7 @@ class MisoraApp(tk.Tk):
             chunk = chunk.replace("\\n", "\n")
             if not color_stack:
                 st = self._get_or_create_compiled_style_tag(
-                    widget, bold, italic, underline, strike, sub_mode, None
+                    widget, bold, italic, underline, strike, sub_mode, None, font_scale
                 )
                 widget.insert(mark_name, chunk, base_tags + (st,))
                 return
@@ -4399,7 +4621,7 @@ class MisoraApp(tk.Tk):
             top_hex, bot_hex = color_stack[-1]
             if not bot_hex or len(chunk) <= 1:
                 st = self._get_or_create_compiled_style_tag(
-                    widget, bold, italic, underline, strike, sub_mode, top_hex
+                    widget, bold, italic, underline, strike, sub_mode, top_hex, font_scale
                 )
                 widget.insert(mark_name, chunk, base_tags + (st,))
                 return
@@ -4414,7 +4636,7 @@ class MisoraApp(tk.Tk):
                 bi = int(round(b1 + (b2 - b1) * ratio))
                 step_hex = f"#{ri:02x}{gi:02x}{bi:02x}"
                 st = self._get_or_create_compiled_style_tag(
-                    widget, bold, italic, underline, strike, sub_mode, step_hex
+                    widget, bold, italic, underline, strike, sub_mode, step_hex, font_scale
                 )
                 widget.insert(mark_name, ch, base_tags + (st,))
 
@@ -4457,12 +4679,25 @@ class MisoraApp(tk.Tk):
                     sub_mode = 1
                 elif tok_low == "[/sup]":
                     sub_mode = 0
+                elif tok_low.startswith("<size=") or tok_low.startswith("[size="):
+                    try:
+                        val = tok[6:-1].strip()
+                        if val.endswith("%"):
+                            font_scale = max(0.5, min(3.0, float(val[:-1]) / 100.0))
+                        else:
+                            base_d_sz = int(self.prefs.get("dialogue_font_size", 12))
+                            font_scale = max(0.5, min(3.0, float(val) / base_d_sz))
+                    except Exception:
+                        font_scale = 1.0
+                elif tok_low in ("</size>", "[/size]"):
+                    font_scale = 1.0
                 elif tok_low == "[/]":
                     bold = False
                     italic = False
                     underline = False
                     strike = False
                     sub_mode = 0
+                    font_scale = 1.0
                 elif tok_low in ("[c]", "[/c]", "[/url]") or tok_low.startswith("[url="):
                     pass
                 elif tok == "[-]":
@@ -5316,10 +5551,12 @@ class MisoraApp(tk.Tk):
         )
         cb_sync.pack(side="right", padx=(8, 12))
 
-        btn_revert = ttk.Button(action_bar, text="Revert Box", style="TButton", command=self.on_revert_box)
+        self.ico_revert = get_icon("revert", (15, 15))
+        btn_revert = ttk.Button(action_bar, text=" Revert Box", image=self.ico_revert, compound="left", style="TButton", command=self.on_revert_box)
         btn_revert.pack(side="right", padx=4)
 
-        self.btn_save = ttk.Button(action_bar, text="Save & Patch Bundle (Ctrl+S)", style="Pink.TButton", command=self.on_save)
+        self.ico_save = get_icon("save", (15, 15))
+        self.btn_save = ttk.Button(action_bar, text=" Save & Patch Bundle (Ctrl+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
         self.btn_save.pack(side="right", padx=4)
 
     def _toggle_console_shortcut(self) -> None:
@@ -5708,7 +5945,7 @@ class MisoraApp(tk.Tk):
                         except Exception:
                             pass
 
-    def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text) -> None:
+    def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text] = None) -> None:
         """Handle inline typing inside a Box Card."""
         if getattr(self, "_suppress_continuous_events", False) or self.var_preview_compiled.get():
             return
@@ -5743,12 +5980,25 @@ class MisoraApp(tk.Tk):
                 pass
 
         # Dynamically adjust text widget height to fit content (min 2, max 10)
-        line_count = max(2, min(10, new_tx.count("\n") + 1))
+        line_count = max(1, new_tx.count("\n") + 1)
+        eff_height = max(2, min(10, line_count))
         try:
-            if int(txt_w.cget("height")) != line_count:
-                txt_w.config(height=line_count)
+            if int(txt_w.cget("height")) != eff_height:
+                txt_w.config(height=eff_height)
         except Exception:
             pass
+
+        if gutter:
+            try:
+                gutter.config(state="normal", height=eff_height)
+                gutter.delete("1.0", tk.END)
+                gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
+                gutter.config(state="disabled")
+            except Exception:
+                pass
+
+        if hasattr(self, "cont_canvas"):
+            self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
 
         self._highlight_ngui_tags_for_widget(txt_w)
 
@@ -5775,7 +6025,10 @@ class MisoraApp(tk.Tk):
             if not hdr or not hdr.winfo_exists():
                 continue
             is_active = (b_idx == active_idx)
-            bg_col = t["highlight_bg"] if is_active else t["bg_panel"]
+            if b_idx == -1:
+                bg_col = t["highlight_bg"] if is_active else ("#dfd1f5" if self._is_light_theme() else "#2d1d29")
+            else:
+                bg_col = t["highlight_bg"] if is_active else t["bg_panel"]
             try:
                 hdr.configure(bg=bg_col)
                 for child in hdr.winfo_children():
@@ -5790,7 +6043,8 @@ class MisoraApp(tk.Tk):
             return
         total = len(self.current_doc.boxes) if self.current_doc.boxes else 0
         if box_idx == -1:
-            self.speaker_var.set("")
+            if not (self._is_speaker_pinned and self.speaker_var.get()):
+                self.speaker_var.set("")
             if hasattr(self, "entry_speaker"):
                 self.entry_speaker.config(state="disabled")
             if hasattr(self, "btn_speaker_dropdown"):
@@ -5807,7 +6061,8 @@ class MisoraApp(tk.Tk):
                 self.entry_speaker.config(state="normal")
             if hasattr(self, "btn_speaker_dropdown"):
                 self.btn_speaker_dropdown.config(state="normal")
-            self.speaker_var.set(box.speaker)
+            if not (self._is_speaker_pinned and self.speaker_var.get()):
+                self.speaker_var.set(box.speaker)
             self.lbl_box_counter.config(text=f"Box: {box_idx + 1} / {total}")
             self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
             if hasattr(self, "btn_prev"):
@@ -5860,6 +6115,283 @@ class MisoraApp(tk.Tk):
         self.show_toast(f"📋 Copied {box_count} boxes (separated by triple-enter)")
         self.lbl_status.config(text=f"Copied script ({box_count} boxes separated by triple-enter) to clipboard")
 
+    def _on_cont_mousewheel(self, event) -> str:
+        """Scroll continuous stream canvas smoothly and prevent child widgets from eating the scroll event."""
+        if hasattr(self, "cont_canvas") and self.cont_canvas.winfo_exists():
+            delta = getattr(event, "delta", 0)
+            if delta:
+                self.cont_canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+        return "break"
+
+    def _resize_cont_canvas(self, width: int) -> None:
+        """Debounced canvas window resize to eliminate sash-drag stutter."""
+        self._cont_resize_job = None
+        if hasattr(self, "cont_canvas") and hasattr(self, "cont_canvas_window") and self.cont_canvas.winfo_exists():
+            try:
+                self.cont_canvas.itemconfig(self.cont_canvas_window, width=width)
+            except Exception:
+                pass
+
+    def _on_toggle_select_box_mode(self) -> None:
+        """Toggle multi-box selection mode in continuous view and update UI."""
+        enabled = bool(self.var_select_box_mode.get())
+        if not enabled:
+            self._selected_boxes.clear()
+        if self.var_continuous_view.get():
+            self._render_continuous_view()
+        self.show_toast(f"Select Box mode {'enabled' if enabled else 'disabled'}")
+
+    def _on_toggle_pin_speaker(self) -> None:
+        """Toggle persistent speaker pinning across box navigation."""
+        self._is_speaker_pinned = not self._is_speaker_pinned
+        t = self.theme
+        if self._is_speaker_pinned:
+            if hasattr(self, "btn_pin_speaker"):
+                self.btn_pin_speaker.config(bg=t["highlight_bg"], relief="sunken")
+            sp = self.speaker_var.get()
+            self.show_toast(f"📌 Speaker Pinned: '{sp}' locked across navigation")
+        else:
+            if hasattr(self, "btn_pin_speaker"):
+                btn_bg = t.get("bg_editor", "#faf8fe")
+                self.btn_pin_speaker.config(bg=btn_bg, relief="raised")
+            self.show_toast("Speaker Unpinned")
+
+    def on_select_whole_story(self) -> None:
+        """Select whole story / all text across document."""
+        if self.var_continuous_view.get():
+            if hasattr(self, "_card_widgets") and self._card_widgets:
+                first_card = self._card_widgets.get(0) or self._card_widgets.get(-1)
+                if first_card and "txt" in first_card:
+                    txt = first_card["txt"]
+                    txt.focus_set()
+                    txt.tag_add("sel", "1.0", "end-1c")
+            self.show_toast("Selected active story")
+        else:
+            if hasattr(self, "txt_dialogue"):
+                self.txt_dialogue.focus_set()
+                self.txt_dialogue.tag_add("sel", "1.0", "end-1c")
+                self.show_toast("Selected all text in current box")
+
+    def on_text_cut(self) -> None:
+        """Cut text in active editor to clipboard."""
+        target = self.txt_dialogue
+        if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+        try:
+            target.event_generate("<<Cut>>")
+        except Exception:
+            pass
+
+    def on_text_copy(self) -> None:
+        """Copy text in active editor to clipboard."""
+        target = self.txt_dialogue
+        if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+        try:
+            target.event_generate("<<Copy>>")
+        except Exception:
+            pass
+
+    def on_text_paste(self) -> None:
+        """Paste text in active editor with delimiter-awareness."""
+        target = self.txt_dialogue
+        idx = self.current_box_idx
+        if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+        res = self._on_card_paste_caret(idx, target)
+        if res != "break":
+            try:
+                target.event_generate("<<Paste>>")
+            except Exception:
+                pass
+
+    def on_box_new(self) -> None:
+        """Create a new blank dialogue box after current box."""
+        if not self.current_doc:
+            self.show_toast("No story document loaded")
+            return
+        if not self.current_doc.boxes:
+            self.current_doc.boxes = []
+
+        cur_sp = self.speaker_var.get() if (self._is_speaker_pinned and self.speaker_var.get()) else ""
+        new_box = Box(speaker=cur_sp, clean_text="")
+        ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
+        self._push_undo("New Box")
+        self.current_doc.boxes.insert(ins_idx, new_box)
+        self.current_box_idx = ins_idx
+        self.is_dirty = True
+        self._modified_boxes.add(ins_idx)
+        self._render_continuous_view()
+        self._sync_clean_view_to_current_box()
+        self._dirty_state_changed()
+        self.show_toast(f"➕ Created new Box #{ins_idx + 1}")
+
+    def on_box_copy(self) -> None:
+        """Copy selected box(es) or current box to box clipboard."""
+        if not self.current_doc or not self.current_doc.boxes:
+            self.show_toast("No story document loaded")
+            return
+        targets = sorted(self._selected_boxes) if self._selected_boxes else [self.current_box_idx]
+        targets = [idx for idx in targets if 0 <= idx < len(self.current_doc.boxes)]
+        if not targets:
+            return
+        import copy
+        self._box_clipboard = [copy.deepcopy(self.current_doc.boxes[idx]) for idx in targets]
+        clip_str = "\n\n\n".join(b.clean_text for b in self._box_clipboard)
+        self.clipboard_clear()
+        self.clipboard_append(clip_str)
+        self.show_toast(f"📋📦 Copied {len(self._box_clipboard)} box(es)")
+
+    def on_box_cut(self) -> None:
+        """Cut selected box(es) or current box."""
+        if not self.current_doc or not self.current_doc.boxes:
+            self.show_toast("No story document loaded")
+            return
+        targets = sorted(self._selected_boxes) if self._selected_boxes else [self.current_box_idx]
+        targets = [idx for idx in targets if 0 <= idx < len(self.current_doc.boxes)]
+        if not targets:
+            return
+        self.on_box_copy()
+        self._push_undo("Cut Box(es)")
+        for idx in reversed(targets):
+            del self.current_doc.boxes[idx]
+        self._selected_boxes.clear()
+        if self.current_box_idx >= len(self.current_doc.boxes):
+            self.current_box_idx = max(0, len(self.current_doc.boxes) - 1)
+        self.is_dirty = True
+        self._render_continuous_view()
+        self._sync_clean_view_to_current_box()
+        self._dirty_state_changed()
+        self.show_toast(f"✂📦 Cut {len(targets)} box(es)")
+
+    def on_box_paste(self) -> None:
+        """Paste box(es) from box clipboard after current box."""
+        if not self.current_doc:
+            self.show_toast("No story document loaded")
+            return
+        import copy
+        boxes_to_ins = []
+        if getattr(self, "_box_clipboard", None):
+            boxes_to_ins = [copy.deepcopy(b) for b in self._box_clipboard]
+        else:
+            try:
+                clip = self.clipboard_get()
+                if "\n\n\n" in clip:
+                    boxes_to_ins = [Box(clean_text=c) for c in clip.split("\n\n\n")]
+                elif clip.strip():
+                    boxes_to_ins = [Box(clean_text=clip)]
+            except Exception:
+                pass
+        if not boxes_to_ins:
+            self.show_toast("Box clipboard is empty")
+            return
+
+        self._push_undo("Paste Box(es)")
+        ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
+        for offset, b in enumerate(boxes_to_ins):
+            self.current_doc.boxes.insert(ins_idx + offset, b)
+            self._modified_boxes.add(ins_idx + offset)
+        self.current_box_idx = ins_idx + len(boxes_to_ins) - 1
+        self.is_dirty = True
+        self._render_continuous_view()
+        self._sync_clean_view_to_current_box()
+        self._dirty_state_changed()
+        self.show_toast(f"📥📦 Pasted {len(boxes_to_ins)} box(es)")
+
+    def _on_card_paste_caret(self, box_idx: int, txt_widget: tk.Text) -> str:
+        """Intercept paste on card editors to perform caret-aware multi-box delimiter paste."""
+        try:
+            clip_text = self.clipboard_get()
+        except Exception:
+            return ""
+
+        if "\n\n\n" not in clip_text:
+            return ""
+
+        chunks = clip_text.split("\n\n\n")
+        if len(chunks) <= 1:
+            return ""
+
+        self._push_undo("Multi-box Delimiter Paste")
+
+        try:
+            sel_ranges = txt_widget.tag_ranges("sel")
+            if sel_ranges:
+                head = txt_widget.get("1.0", sel_ranges[0])
+                tail = txt_widget.get(sel_ranges[1], "end-1c")
+            else:
+                ins = txt_widget.index("insert")
+                head = txt_widget.get("1.0", ins)
+                tail = txt_widget.get(ins, "end-1c")
+        except Exception:
+            head = txt_widget.get("1.0", "end-1c")
+            tail = ""
+
+        if not self.current_doc or not self.current_doc.boxes:
+            return "break"
+
+        self.current_doc.boxes[box_idx].clean_text = head + chunks[0]
+        self._modified_boxes.add(box_idx)
+
+        for offset, chunk in enumerate(chunks[1:], start=1):
+            target_idx = box_idx + offset
+            is_last = (offset == len(chunks) - 1)
+            if target_idx < len(self.current_doc.boxes):
+                orig_text = self.current_doc.boxes[target_idx].clean_text
+                if is_last:
+                    self.current_doc.boxes[target_idx].clean_text = chunk + tail + orig_text
+                else:
+                    self.current_doc.boxes[target_idx].clean_text = chunk + orig_text
+                self._modified_boxes.add(target_idx)
+            else:
+                new_text = (chunk + tail) if is_last else chunk
+                new_b = Box(clean_text=new_text)
+                self.current_doc.boxes.append(new_b)
+                self._modified_boxes.add(len(self.current_doc.boxes) - 1)
+
+        self.is_dirty = True
+        self._render_continuous_view()
+        self._sync_clean_view_to_current_box()
+        self._dirty_state_changed()
+        self.show_toast(f"Pasted across {len(chunks)} boxes")
+        return "break"
+
+    def _on_size_dropdown_clicked(self) -> None:
+        """Show dropdown menu for selecting font size scaling tags."""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Small (80%)", command=lambda: self.on_insert_font_size("80%"))
+        menu.add_command(label="Normal (100% / Reset)", command=lambda: self.on_insert_font_size(None))
+        menu.add_command(label="Large (130%)", command=lambda: self.on_insert_font_size("130%"))
+        menu.add_command(label="Extra Large / Roar (160%)", command=lambda: self.on_insert_font_size("160%"))
+        menu.add_command(label="Huge (200%)", command=lambda: self.on_insert_font_size("200%"))
+        try:
+            x = self.winfo_pointerx()
+            y = self.winfo_pointery()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def on_insert_font_size(self, size_val: Optional[str]) -> None:
+        """Insert font size tags (<size=...>...</size>) around selection or at caret."""
+        target = self.txt_dialogue
+        if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+
+        if size_val:
+            open_t = f"<size={size_val}>"
+            close_t = "</size>"
+            try:
+                sel_first = target.index("sel.first")
+                sel_last = target.index("sel.last")
+                sel_txt = target.get(sel_first, sel_last)
+                target.delete(sel_first, sel_last)
+                target.insert(sel_first, f"{open_t}{sel_txt}{close_t}")
+            except tk.TclError:
+                target.insert(tk.INSERT, f"{open_t}{close_t}")
+                target.mark_set(tk.INSERT, f"{tk.INSERT} - {len(close_t)}c")
+        else:
+            target.insert(tk.INSERT, "</size>")
+
     def _render_continuous_view(self) -> None:
         """Render all dialogue boxes sequentially as a Box Card Stream."""
         compiled = self.var_preview_compiled.get()
@@ -5906,21 +6438,25 @@ class MisoraApp(tk.Tk):
             if not self.current_doc or not self.current_doc.boxes:
                 return
 
+            gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
+            gutter_fg = "#707070" if self._is_light_theme() else "#858585"
+
             # 1. Card #0: Story Metadata Card
             if self.current_doc.has_metadata():
                 meta = self.current_doc.get_metadata()
-                card_0 = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
                 is_active_0 = getattr(self, "is_box0_active", False)
-                hdr_bg_0 = t["highlight_bg"] if is_active_0 else t["bg_panel"]
-                hdr_0 = tk.Frame(card_0, bg=hdr_bg_0, padx=6, pady=4)
-                lbl_badge_0 = tk.Label(hdr_0, text="◆ [BOX #000]", font=("Consolas", max(9, d_sz - 1), "bold"), fg=t["misora_pink"], bg=hdr_bg_0)
+                box0_bg = t["highlight_bg"] if is_active_0 else ("#dfd1f5" if self._is_light_theme() else "#2d1d29")
+                box0_border = "#bca0e8" if self._is_light_theme() else "#4a3556"
+                card_0 = tk.Frame(self.cont_stream_frame, bg=box0_bg, highlightbackground=box0_border, highlightthickness=1)
+                hdr_0 = tk.Frame(card_0, bg=box0_bg, padx=4, pady=1)
+                lbl_badge_0 = tk.Label(hdr_0, text="◆ [BOX #000]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=box0_bg)
                 lbl_badge_0.pack(side="left")
-                lbl_title_0 = tk.Label(hdr_0, text="[STORY METADATA & SYNOPSIS]", font=(d_fam, max(9, d_sz - 1), "bold"), fg=t["fg_text"], bg=hdr_bg_0)
-                lbl_title_0.pack(side="left", padx=(8, 4))
+                lbl_title_0 = tk.Label(hdr_0, text="[STORY METADATA & SYNOPSIS]", font=(d_fam, max(8, d_sz - 3), "bold"), fg=t["fg_text"], bg=box0_bg)
+                lbl_title_0.pack(side="left", padx=(6, 4))
                 hdr_0.pack(fill="x")
 
-                meta_body = tk.Frame(card_0, bg=t["bg_panel"], padx=6, pady=4)
-                tk.Label(meta_body, text=f"Title: {meta.get('title', '')}   |   Subtitle: {meta.get('subtitle', '')}", font=(d_fam, max(8, d_sz - 2)), fg=t["fg_muted"], bg=t["bg_panel"]).pack(anchor="w")
+                meta_body = tk.Frame(card_0, bg=box0_bg, padx=4, pady=1)
+                tk.Label(meta_body, text=f"Title: {meta.get('title', '')}   |   Subtitle: {meta.get('subtitle', '')}", font=(d_fam, max(7, d_sz - 3)), fg=t["fg_muted"], bg=box0_bg).pack(anchor="w")
                 summary_lines = max(2, min(8, meta.get("summary", "").count("\n") + 1))
                 txt_summary = tk.Text(
                     meta_body,
@@ -5936,22 +6472,24 @@ class MisoraApp(tk.Tk):
                     bd=1,
                     relief="solid",
                     highlightthickness=0,
-                    padx=10,
-                    pady=6
+                    padx=8,
+                    pady=3,
+                    spacing1=2,
+                    spacing3=2
                 )
                 txt_summary.insert("1.0", meta.get("summary", ""))
-                txt_summary.pack(fill="x", pady=(2, 2))
+                txt_summary.pack(fill="x", pady=(1, 2))
                 meta_body.pack(fill="x")
 
                 # Bindings for Card #0
                 txt_summary.bind("<FocusIn>", lambda e: self._on_card_focus_in(-1))
                 txt_summary.bind("<Control-a>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
                 txt_summary.bind("<Control-A>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
-                txt_summary.bind("<MouseWheel>", lambda e: self._on_cont_mousewheel(e))
 
-                card_0.pack(fill="x", padx=12, pady=(6, 4))
-                sep_0 = tk.Frame(self.cont_stream_frame, height=1, bg=t["border"])
-                sep_0.pack(fill="x", padx=12, pady=(4, 8))
+                for w in (card_0, hdr_0, lbl_badge_0, lbl_title_0, meta_body, txt_summary):
+                    w.bind("<MouseWheel>", self._on_cont_mousewheel)
+
+                card_0.pack(fill="x", padx=6, pady=(1, 2))
 
                 self._card_widgets[-1] = {
                     "card": card_0,
@@ -5966,31 +6504,79 @@ class MisoraApp(tk.Tk):
                 is_active = (not getattr(self, "is_box0_active", False) and i == self.current_box_idx)
                 hdr_bg = t["highlight_bg"] if is_active else t["bg_panel"]
                 card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
-                hdr = tk.Frame(card_frame, bg=hdr_bg, padx=6, pady=4)
+                hdr = tk.Frame(card_frame, bg=hdr_bg, padx=4, pady=0)
 
-                lbl_badge = tk.Label(hdr, text=f"◆ [BOX #{i+1:03d}]", font=("Consolas", max(9, d_sz - 1), "bold"), fg=t["misora_pink"], bg=hdr_bg)
+                # Select Box Checkbox (when Select Box Mode is active)
+                if self.var_select_box_mode.get():
+                    var_box_sel = tk.BooleanVar(master=self, value=(i in self._selected_boxes))
+                    def _make_box_sel_cmd(b_idx, v):
+                        def _cmd():
+                            if v.get():
+                                self._selected_boxes.add(b_idx)
+                            else:
+                                self._selected_boxes.discard(b_idx)
+                        return _cmd
+                    cb_sel = tk.Checkbutton(
+                        hdr,
+                        variable=var_box_sel,
+                        command=_make_box_sel_cmd(i, var_box_sel),
+                        bg=hdr_bg,
+                        activebackground=hdr_bg,
+                        selectcolor=t["bg_panel"],
+                        bd=0,
+                        cursor="hand2",
+                    )
+                    cb_sel.pack(side="left", padx=(0, 2))
+                    cb_sel.bind("<MouseWheel>", self._on_cont_mousewheel)
+
+                lbl_badge = tk.Label(hdr, text=f"◆ [BOX #{i+1:03d}]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=hdr_bg)
                 lbl_badge.pack(side="left")
 
                 sp_text = box.speaker if box.speaker else "(Narration)"
                 sp_fg = t["fg_text"] if box.speaker else t["fg_muted"]
-                sp_font = (d_fam, max(9, d_sz - 1), "bold" if box.speaker else "italic")
+                sp_font = (d_fam, max(8, d_sz - 3), "bold" if box.speaker else "italic")
                 lbl_sp = tk.Label(hdr, text=sp_text, font=sp_font, fg=sp_fg, bg=hdr_bg)
-                lbl_sp.pack(side="left", padx=(8, 4))
+                lbl_sp.pack(side="left", padx=(6, 4))
 
                 vc_text = f"♪ {box.voice_cue}" if box.voice_cue else ""
-                lbl_vc = tk.Label(hdr, text=vc_text, font=("Segoe UI", max(8, d_sz - 2)), fg=t["accent_blue"], bg=hdr_bg)
-                lbl_vc.pack(side="left", padx=(4, 4))
+                lbl_vc = tk.Label(hdr, text=vc_text, font=("Segoe UI", max(7, d_sz - 4)), fg=t["accent_blue"], bg=hdr_bg)
+                lbl_vc.pack(side="left", padx=(2, 4))
+                hdr.pack(fill="x", pady=0)
 
-                btn_cp = ttk.Button(hdr, text="📋", width=2, style="Small.TButton", command=lambda idx=i: self._copy_single_card_dialogue(idx))
-                btn_cp.pack(side="right", padx=(2, 0))
-                hdr.pack(fill="x")
+                # Editor Row with dynamic line-number gutter
+                editor_row = tk.Frame(card_frame, bg=t["bg_panel"])
+                editor_row.pack(fill="x", padx=0, pady=0)
 
-                lines = max(2, min(10, box.clean_text.count("\n") + 1))
+                line_count = max(1, box.clean_text.count("\n") + 1)
+                eff_height = max(2, min(10, line_count))
+
+                gutter = tk.Text(
+                    editor_row,
+                    width=2,
+                    height=eff_height,
+                    font=("Consolas", max(8, d_sz - 2)),
+                    bg=gutter_bg,
+                    fg=gutter_fg,
+                    bd=0,
+                    relief="flat",
+                    wrap="none",
+                    takefocus=0,
+                    cursor="arrow",
+                    padx=1,
+                    pady=3,
+                    spacing1=2,
+                    spacing3=2,
+                )
+                gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
+                gutter.config(state="disabled")
+                if self.show_line_numbers:
+                    gutter.pack(side="left", fill="y", padx=(0, 2))
+
                 txt = tk.Text(
-                    card_frame,
+                    editor_row,
                     wrap="word",
                     undo=False,
-                    height=lines,
+                    height=eff_height,
                     font=(d_fam, d_sz),
                     bg=t["bg_editor"],
                     fg=t["fg_text"],
@@ -6000,8 +6586,10 @@ class MisoraApp(tk.Tk):
                     bd=1,
                     relief="solid",
                     highlightthickness=0,
-                    padx=10,
-                    pady=6
+                    padx=8,
+                    pady=3,
+                    spacing1=2,
+                    spacing3=2
                 )
                 self._configure_editor_rich_tags(txt, d_fam, d_sz)
                 if compiled:
@@ -6011,29 +6599,33 @@ class MisoraApp(tk.Tk):
                     txt.insert("1.0", box.clean_text)
                     self._highlight_ngui_tags_for_widget(txt)
 
-                # Event bindings
-                txt.bind("<KeyRelease>", lambda e, idx=i, w=txt: self._on_card_text_edited(idx, w))
+                txt.pack(side="left", fill="x", expand=True)
+
+                # Bindings on card widgets
+                for w in (card_frame, hdr, lbl_badge, lbl_sp, lbl_vc, editor_row, gutter, txt):
+                    w.bind("<MouseWheel>", self._on_cont_mousewheel)
+
+                txt.bind("<KeyRelease>", lambda e, idx=i, w=txt, g=gutter: self._on_card_text_edited(idx, w, g))
                 txt.bind("<FocusIn>", lambda e, idx=i: self._on_card_focus_in(idx))
                 txt.bind("<Control-a>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
                 txt.bind("<Control-A>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
                 txt.bind("<Control-Shift-C>", lambda e: (self.on_copy_script_triple_enter(), "break")[1])
                 txt.bind("<Control-Shift-c>", lambda e: (self.on_copy_script_triple_enter(), "break")[1])
+                txt.bind("<Control-v>", lambda e, idx=i, w=txt: self._on_card_paste_caret(idx, w))
+                txt.bind("<<Paste>>", lambda e, idx=i, w=txt: self._on_card_paste_caret(idx, w))
                 txt.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
                 txt.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
                 txt.bind("<Control-b>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[b]", "[/b]"), "break")[1])
                 txt.bind("<Control-i>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[i]", "[/i]"), "break")[1])
                 txt.bind("<Control-u>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[u]", "[/u]"), "break")[1])
-                txt.bind("<MouseWheel>", lambda e: self._on_cont_mousewheel(e))
 
-                txt.pack(fill="x", padx=6, pady=(2, 4))
-                card_frame.pack(fill="x", padx=12, pady=(4, 4))
-
-                sep = tk.Frame(self.cont_stream_frame, height=1, bg=t["border"])
-                sep.pack(fill="x", padx=12, pady=(4, 8))
+                card_frame.pack(fill="x", padx=6, pady=(1, 2))
 
                 self._card_widgets[i] = {
                     "card": card_frame,
                     "hdr": hdr,
+                    "editor_row": editor_row,
+                    "gutter": gutter,
                     "txt": txt,
                     "lbl_badge": lbl_badge,
                     "lbl_sp": lbl_sp,
