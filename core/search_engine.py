@@ -25,7 +25,7 @@ from .story_ast import (
 )
 
 _TOKEN_RE = re.compile(
-    r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.",
+    r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.[\u0300-\u036f\u3099\u309a]*",
     re.IGNORECASE | re.DOTALL,
 )
 

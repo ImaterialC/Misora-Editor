@@ -19,22 +19,22 @@ if str(MISORA_DIR.parent) not in sys.path:
 
 try:
     from misora.core import (
-        StoryDocument, Box, Record,
+        StoryDocument, Box, BoxSnapshot, Record,
         game_to_xuat, xuat_to_game, norm_search,
-        load_bundle_story, save_bundle_story,
+        load_bundle_story, save_bundle_story, BundleIOError,
         ProjectSearchEngine, SearchOptions,
         XUnitySyncManager,
-        MasterUndoJournal, UndoOperation, BoxEditDelta, PlainTextDelta, BulkFileDelta,
+        MasterUndoJournal, UndoOperation, BoxEditDelta, BoxStructuralDelta, PlainTextDelta, BulkFileDelta,
         TagMasker, MTLConfig, MTLEngine,
     )
 except ImportError:
     from core import (
-        StoryDocument, Box, Record,
+        StoryDocument, Box, BoxSnapshot, Record,
         game_to_xuat, xuat_to_game, norm_search,
-        load_bundle_story, save_bundle_story,
+        load_bundle_story, save_bundle_story, BundleIOError,
         ProjectSearchEngine, SearchOptions,
         XUnitySyncManager,
-        MasterUndoJournal, UndoOperation, BoxEditDelta, PlainTextDelta, BulkFileDelta,
+        MasterUndoJournal, UndoOperation, BoxEditDelta, BoxStructuralDelta, PlainTextDelta, BulkFileDelta,
         TagMasker, MTLConfig, MTLEngine,
     )
 
@@ -244,6 +244,245 @@ class TestMisoraCore(unittest.TestCase):
         self.assertEqual(decoded["last_opened_dir"], str(self.tmp_dir))
         self.assertEqual(len(decoded["saved_opened_files"]), 2)
         self.assertEqual(decoded["saved_active_file"], str(self.tmp_dir / "story_101.unity3d"))
+
+    def test_12_metadata_insertion_then_dialogue_edit_writes_correct_record(self):
+        """AST-INDEX-SHIFT regression: set_metadata inserts records, dialogue edit writes correct record."""
+        recs = [
+            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Initial line 1"]),
+            Record(cmd_id=10, cmd_name="touch", args=[]),
+            Record(cmd_id=6, cmd_name="print", args=["Kyaru", "Initial line 2"]),
+        ]
+        doc = StoryDocument(recs)
+        self.assertEqual(len(doc.boxes), 2)
+        self.assertEqual(doc.boxes[0].clean_text, "Initial line 1")
+
+        # Insert metadata at index 0/1
+        doc.set_metadata(title="Episode 1", summary="A synopsis of episode 1")
+
+        # Edit Box 0 (Pecorine)
+        doc.inject_box(0, new_speaker="Pecorine", new_text="Edited line 1")
+
+        meta = doc.get_metadata()
+        self.assertEqual(meta["title"], "Episode 1")
+        self.assertEqual(meta["summary"], "A synopsis of episode 1")
+        self.assertEqual(doc.boxes[0].clean_text, "Edited line 1")
+        self.assertEqual(doc.boxes[1].clean_text, "Initial line 2")
+
+        pecorine_rec = doc.boxes[0].segs[0].record
+        self.assertEqual(pecorine_rec.cmd_name, "print")
+        self.assertEqual(pecorine_rec.args[1], "Edited line 1")
+
+    def test_13_structural_insert_delete_move_clone_binary_roundtrip(self):
+        """Structural APIs (insert, delete, move, clone) round-trip through binary serialization."""
+        recs = [
+            Record(cmd_id=6, cmd_name="print", args=["Kokkoro", "Box 1"]),
+            Record(cmd_id=10, cmd_name="touch", args=[]),
+            Record(cmd_id=6, cmd_name="print", args=["Yuuki", "Box 2"]),
+        ]
+        doc = StoryDocument(recs)
+        self.assertEqual(len(doc.boxes), 2)
+
+        # 1. Insert box
+        snap_new = BoxSnapshot(speaker="Pecorine", voice_cue="", kind="print", seg_texts=["Inserted Box"])
+        doc.insert_box(1, snap_new)
+        self.assertEqual(len(doc.boxes), 3)
+        self.assertEqual(doc.boxes[1].speaker, "Pecorine")
+        self.assertEqual(doc.boxes[1].clean_text, "Inserted Box")
+
+        # Roundtrip binary
+        b1 = doc.to_binary()
+        doc2 = StoryDocument.from_binary(b1)
+        self.assertEqual(len(doc2.boxes), 3)
+        self.assertEqual(doc2.boxes[1].clean_text, "Inserted Box")
+
+        # 2. Clone box
+        doc2.clone_boxes([1], target_index=1)
+        self.assertEqual(len(doc2.boxes), 4)
+        self.assertEqual(doc2.boxes[2].clean_text, "Inserted Box")
+
+        # 3. Move box
+        doc2.move_box(0, 3)
+        self.assertEqual(doc2.boxes[-1].speaker, "Kokkoro")
+
+        # 4. Delete box
+        deleted = doc2.delete_boxes([1])
+        self.assertEqual(len(deleted), 1)
+        self.assertEqual(deleted[0].clean_text, "Inserted Box")
+        self.assertEqual(len(doc2.boxes), 3)
+
+        # Final binary roundtrip check
+        final_bytes = doc2.to_binary()
+        doc_final = StoryDocument.from_binary(final_bytes)
+        self.assertEqual(len(doc_final.boxes), 3)
+
+    def test_14_multisegment_clone_preserves_segment_count(self):
+        """Multi-segment clone preserves segment count and structure via BoxSnapshot."""
+        r1 = Record(cmd_id=6, cmd_name="print", args=["Hiyori", "Part 1 "])
+        r2 = Record(cmd_id=6, cmd_name="print", args=["Hiyori", "Part 2\\n"])
+        r3 = Record(cmd_id=6, cmd_name="print", args=["Hiyori", "Part 3"])
+        doc = StoryDocument([r1, r2, r3])
+        self.assertEqual(len(doc.boxes), 1)
+        self.assertEqual(len(doc.boxes[0].segs), 3)
+
+        # Clone the multi-segment box
+        cloned = doc.clone_boxes([0], target_index=0)
+        self.assertEqual(len(cloned), 1)
+        self.assertEqual(len(doc.boxes), 2)
+        self.assertEqual(len(doc.boxes[1].segs), 3)
+        self.assertEqual(doc.boxes[1].segs[0].text, "Part 1 ")
+        self.assertEqual(doc.boxes[1].segs[1].text, "Part 2\\n")
+        self.assertEqual(doc.boxes[1].segs[2].text, "Part 3")
+
+    def test_15_empty_text_and_narration_preserve_arity_and_no_phantom(self):
+        """Empty text and narration preserve arity in binary and create no phantom boxes."""
+        r_narr = Record(cmd_id=35, cmd_name="tag", args=["This is narration."])
+        r_empty_tx = Record(cmd_id=6, cmd_name="print", args=["Pecorine", ""])
+        r_corrupt_tag = Record(cmd_id=35, cmd_name="tag", args=[])
+
+        doc = StoryDocument([r_narr, Record(cmd_id=10, cmd_name="touch", args=[]), r_empty_tx, r_corrupt_tag])
+        self.assertEqual(len(doc.boxes), 2)
+        self.assertEqual(doc.boxes[0].kind, "tag")
+        self.assertEqual(doc.boxes[0].speaker, "")
+        self.assertEqual(doc.boxes[0].clean_text, "This is narration.")
+
+        raw = doc.to_binary()
+        doc_reloaded = StoryDocument.from_binary(raw)
+        self.assertEqual(len(doc_reloaded.boxes), 2)
+        self.assertEqual(doc_reloaded.boxes[0].kind, "tag")
+        self.assertEqual(doc_reloaded.boxes[0].clean_text, "This is narration.")
+        print_rec = doc_reloaded.records[2]
+        self.assertEqual(print_rec.cmd_name, "print")
+        self.assertEqual(len(print_rec.args), 2)
+        self.assertEqual(print_rec.args[0], "Pecorine")
+
+    def test_16_v2_roundtrip_lossless(self):
+        """V2 text roundtrip preserves cmd_32, categories, unknown command IDs, and whitespace."""
+        recs = [
+            Record(cmd_id=32, cmd_name="cmd_32", args=["Subtitle Text"], category="Foreground"),
+            Record(cmd_id=999, cmd_name="unknown_999", args=["  spaced  ", "\t\ttabs\t\t"], category="Effect"),
+            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Line 1\nLine 2\u2028Line 3"], category="System"),
+        ]
+        doc = StoryDocument(recs)
+        v2_text = doc.to_v2_text()
+        doc_restored = StoryDocument.from_v2_text(v2_text)
+
+        self.assertEqual(len(doc_restored.records), 3)
+        r0 = doc_restored.records[0]
+        self.assertEqual(r0.cmd_id, 32)
+        self.assertEqual(r0.category, "Foreground")
+        self.assertEqual(r0.args[0], "Subtitle Text")
+
+        r1 = doc_restored.records[1]
+        self.assertEqual(r1.cmd_id, 999)
+        self.assertEqual(r1.category, "Effect")
+        self.assertEqual(r1.args[0], "  spaced  ")
+        self.assertEqual(r1.args[1], "\t\ttabs\t\t")
+
+        r2 = doc_restored.records[2]
+        self.assertEqual(r2.category, "System")
+        self.assertEqual(r2.args[1], "Line 1\nLine 2\u2028Line 3")
+
+    def test_17_unmodified_fixture_bundle_save_byte_exact(self):
+        """Unmodified fixture load->save preserves 100% byte-exact story data."""
+        fixture_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not fixture_path.exists():
+            fixture_path = MISORA_DIR / "1001005.unity3d"
+        if not fixture_path.exists():
+            self.skipTest("No .unity3d fixture available")
+
+        temp_bundle = self.tmp_dir / "test_roundtrip.unity3d"
+        shutil.copy2(fixture_path, temp_bundle)
+
+        doc, env, obj, name = load_bundle_story(temp_bundle)
+        from core.bundle_io import extract_raw_story_bytes
+        orig_story_bytes = extract_raw_story_bytes(obj)
+
+        # 1. AST binary serialization must be 100% byte-exact with original fixture asset
+        serialized_story_bytes = doc.to_binary()
+        self.assertEqual(
+            serialized_story_bytes,
+            orig_story_bytes,
+            "Unmodified story AST to_binary() must produce 100% byte-identical story bytes"
+        )
+
+        # 2. Save back through bundle repacker
+        save_bundle_story(env, obj, doc, temp_bundle)
+
+        # 3. Reload bundle and verify story TextAsset inside repacked bundle is 100% byte-exact
+        doc_reloaded, env_reloaded, obj_reloaded, name_reloaded = load_bundle_story(temp_bundle)
+        reloaded_story_bytes = extract_raw_story_bytes(obj_reloaded)
+        self.assertEqual(
+            reloaded_story_bytes,
+            orig_story_bytes,
+            "Story TextAsset inside repacked bundle must be 100% byte-exact with original"
+        )
+
+    def test_18_forced_verification_failure_leaves_original_unchanged(self):
+        """Forced verification failure leaves original bundle completely untouched."""
+        fixture_path = MISORA_DIR / "storydata_1001005.unity3d"
+        if not fixture_path.exists():
+            fixture_path = MISORA_DIR / "1001005.unity3d"
+        if not fixture_path.exists():
+            self.skipTest("No .unity3d fixture available")
+
+        temp_bundle = self.tmp_dir / "test_atomic_fail.unity3d"
+        shutil.copy2(fixture_path, temp_bundle)
+        orig_bytes = temp_bundle.read_bytes()
+
+        doc, env, obj, name = load_bundle_story(temp_bundle)
+        doc.inject_box(0, "TestSpeaker", "Modified text that should fail")
+
+        from unittest.mock import patch
+        with patch("core.bundle_io.extract_raw_story_bytes", return_value=b"corrupted_garbage_bytes"):
+            with self.assertRaises(BundleIOError):
+                save_bundle_story(env, obj, doc, temp_bundle)
+
+        current_bytes = temp_bundle.read_bytes()
+        self.assertEqual(current_bytes, orig_bytes, "Failed verification must leave original bundle completely unchanged")
+
+    def test_19_multiline_xuat_sync_stays_one_physical_line(self):
+        """Multiline XUAT sync stays one physical dictionary line and preserves BOM/CRLF."""
+        xuat_file = self.tmp_dir / "Dialogue_sync.txt"
+        content = "\ufeffKey1=Old Value 1\r\nペコリーヌ、{0}！=Old Translation\r\nKey3=Old Value 3\r\n"
+        xuat_file.write_text(content, encoding="utf-8")
+
+        mgr = XUnitySyncManager()
+        multiline_en = "Line 1 of English\nLine 2 of English\r\nLine 3 of English"
+        matches = mgr.find_and_update(
+            japanese_key="ペコリーヌ、{playername}！",
+            new_english_text=multiline_en,
+            search_roots=[self.tmp_dir],
+            backup=False
+        )
+        self.assertEqual(len(matches), 1)
+
+        raw_result = xuat_file.read_bytes()
+        self.assertTrue(raw_result.startswith(b"\xef\xbb\xbf"))
+
+        text_result = raw_result[3:].decode("utf-8")
+        lines = text_result.split("\r\n")
+        non_empty_lines = [l for l in lines if l.strip()]
+        self.assertEqual(len(non_empty_lines), 3)
+
+        updated_line = non_empty_lines[1]
+        self.assertTrue(updated_line.startswith("ペコリーヌ、{0}！="))
+        self.assertIn("\\n", updated_line)
+        self.assertNotIn("\n", updated_line)
+        self.assertEqual(
+            updated_line,
+            "ペコリーヌ、{0}！=Line 1 of English\\nLine 2 of English\\nLine 3 of English"
+        )
+
+    def test_20_second_save_of_same_box_still_syncs_with_immutable_jp_key(self):
+        """Second save of the same box still syncs using immutable Japanese key cache."""
+        mgr = XUnitySyncManager()
+        box_uid = 1042
+        jp_orig = "わたし、お腹が空きました！"
+        mgr.register_jp_key(box_uid, jp_orig)
+
+        en_second = "I am completely starving!"
+        resolved_key = mgr.get_jp_key(box_uid, fallback=en_second)
+        self.assertEqual(resolved_key, jp_orig)
 
 
 if __name__ == "__main__":

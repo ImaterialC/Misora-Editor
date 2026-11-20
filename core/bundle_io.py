@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-misora.core.bundle_io - In-memory loading, extraction, and repacking of Unity3D bundles.
-Self-contained module utilizing UnityPy for zero-temporary-file in-place asset modification.
+misora.core.bundle_io - In-memory loading, extraction, and verified atomic saving of Unity3D bundles.
+Self-contained module utilizing UnityPy for verified asset modification.
 """
 from __future__ import annotations
 
 import os
 import shutil
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -17,6 +19,10 @@ from .story_ast import StoryDocument
 
 # Priconne bundles omit standard Unity version headers, so fallback is essential
 UnityPy.config.FALLBACK_UNITY_VERSION = "2021.3.20f1"
+
+# Module-level save guard to prevent re-entrant saves
+_save_lock = threading.Lock()
+_is_saving = False
 
 
 class BundleIOError(Exception):
@@ -44,6 +50,7 @@ def extract_raw_story_bytes(text_asset_obj: Any) -> bytes:
 def load_bundle_story(path: Union[str, Path]) -> Tuple[StoryDocument, Any, Any, str]:
     """
     Load a .unity3d bundle file directly into memory.
+    Locks onto the story TextAsset with its path_id.
     Returns:
         (StoryDocument, UnityPy.Environment, TextAsset_Object, asset_name)
     """
@@ -52,7 +59,8 @@ def load_bundle_story(path: Union[str, Path]) -> Tuple[StoryDocument, Any, Any, 
         raise FileNotFoundError(f"File not found: {path}")
 
     try:
-        env = UnityPy.load(str(path))
+        raw_bundle_bytes = path.read_bytes()
+        env = UnityPy.load(raw_bundle_bytes)
     except Exception as e:
         raise BundleIOError(f"Failed to open Unity3D bundle '{path.name}': {e}")
 
@@ -87,49 +95,114 @@ def save_bundle_story(
 ) -> int:
     """
     Repack the modified StoryDocument back into the Unity3D bundle file in-place.
-    Performs verified round-trip check and returns written file size.
+    Follows verified atomic save pipeline:
+    same-dir .tmp -> reopen tmp -> verify exact target TextAsset by path_id/name ->
+    verify object count -> fingerprint check -> bounded retry os.replace.
+    Never overwrites original before verification succeeds.
     """
+    global _is_saving
+
+    with _save_lock:
+        if _is_saving:
+            raise BundleIOError("A bundle save operation is already in progress.")
+        _is_saving = True
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_name(f"{out_path.name}.{os.getpid()}_{id(doc)}.tmp")
 
-    if backup_dir is not None and out_path.is_file():
-        backup_dir = Path(backup_dir)
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        bak_path = backup_dir / f"{out_path.stem}.bak_{ts}{out_path.suffix}"
-        shutil.copy2(out_path, bak_path)
+    try:
+        source_stat = out_path.stat() if out_path.is_file() else None
+        source_fingerprint = (source_stat.st_mtime_ns, source_stat.st_size) if source_stat else None
+        target_path_id = getattr(text_asset_obj, "path_id", None)
+        target_name = getattr(text_asset_obj.read(), "m_Name", "")
+        source_obj_count = len(list(env.objects))
 
-    new_data = doc.to_binary()
-    d = text_asset_obj.read()
-    attr, cur_val = _script_attr_of(d)
+        new_data = doc.to_binary()
+        d = text_asset_obj.read()
+        attr, cur_val = _script_attr_of(d)
 
-    modes = ["str", "bytes"] if isinstance(cur_val, str) else ["bytes", "str"]
-    success = False
-    last_err = ""
+        modes = ["str", "bytes"] if isinstance(cur_val, str) else ["bytes", "str"]
+        success = False
+        last_err = ""
 
-    for mode in modes:
-        try:
-            val_to_set = new_data.decode("utf-8", "surrogateescape") if mode == "str" else new_data
-            setattr(d, attr, val_to_set)
-            d.save()
+        for mode in modes:
+            try:
+                val_to_set = new_data.decode("utf-8", "surrogateescape") if mode == "str" else new_data
+                setattr(d, attr, val_to_set)
+                d.save()
 
-            saved_bytes = env.file.save(packer="original")
-            out_path.write_bytes(saved_bytes)
+                saved_bytes = env.file.save(packer="original")
+                tmp_path.write_bytes(saved_bytes)
 
-            # Verification: Reload output bundle and check byte exactness
-            env_check = UnityPy.load(str(out_path))
-            for o in env_check.objects:
-                if o.type.name == "TextAsset":
-                    check_bytes = extract_raw_story_bytes(o)
-                    if check_bytes == new_data:
-                        success = True
-                        break
-            if success:
+                # Reopen tmp bytes and verify exact target asset & object count
+                check_tmp_bytes = tmp_path.read_bytes()
+                env_check = UnityPy.load(check_tmp_bytes)
+                target_in_check = None
+
+                for o in env_check.objects:
+                    if o.type.name == "TextAsset":
+                        if target_path_id is not None and getattr(o, "path_id", None) == target_path_id:
+                            target_in_check = o
+                            break
+                        elif getattr(o.read(), "m_Name", "") == target_name:
+                            target_in_check = o
+                            break
+
+                if not target_in_check:
+                    raise BundleIOError("Verification failed: Target TextAsset not found in repacked bundle.")
+
+                check_bytes = extract_raw_story_bytes(target_in_check)
+                if check_bytes != new_data:
+                    raise BundleIOError("Verification failed: Repacked bytes do not match expected binary output.")
+
+                if len(list(env_check.objects)) != source_obj_count:
+                    raise BundleIOError(
+                        f"Verification failed: Object count mismatch ({len(list(env_check.objects))} != {source_obj_count})."
+                    )
+
+                success = True
                 break
-        except Exception as ex:
-            last_err = str(ex)
+            except Exception as ex:
+                last_err = str(ex)
 
-    if not success:
-        raise BundleIOError(f"Bundle write verification failed for '{out_path.name}': {last_err}")
+        if not success:
+            raise BundleIOError(f"Bundle write verification failed for '{out_path.name}': {last_err}")
 
-    return out_path.stat().st_size
+        # Verification succeeded! Perform backup if requested
+        if backup_dir is not None and out_path.is_file():
+            backup_dir = Path(backup_dir)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            bak_path = backup_dir / f"{out_path.stem}.bak_{ts}{out_path.suffix}"
+            shutil.copy2(out_path, bak_path)
+
+        # Atomic replace with fingerprint check and bounded retry for Windows sharing violations
+        for attempt in range(5):
+            try:
+                if source_fingerprint and out_path.is_file():
+                    current_stat = out_path.stat()
+                    current_fingerprint = (current_stat.st_mtime_ns, current_stat.st_size)
+                    if current_fingerprint != source_fingerprint:
+                        raise BundleIOError(
+                            f"Source file '{out_path.name}' was modified concurrently on disk during save."
+                        )
+                os.replace(tmp_path, out_path)
+                break
+            except (PermissionError, OSError) as e:
+                if attempt == 4:
+                    raise BundleIOError(
+                        f"Failed to replace bundle '{out_path.name}' after 5 attempts (Windows sharing violation): {e}"
+                    )
+                time.sleep(0.05 * (2 ** attempt))
+
+        return out_path.stat().st_size
+
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        with _save_lock:
+            _is_saving = False

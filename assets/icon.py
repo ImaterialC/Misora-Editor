@@ -129,9 +129,12 @@ def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Wi
     if cache_key in _ICON_CACHE:
         img = _ICON_CACHE[cache_key]
         try:
-            if root:
-                root.tk.call("image", "type", img._name)
-            return img
+            target_tk = root.tk if root else getattr(getattr(tk, "_default_root", None), "tk", None)
+            if target_tk:
+                target_tk.call("image", "type", img._name)
+                return img
+            else:
+                _ICON_CACHE.pop(cache_key, None)
         except Exception:
             _ICON_CACHE.pop(cache_key, None)
 

@@ -2,15 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 misora.core.undo_journal - Bounded coalescing undo/redo journal for Misora.
-Tracks box edits, plain-text edits, and bulk find-replace operations.
-No external dependencies beyond stdlib.
+Tracks box edits, structural operations (insert/delete), plain-text edits, and bulk operations.
+Thread-safe, exception-safe batches, and source-aware coalescing.
 """
 from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
+
+from .story_ast import BoxSnapshot
 
 MAX_HISTORY = 50
 COALESCE_WINDOW_SECS = 2.0
@@ -18,13 +21,25 @@ COALESCE_WINDOW_SECS = 2.0
 
 @dataclass
 class BoxEditDelta:
-    """Single dialogue box text/speaker change."""
+    """Single dialogue box text/speaker change with stable box identity and source tracking."""
     box_index: int
     old_speaker: str
     new_speaker: str
     old_text: str
     new_text: str
-    file_path: str = ""  # str repr of Path for display
+    file_path: str = ""
+    box_uid: Optional[int] = None
+    source: str = "keyboard"  # "keyboard", "ribbon", "paste", "mtl"
+
+
+@dataclass
+class BoxStructuralDelta:
+    """Structural dialogue box mutation (insert, delete, clone) using BoxSnapshot."""
+    op_type: str  # "insert", "delete"
+    box_index: int
+    snapshots: List[BoxSnapshot]
+    file_path: str = ""
+    source: str = "user"
 
 
 @dataclass
@@ -38,8 +53,8 @@ class PlainTextDelta:
 @dataclass
 class BulkFileDelta:
     """Replace-All across multiple files: list of (file_path, old_text, new_text) tuples."""
-    description: str  # human-readable label e.g. "Replace 'foo' -> 'bar' in 3 files"
-    per_file: List[Tuple[str, str, str]] = field(default_factory=list)  # (path, old, new)
+    description: str
+    per_file: List[Tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -59,8 +74,7 @@ class UndoOperation:
     """One undoable unit that may contain multiple deltas."""
     label: str                    # shown in Edit > Undo <label>
     timestamp: float              # time.monotonic() at creation
-    deltas: List[Any] = field(default_factory=list)  # BoxEditDelta | PlainTextDelta | BulkFileDelta
-    # True when this op was created by coalescing with the previous one
+    deltas: List[Any] = field(default_factory=list)
     coalesced: bool = False
 
 
@@ -68,8 +82,8 @@ class MasterUndoJournal:
     """
     Thread-safe bounded coalescing undo/redo journal.
     - Max MAX_HISTORY operations; oldest dropped on overflow.
-    - Consecutive BoxEditDelta ops for the same box within COALESCE_WINDOW_SECS are merged.
-    - begin_batch()/end_batch() groups multiple record() calls into one UndoOperation.
+    - Consecutive BoxEditDelta ops for the same box and same source within COALESCE_WINDOW_SECS are merged.
+    - begin_batch()/end_batch() and contextmanager batch() group multiple deltas into one UndoOperation.
     """
 
     def __init__(self) -> None:
@@ -78,6 +92,8 @@ class MasterUndoJournal:
         self._redo_stack: List[UndoOperation] = []
         self._batch: Optional[UndoOperation] = None
         self._batch_depth: int = 0
+        self._revision: int = 0
+        self._saved_revision: int = 0
 
     # ------------------------------------------------------------------
     # Batch API
@@ -98,6 +114,15 @@ class MasterUndoJournal:
                     self._push(self._batch)
                 self._batch = None
 
+    @contextmanager
+    def batch(self, label: str) -> Generator[MasterUndoJournal, None, None]:
+        """Exception-safe batch context manager: guarantees end_batch() in finally."""
+        self.begin_batch(label)
+        try:
+            yield self
+        finally:
+            self.end_batch()
+
     # ------------------------------------------------------------------
     # Recording
     # ------------------------------------------------------------------
@@ -111,23 +136,27 @@ class MasterUndoJournal:
                 return
 
             now = time.monotonic()
-            # Coalescing: merge consecutive BoxEditDelta for same box within window
+            # Coalescing: merge consecutive BoxEditDelta for same box, same source within window
             if (
                 isinstance(delta, BoxEditDelta)
                 and self._undo_stack
-                and not self._undo_stack[-1].coalesced is None  # always True, just checking stack non-empty
                 and len(self._undo_stack[-1].deltas) == 1
                 and isinstance(self._undo_stack[-1].deltas[0], BoxEditDelta)
-                and self._undo_stack[-1].deltas[0].box_index == delta.box_index
-                and self._undo_stack[-1].deltas[0].file_path == delta.file_path
-                and (now - self._undo_stack[-1].timestamp) <= COALESCE_WINDOW_SECS
             ):
                 prev_delta = self._undo_stack[-1].deltas[0]
-                prev_delta.new_text = delta.new_text
-                prev_delta.new_speaker = delta.new_speaker
-                self._undo_stack[-1].timestamp = now
-                self._undo_stack[-1].coalesced = True
-                return
+                same_box = (
+                    (prev_delta.box_uid is not None and prev_delta.box_uid == delta.box_uid)
+                    or (prev_delta.box_index == delta.box_index)
+                )
+                same_source = (prev_delta.source == delta.source)
+                same_file = (prev_delta.file_path == delta.file_path)
+
+                if same_box and same_source and same_file and (now - self._undo_stack[-1].timestamp) <= COALESCE_WINDOW_SECS:
+                    prev_delta.new_text = delta.new_text
+                    prev_delta.new_speaker = delta.new_speaker
+                    self._undo_stack[-1].timestamp = now
+                    self._undo_stack[-1].coalesced = True
+                    return
 
             op = UndoOperation(
                 label=label or _auto_label(delta),
@@ -140,6 +169,7 @@ class MasterUndoJournal:
         """Push op to undo stack, clear redo stack, enforce MAX_HISTORY."""
         self._redo_stack.clear()
         self._undo_stack.append(op)
+        self._revision += 1
         if len(self._undo_stack) > MAX_HISTORY:
             self._undo_stack = self._undo_stack[-MAX_HISTORY:]
 
@@ -168,6 +198,7 @@ class MasterUndoJournal:
                 return None
             op = self._undo_stack.pop()
             self._redo_stack.append(op)
+            self._revision -= 1
             return op
 
     def pop_redo(self) -> Optional[UndoOperation]:
@@ -176,7 +207,27 @@ class MasterUndoJournal:
                 return None
             op = self._redo_stack.pop()
             self._undo_stack.append(op)
+            self._revision += 1
             return op
+
+    def mark_saved(self) -> None:
+        """Mark the current revision as clean/saved (AGENTS.md Rule 13)."""
+        with self._lock:
+            self._saved_revision = self._revision
+
+    def is_clean(self) -> bool:
+        """Check if current revision matches the last saved revision."""
+        with self._lock:
+            return self._revision == self._saved_revision
+
+    def prune_file(self, file_path: str) -> None:
+        """Prune undo/redo deltas associated with a closed file path (AGENTS.md Rule 16)."""
+        with self._lock:
+            def keep_op(op: UndoOperation) -> bool:
+                return any(getattr(d, "file_path", "") != file_path for d in op.deltas)
+
+            self._undo_stack = [op for op in self._undo_stack if keep_op(op)]
+            self._redo_stack = [op for op in self._redo_stack if keep_op(op)]
 
     def clear(self) -> None:
         with self._lock:
@@ -198,10 +249,19 @@ class MasterUndoJournal:
 
 def _auto_label(delta: Any) -> str:
     if isinstance(delta, BoxEditDelta):
-        return f"Edit box #{delta.box_index}"
+        return f"Edit box #{delta.box_index + 1}"
+    if isinstance(delta, BoxStructuralDelta):
+        count = len(delta.snapshots)
+        if delta.op_type == "insert":
+            return f"Insert {count} box(es)"
+        elif delta.op_type == "delete":
+            return f"Delete {count} box(es)"
+        return f"{delta.op_type.capitalize()} box"
     if isinstance(delta, PlainTextDelta):
         import os
         return f"Edit {os.path.basename(delta.file_path)}"
     if isinstance(delta, BulkFileDelta):
         return delta.description
+    if isinstance(delta, MetadataDelta):
+        return "Edit Story Metadata"
     return "Edit"
