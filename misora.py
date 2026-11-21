@@ -5716,15 +5716,19 @@ class MisoraApp(tk.Tk):
         focused = self.focus_get()
         if isinstance(focused, tk.Text):
             return focused
-        if getattr(self, "is_box0_active", False) and hasattr(self, "txt_box0_summary") and self.txt_box0_summary.winfo_exists():
-            return self.txt_box0_summary
         if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
+            if getattr(self, "is_box0_active", False) and hasattr(self, "_card_widgets") and -1 in self._card_widgets:
+                card_txt = self._card_widgets[-1].get("txt")
+                if card_txt and card_txt.winfo_exists():
+                    return card_txt
             if hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
                 card_txt = self._card_widgets[self.current_box_idx].get("txt")
                 if card_txt and card_txt.winfo_exists():
                     return card_txt
             if hasattr(self, "txt_continuous") and self.txt_continuous.winfo_exists():
                 return self.txt_continuous
+        if getattr(self, "is_box0_active", False) and hasattr(self, "txt_box0_summary") and self.txt_box0_summary.winfo_exists():
+            return self.txt_box0_summary
         if hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists():
             return self.txt_dialogue
         return getattr(self, "txt_dialogue", None)
@@ -6173,31 +6177,31 @@ class MisoraApp(tk.Tk):
         # the actual editor widget explicitly; focus must not decide this switch.
         if getattr(self, "current_file_path", None) is not None:
             widget = None
-            if getattr(self, "is_box0_active", False):
-                candidate = getattr(self, "txt_box0_summary", None)
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
-            elif (
-                getattr(self, "var_continuous_view", None)
-                and self.var_continuous_view.get()
-                and 0 <= getattr(self, "current_box_idx", -1)
-                and getattr(self, "current_box_idx", -1) in getattr(self, "_card_widgets", {})
-            ):
-                candidate = self._card_widgets[self.current_box_idx].get("txt")
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
-            elif (
-                getattr(self, "current_doc", None) is None
-                and getattr(self, "var_continuous_view", None)
-                and self.var_continuous_view.get()
-            ):
-                candidate = getattr(self, "txt_continuous", None)
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
+            is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
+            cards = getattr(self, "_card_widgets", {})
+
+            if is_cont:
+                if getattr(self, "is_box0_active", False) and -1 in cards:
+                    candidate = cards[-1].get("txt")
+                    if candidate is not None and candidate.winfo_exists():
+                        widget = candidate
+                elif getattr(self, "current_box_idx", -1) in cards:
+                    candidate = cards[self.current_box_idx].get("txt")
+                    if candidate is not None and candidate.winfo_exists():
+                        widget = candidate
+                elif getattr(self, "current_doc", None) is None:
+                    candidate = getattr(self, "txt_continuous", None)
+                    if candidate is not None and candidate.winfo_exists():
+                        widget = candidate
             else:
-                candidate = getattr(self, "txt_dialogue", None)
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
+                if getattr(self, "is_box0_active", False):
+                    candidate = getattr(self, "txt_box0_summary", None)
+                    if candidate is not None and candidate.winfo_exists():
+                        widget = candidate
+                else:
+                    candidate = getattr(self, "txt_dialogue", None)
+                    if candidate is not None and candidate.winfo_exists():
+                        widget = candidate
 
             if widget is not None:
                 try:
@@ -7645,7 +7649,42 @@ class MisoraApp(tk.Tk):
         if widget is None:
             return
 
-        # 1. Box 0 Metadata Widgets
+        # 1. Continuous View Box 0 Metadata Card (-1)
+        if (
+            self.current_doc
+            and self.current_doc.has_metadata()
+            and -1 in getattr(self, "_card_widgets", {})
+            and widget == self._card_widgets[-1].get("txt")
+        ):
+            new_sum = widget.get("1.0", "end-1c")
+            meta = self.current_doc.get_metadata()
+            old_sum = meta.get("summary", "")
+            if old_sum != new_sum:
+                self.undo_journal.record(
+                    MetadataDelta(
+                        file_path=str(self.current_file_path or ""),
+                        old_title=meta.get("title", ""),
+                        new_title=meta.get("title", ""),
+                        old_subtitle=meta.get("subtitle", ""),
+                        new_subtitle=meta.get("subtitle", ""),
+                        old_summary=old_sum,
+                        new_summary=new_sum,
+                    ),
+                    label="Edit Synopsis"
+                )
+                self.current_doc.set_metadata(summary=new_sum)
+                self.is_dirty = True
+                if hasattr(self, "txt_box0_summary") and self.txt_box0_summary.winfo_exists():
+                    self.txt_box0_summary.delete("1.0", tk.END)
+                    self.txt_box0_summary.insert("1.0", new_sum)
+                if self.current_file_path and self.current_file_path in self.open_documents:
+                    self.open_documents[self.current_file_path]["dirty"] = True
+                    self._refresh_opened_files_list()
+                self._update_raw_view()
+                self._dirty_state_changed()
+            return
+
+        # 2. Page View Box 0 Metadata Widgets
         is_box0 = (
             getattr(self, "is_box0_active", False)
             or widget in (
@@ -7653,42 +7692,12 @@ class MisoraApp(tk.Tk):
                 getattr(self, "entry_box0_title", None),
                 getattr(self, "entry_box0_subtitle", None),
             )
-            or (self.current_doc and self.current_doc.has_metadata() and -1 in getattr(self, "_card_widgets", {}) and widget == self._card_widgets[-1].get("txt"))
         )
         if is_box0:
-            if getattr(self, "is_box0_active", False) or widget in (
-                getattr(self, "txt_box0_summary", None),
-                getattr(self, "entry_box0_title", None),
-                getattr(self, "entry_box0_subtitle", None),
-            ):
-                self._on_box0_metadata_edited()
-                self._update_box0_char_counter()
-                self._dirty_state_changed()
-                return
-            elif self.current_doc and self.current_doc.has_metadata() and -1 in getattr(self, "_card_widgets", {}) and widget == self._card_widgets[-1].get("txt"):
-                new_sum = widget.get("1.0", "end-1c")
-                meta = self.current_doc.get_metadata()
-                old_sum = meta.get("summary", "")
-                if old_sum != new_sum:
-                    self.undo_journal.record(
-                        MetadataDelta(
-                            file_path=str(self.current_file_path or ""),
-                            old_title=meta.get("title", ""),
-                            new_title=meta.get("title", ""),
-                            old_subtitle=meta.get("subtitle", ""),
-                            new_subtitle=meta.get("subtitle", ""),
-                            old_summary=old_sum,
-                            new_summary=new_sum,
-                        ),
-                        label="Edit Synopsis"
-                    )
-                    self.current_doc.set_metadata(summary=new_sum)
-                    self.is_dirty = True
-                    if hasattr(self, "txt_box0_summary") and self.txt_box0_summary.winfo_exists():
-                        self.txt_box0_summary.delete("1.0", tk.END)
-                        self.txt_box0_summary.insert("1.0", new_sum)
-                    self._dirty_state_changed()
-                return
+            self._on_box0_metadata_edited()
+            self._update_box0_char_counter()
+            self._dirty_state_changed()
+            return
 
         # 2. Speaker Entry
         if widget == getattr(self, "entry_speaker", None):
@@ -7842,6 +7851,11 @@ class MisoraApp(tk.Tk):
             )
             self.current_doc.set_metadata(title=new_title, subtitle=new_subtitle, summary=new_summary)
             self.is_dirty = True
+            if hasattr(self, "_card_widgets") and -1 in self._card_widgets:
+                c0_txt = self._card_widgets[-1].get("txt")
+                if c0_txt and c0_txt.winfo_exists():
+                    c0_txt.delete("1.0", tk.END)
+                    c0_txt.insert("1.0", new_summary)
             if self.current_file_path and self.current_file_path in self.open_documents:
                 self.open_documents[self.current_file_path]["dirty"] = True
                 self._refresh_opened_files_list()

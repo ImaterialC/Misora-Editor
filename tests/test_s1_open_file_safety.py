@@ -38,6 +38,7 @@ class TestS1OpenFileSafety(unittest.TestCase):
         ]
         for p in self._patches:
             p.start()
+        self._orig_config_path = misora.CONFIG_PATH
         misora.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora.MisoraApp(restore_session=False)
         self.app.withdraw()
@@ -50,6 +51,7 @@ class TestS1OpenFileSafety(unittest.TestCase):
         for p in self._patches:
             p.stop()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        misora.CONFIG_PATH = self._orig_config_path
 
     def _open_a_bundle(self):
         if not BUNDLE.exists():
@@ -247,6 +249,40 @@ class TestS1OpenFileSafety(unittest.TestCase):
         self.app.on_save()
         self.assertEqual(self.app.current_file_path, path_a)
         self.assertEqual(path_b.read_bytes(), b_before)
+
+    def test_7_continuous_view_box0_edit_flush_on_switch(self):
+        self._open_a_bundle()
+        path_a = self.app.current_file_path
+        doc_a = self.app.current_doc
+        self.assertTrue(doc_a.has_metadata())
+
+        # Switch to Continuous View and focus Box 0
+        self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
+        self.app.update_idletasks()
+
+        self.assertIn(-1, self.app._card_widgets)
+        c0_txt = self.app._card_widgets[-1]["txt"]
+        self.app._on_card_focus_in(-1)
+        self.assertTrue(self.app.is_box0_active)
+
+        # Edit synopsis in Continuous View card without triggering KeyRelease
+        updated_synopsis = "Updated Continuous Synopsis Before Switch"
+        c0_txt.delete("1.0", "end")
+        c0_txt.insert("1.0", updated_synopsis)
+
+        # Switch to a different file (fresh plain text)
+        path_b = self._make_plain_text("fresh-target.txt", "target content")
+        self.app.open_file(path_b)
+
+        # Assert document A was flushed with updated synopsis before switch
+        self.assertEqual(doc_a.get_metadata().get("summary"), updated_synopsis)
+        self.assertEqual(self.app.current_file_path, path_b)
+
+        # Switch back to document A from cache
+        self.app.open_file(path_a)
+        self.assertIs(self.app.current_doc, doc_a)
+        self.assertEqual(doc_a.get_metadata().get("summary"), updated_synopsis)
 
 
 if __name__ == "__main__":
