@@ -305,6 +305,11 @@ class StoryDocument:
         for r in active_records:
             if r.cmd_name == "voice" and r.args:
                 cur_voice = r.args[0]
+            # touch(cmd_id=12) with a voice filename argument is the character
+            # voice-clip cue in PriConne story format.  touch(cmd_id=10) with no
+            # args is the tap-to-advance wait; ignore that one.
+            elif r.cmd_id == 12 and r.args and r.args[0].startswith("vo_"):
+                cur_voice = r.args[0]
             for a in r.args:
                 for m in BREAK_RE.finditer(a):
                     counter[m.group()] += 1
@@ -323,7 +328,7 @@ class StoryDocument:
                     boxes.append(cur)
                     cur_voice = ""
                 cur.segs.append(Seg(record=r, text=tx, raw=tx))
-            elif r.cmd_name in DEFAULT_BREAKERS:
+            elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:
                 cur = None
                 cur_voice = ""
 

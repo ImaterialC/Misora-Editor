@@ -3,47 +3,47 @@ setlocal
 cd /d "%~dp0"
 title Misora Editor: Unity3D Revision Tool ^& Story Editor
 
-rem ── Find Python version with UnityPy installed (prefers Python 3.12/3.13) ──
-for %%V in (3.12 3.13 3.11 3.14) do (
-    py -%%V -c "import UnityPy" >nul 2>&1 && (
+rem -- Preferred: Python 3.12 via Windows Python Launcher --
+py -3.12 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+    py -3.12 "%~dp0misora.py" %*
+    goto :check_error
+)
+
+rem -- Search other installed versions --
+for %%V in (3.13 3.11 3.14) do (
+    py -%%V -c "import sys" >nul 2>&1
+    if not errorlevel 1 (
         py -%%V "%~dp0misora.py" %*
-        if errorlevel 1 pause
-        goto :end
+        goto :check_error
     )
 )
 
-rem ── Fallback 1: try py -3.12 directly ────────────────────────────────────────
-py -3.12 -c "import sys" >nul 2>&1 && (
-    py -3.12 "%~dp0misora.py" %*
-    if errorlevel 1 pause
-    goto :end
-)
-
-rem ── Fallback 2: python on PATH if it has UnityPy ─────────────────────────────
-python -c "import UnityPy" >nul 2>&1 && (
-    python "%~dp0misora.py" %*
-    if errorlevel 1 pause
-    goto :end
-)
-
-rem ── Fallback 3: generic py -3 or python ──────────────────────────────────────
-where py >nul 2>&1
-if not errorlevel 1 (
-    py -3 "%~dp0misora.py" %*
-    if errorlevel 1 pause
-    goto :end
-)
-
+rem -- Fallback: python on PATH --
 where python >nul 2>&1
 if not errorlevel 1 (
     python "%~dp0misora.py" %*
-    if errorlevel 1 pause
-    goto :end
+    goto :check_error
 )
 
-echo [ERROR] Python not found or UnityPy missing.
+rem -- Fallback: generic py -3 --
+where py >nul 2>&1
+if not errorlevel 1 (
+    py -3 "%~dp0misora.py" %*
+    goto :check_error
+)
+
+echo [ERROR] Python not found on PATH.
 echo Please run: py -3.12 -m pip install -r requirements.txt
 pause
+goto :end
+
+:check_error
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Misora exited with error code %ERRORLEVEL%.
+    pause
+)
 
 :end
 endlocal

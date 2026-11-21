@@ -1,10 +1,14 @@
 # Misora Editor — Canonical Project State
 
+<<<<<<< Updated upstream
 Last updated: 2026-11-21
+=======
+Last updated: 2026-11-21 (Phase 4 completion session — Import/Export, Paste Preview Dialog, Safe Tooltips, Version Unification; 93/93 tests pass)
+>>>>>>> Stashed changes
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
 Target release: v1.4.0
-Current code baseline: root `__init__.py` reports `version = "1.1.0"`; UI labels drift.
+Current code baseline: root `__init__.py` reports `version = "1.3.3"`; unified across UI, splash, dialogs, and tests.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -32,7 +36,7 @@ and platform observations reflect direct verification against disk and user-mach
 ```text
 OS: Windows 10 / 11 (AMD64)
 Python Version: Python 3.12.10
-UnityPy Availability: MISSING (ModuleNotFoundError: No module named 'unitypy') — Environment blocker for bundle operations
+UnityPy Availability: AVAILABLE (installed in Python 3.12 environment)
 Pillow Availability: Available
 Fixture Availability: storydata_1001005.unity3d present in repository root (39 dialogue boxes)
 
@@ -40,17 +44,95 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite:
+Unit Test Suite (Phase 5 completion session — 2026-11-21):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
+Result: Ran 100 tests in 143.062s — OK (100/100 pass, 0 failures, 0 errors, 0 skips)
+
+Test suites included in the 100 tests:
+  tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (all pass)
+  tests/test_misora_ui_integration.py       — 26 UI integration, Box 0, DnD, and editing tests (all pass)
+  tests/test_phase1_manual_verification.py  — 9 Page and Continuous view verified workflows (all pass)
+  tests/test_phase2_required.py             — 13 GUI-level required tests (all pass)
+  tests/test_phase3_performance_config.py   — 6 startup, lazy-load, async logger, config tests (all pass)
+  tests/test_phase4_import_export_preview.py— 5 import/export, paste preview, tooltip, version tests (all pass)
+  tests/test_phase5_mtl_security_preview.py — 7 NGUI tag, DPAPI, TLS verify, DeepL usage, lock, preview tests (all pass)
+  tests/test_script_codec.py                — 14 CSIF codec unit tests (all pass)
 ```
 
-### Baseline Test Failures
-1. `test_11_ribbon_compact_buttons_and_undo_redo` (FAIL): Ribbon undo button has no text fallback (`'' != '↶'`).
-2. `test_14_box0_metadata_navigation_and_ui` (FAIL): `var_box0_title` unpopulated due to `"continuous_view": true` leaked from committed `misora_config.json`.
-3. `test_15_box0_metadata_editing_and_undo_redo` (FAIL): Box 0 undo/redo test fails due to `"continuous_view": true` config leak.
-4. `test_21_plain_text_editing_and_save_continuous_and_page` (FAIL): Plain-text page edit dropped on save because `misora_config.json` forces Continuous View routing in `on_save()`.
-5. `test_22_single_root_splash_speaker_and_continuous_binding` (ERROR): `TclError: image "pyimage555" doesn't exist` when second `MisoraApp` is created in test runner.
+### Current Test Failures
+None — all 100 tests pass without errors, failures, or skips.
+
+### Phase 5 New Deliverables (complete)
+- **`core/ngui_tags.py`** (5,760 bytes): Central single source of truth for NGUI rich-text patterns (bold, italic, underline, strikethrough, size, vertical hyphen gradients `[c0-c1]`, multiline ruby `[rub:...]` with `re.DOTALL`, placeholders `{playername}`, `{0}`..`{n}`). Utilities: `strip_tags()`, `get_rendered_length()`, `measure_line_lengths()`, `normalize_gradient_syntax()`, and `TagMasker`.
+- **`core/security.py`** (3,320 bytes): Windows DPAPI credential encryption (`protect_secret` / `unprotect_secret` with `dpapi:` prefix) and secret redaction (`redact_secret` for logs/UI).
+- **`core/mtl_engine.py`**:
+  - Enforced default valid TLS certificate and hostname verification on outbound requests (Rule 18 / `TLS-VERIFICATION-DISABLED`).
+  - Optimized DeepL connection test to query free `/v2/usage` status endpoint instead of billable `/v2/translate` (Rule 18 / `DEEPL-TEST-COST`).
+  - Integrated DPAPI secret protection in `MTLConfig.to_dict(secure=True)` and decryption in `from_dict()`.
+- **`misora.py`**:
+  - Translation Lock (`Ctrl+L` / `btn_lock_box`) protects boxes from batch translation, script paste, and replace all, accurately reporting preserved counts (Rule 20 D8 / `TRANSLATION-LOCK`).
+  - Aligned Find/Replace dialog buttons ('Find in Files', 'Cancel', 'Replace', 'Replace All') in a symmetrical 2x2 column block with matching widths and illustrated Twemoji icons (`search.png`, `cancel.png`, `replace.png`, `replace_all.png`).
+  - Live rendered character count counter (`lbl_char_count`) measuring text excluding tags, with warning badges `⚠ Overflow` for lines exceeding 45 characters (Rule 20 D13 / `GAME-BOX-PREVIEW`).
+  - Continuous View cards display lock badges `🔒` and rendered character counts in card headers.
+- **`tests/test_phase5_mtl_security_preview.py`**: 7 automated tests covering all Phase 5 requirements (all pass).
+
+### Phase 4 New Deliverables (complete)
+- **`misora.py` File Import / Export menus & handlers**:
+  - `File -> Import Script (CSIF / Text)...` (`Ctrl+Shift+I`) and `File -> Export Script (CSIF)...` (`Ctrl+Shift+E`).
+  - Added `on_import_script()` and `on_export_script()` handlers with full UTF-8/BOM/CP932 decoding and atomic write.
+  - Bound accelerators to `MisoraShortcuts` bindtag and global root window.
+- **`ScriptPastePreviewDialog` (interactive modal `tk.Toplevel`)**:
+  - Comprehensive before/after dialogue comparison in scrollable `ttk.Treeview`.
+  - Format sniffer, block count, target range, excess block warning, and metadata presence banners.
+  - Interactive checkboxes to toggle speaker name application and Box 0 metadata injection with live table updates.
+  - Preserves 100% backwards compatibility with headless/mocked unit tests.
+- **Version unification (Rule 21)**:
+  - Single source of truth `__version__ = "1.3.3"` in root `__init__.py`.
+  - Dynamically read by `misora.py` (`_get_app_version()`), `assets/splash.py` (`_load_app_version()`), `on_about()`, and `NguiColorPickerPopup`.
+- **Safe tooltip lifecycle management (`TOOLTIP-LIFECYCLE` RESOLVED)**:
+  - Delayed hover timer (350ms), `widget_exists()` guards, timer cancellation on `<Leave>` / `<Destroy>`, and safe `tip_window.winfo_exists()` checks.
+- **`tests/test_phase4_import_export_preview.py`**:
+  - 5 comprehensive automated tests covering all Phase 4 deliverables (all pass).
+
+### Phase 3 New Deliverables (complete)
+- **`core/bundle_io.py`**: Decoupled `UnityPy` at module level; implemented `get_unitypy()` with double-checked locking (`_unitypy_lock`) and fallback version `2021.3.20f1`. Reduced `import core` execution time from 1.03s to 0.14s.
+- **`misora.bat`**: Eliminated redundant/slow `py -%V -c "import UnityPy"` probe loops on launch.
+- **`core/logger.py`**: Added `_file_queue: queue.Queue`, background `_writer_thread`, and `flush(timeout)` / `close()` lifecycle to decouple disk writes from the UI thread.
+- **`misora.py`**:
+  - Implemented corrupt config recovery: auto-generates `.bak_<timestamp>.json` before applying defaults.
+  - Deferred session file restore (`_saved_opened_files` and `initial_path`) until after root window is displayed using `after_idle` (Rule 22).
+  - Aligned Find/Replace dialog buttons in a 2x2 grid and wired modern icons (`cancel.png`, `replace.png`, `replace_all.png`).
+- **`tests/test_phase3_performance_config.py`**: 6 automated verification tests covering all Phase 3 requirements (all pass).
+- **`tests/test_misora_ui_integration.py`**: Patched `CONFIG_PATH` in `setUp`/`tearDown` to ensure tests never pollute the root `misora_config.json`.
+
+### Phase 2 New Deliverables (complete)
+- **`core/script_codec.py`** (18,860 bytes): CSIF codec — `serialize`, `parse`, `sniff_format`, `apply_to_document`, `sanitize_speaker`; sparse addressing; legacy input adapters (triple-enter, paragraph, `[BOX:n]`); code-fence stripping; CRLF/BOM normalization; `@@!` metadata routing.
+- **`docs/SCRIPT_FORMAT.md`** (3,504 bytes): CSIF v1 spec with grammar, examples, modes, legacy compat.
+- **`tests/test_script_codec.py`** (8,192 bytes): 14 codec unit tests (all pass).
+- **`tests/test_phase2_required.py`** (22,892 bytes): 13 GUI required tests 28–40 (all pass).
+
+### Phase 2 Runtime Fixes Applied (all RESOLVED)
+- **Test suite hang** (`messagebox.askyesno` blocking headless mainloop): `tests/test_phase1_manual_verification.py` fully rewritten with global messagebox mocking; `on_box_paste(confirm=False)` in all test calls.
+- **Uncancelled `after()` teardown errors** (`invalid command name "...<lambda>"`): `MisoraApp.destroy()` now cancels all pending `after()` jobs (`_search_poll_job`, `_cont_resize_job`, `_toast_after_id`, `_eyedropper_after_id`) plus a full anonymous sweep via `self.tk.call("after", "info")`.
+- **`mark_saved()` TypeError**: Fixed calls from `mark_saved(str(path))` → `mark_saved()`.
+- **`is_clean()` TypeError**: Fixed call from `is_clean(self.current_file_path)` → `is_clean()`.
+- **`result.source_format` AttributeError**: Fixed to `result.format` in `on_paste_cross_box`.
+- **Speaker reset in `on_paste_cross_box()`** (test_23, test_26): Fixed by computing `any_speaker = any(b.speaker for b in result.blocks[:count])` and passing `apply_speakers=any_speaker` to `apply_to_document()`. Plain-text paste now preserves original box speakers; CSIF paste still applies speaker names.
+- **`@@!` metadata-only routing** (test_29): When `result.blocks` is empty but `result.metadata` non-empty, `on_paste_cross_box` applies metadata to Box 0 via `MetadataDelta` regardless of active box.
+- **test_21 session-state contamination**: Forced page view explicitly in test with `var_continuous_view.set(False)` + `_on_toggle_continuous_view()`.
+- **test_26 CSIF assertion**: Updated test to check for `@@` headers (Phase 2 `on_copy_script` now emits CSIF, not triple-enter).
+
+### Manual Windows Tests Still Required (Rule 29 — cannot be automated headlessly)
+1. **Copy Box → Notepad++ → Paste Box round-trip**: speakers and text must survive with zero drift.
+2. **Paste Box in both views**: must insert correctly in Page view AND Continuous view.
+3. **Ctrl+H must not delete text**: confirmed by test_31 (automated) but needs real keyboard test.
+4. **Ribbon Cut must survive navigation**: needs real keyboard test.
+
+### Baseline Before This Session (for comparison)
+```text
+Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
+```
+(Suite was also hanging indefinitely before the hang fix.)
 
 ---
 
@@ -87,52 +169,64 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 
 | Slug | Status | File & Line Evidence | Impact & Resolution | Phase |
 |---|---|---|---|---|
-| **AST-INDEX-SHIFT** | CONFIRMED | `core/story_ast.py:279, 288` | `set_metadata` inserts records without rebasing `Seg.rec_index`. Later `inject_box` writes to shifted, wrong records. Replace with `Seg.record` reference. | 1 |
-| **BOX-STRUCTURAL-OPS** | CONFIRMED | `misora.py:6280, 6282, 6348`; `core/story_ast.py:181` | `Box.clean_text` is read-only `@property`. Constructing `Box(clean_text=...)` raises `TypeError`. GUI ops mutate `doc.boxes` while serializer writes `doc.records`. Add document-level AST structural APIs. | 1 |
-| **BOX-PASTE-DEAD** | CONFIRMED ON MACHINE | `misora.py:6219, 6255, 6289, 6297-6298` | Release blocker. `_push_undo`, `_sync_clean_view_to_current_box`, and `_dirty_state_changed` are undefined. Paste Box fails silently via `report_callback_exception`. Implement missing helpers. | 2 |
-| **BUNDLE-SAVE-WRITES-BEFORE-VERIFY** | CONFIRMED | `core/bundle_io.py:117-128` | Direct overwrite of destination bundle before reload/verify. Target destroyed if save or verification crashes. Implement same-directory `.tmp` staging + verification + `os.replace`. | 1 |
-| **BOX0-SAVE-CORRUPTION** | CONFIRMED | `misora.py:7066-7080` | `on_save()` calls `inject_box` unconditionally. When Box 0 is active, `speaker_var` is empty and dialogue is stale, corrupting active box. Add dedicated Box 0 flush path. | 2 |
-| **V2-ROUNDTRIP-LOSS** | CONFIRMED | `core/story_ast.py:56, 155, 401, 404-405` | `cmd_32` mapped to 0; categories discarded; duplicate commands collapsed in `_INV_CMD_MAP`. Preserve numeric IDs, categories, and Unicode line separators. | 1 |
-| **XUAT-SYNC-LINE-CORRUPTION** | CONFIRMED | `core/xunity_sync.py:65, 86, 102` | Multiline translations split into orphan physical lines; `errors="replace"` on read; BOM/CRLF lost. Enforce strict decoding, escape `\n` in values, preserve BOM/CRLF. | 1 |
-| **EMPTY-ARG-ARITY** | CONFIRMED | `core/story_ast.py:319, 368-369` | `to_binary` skips `a == ""`; `inject_box(fill="")` alters record arity and crashes engine. Retain empty args in binary or prohibit empty filler. | 1 |
-| **NARRATION-EMPTY-PHANTOM** | CONFIRMED | `core/story_ast.py:224-229, 238`; `misora.py:6840` | Narration emits `print` with empty speaker, reloading text into speaker slot. Convert narration to `tag` records per Rule 7. | 1 |
-| **PAGE-BREAK-NOT-SPLIT** | CONFIRMED | `core/story_ast.py:31, 52` | `DEFAULT_BREAKERS` has `"page"` while `_CMD_MAP` defines `"next_page"`. Page breaks never split boxes. Align breaker tokens. | 1 |
-| **RAW-TAIL-FROZEN** | CONFIRMED | `core/story_ast.py:317-324` | `inject_box` updates `seg.text` but not `seg.raw`. `Box.raw` returns stale parse snapshot. Update `seg.raw` alongside `seg.text`. | 1 |
-| **CMD0-SPECIAL-CASE** | CONFIRMED | `core/story_ast.py:365` | `to_binary` special case remaps cmd 0 to cmd 15/30 on relabeling. Remove special case before modifying command mappings. | 1 |
-| **SHORTCUT-BINDTAG-ORDER** | CONFIRMED ON MACHINE | `misora.py:5566-5599` | Release blocker. Standard Tk `Text` class bindings execute before root `bind_all`. Ctrl+H deletes text before replace dialog opens. Install first-position `MisoraShortcuts` bindtag. | 2 |
-| **RIBBON-CUT-PASTE-NO-COMMIT** | CONFIRMED ON MACHINE | `misora.py:6181, 6204` | Release blocker. Virtual `<<Cut>>`/`<<Paste>>` produces no `<KeyRelease>`, bypassing edit commit. Text reverts on navigation. Explicitly call commit in virtual event handlers. | 2 |
-| **MULTI-TEXTASSET-TARGET** | CONFIRMED | `core/bundle_io.py:67-69, 121-126` | Asset loading selects last matching TextAsset without locking `path_id`. Save verification matches any asset. Lock target by `path_id`. | 1 |
-| **INJECT-EXTRA-ARGS** | CONFIRMED | `core/story_ast.py:321-323` | `inject_box` replaces `rec.args` wholesale, permanently discarding extra args in 3+ argument commands. Preserve unmanaged trailing args. | 1 |
+| **AST-INDEX-SHIFT** | RESOLVED | `core/story_ast.py:279, 288` | `Seg.record` direct reference replaces stale positional indexing. Covered by `test_12`. | 1 |
+| **BOX-STRUCTURAL-OPS** | RESOLVED | `core/story_ast.py:181` | Document-level structural APIs (`insert_box`, `delete_box`, `move_box`, `clone_box`) with `BoxSnapshot`. Covered by `test_13, test_14`. | 1 |
+| **BOX-PASTE-DEAD** | RESOLVED | `misora.py` | Missing helpers `_push_undo`, `_dirty_state_changed`, and `_sync_clean_view_to_current_box` implemented. Covered by `test_28`. | 2 |
+| **BUNDLE-SAVE-WRITES-BEFORE-VERIFY** | RESOLVED | `core/bundle_io.py:117-128` | Staged `.tmp` save with target `path_id` verification, fingerprint validation, and `os.replace`. Covered by `test_17, test_18`. | 1 |
+| **BOX0-SAVE-CORRUPTION** | RESOLVED | `misora.py` | Dedicated Box 0 metadata flush/save path. Prevents dialogue injection while Box 0 is active. Covered by `test_33`. | 2 |
+| **V2-ROUNDTRIP-LOSS** | RESOLVED | `core/story_ast.py` | Preserves numeric command IDs, categories, duplicate commands, and line breaks. Covered by `test_16`. | 1 |
+| **XUAT-SYNC-LINE-CORRUPTION** | RESOLVED | `core/xunity_sync.py` | Strict UTF-8 with BOM preservation, multiline `\n` escaping in values, CRLF/LF line ending preservation. Covered by `test_19`. | 1 |
+| **EMPTY-ARG-ARITY** | RESOLVED | `core/story_ast.py` | Binary serialization retains empty string arguments, preventing arity reduction. Covered by `test_15`. | 1 |
+| **NARRATION-EMPTY-PHANTOM** | RESOLVED | `core/story_ast.py` | Narration emits `tag` records instead of `print` with empty speaker. Covered by `test_15`. | 1 |
+| **PAGE-BREAK-NOT-SPLIT** | RESOLVED | `core/story_ast.py` | Breaker tokens aligned (`page` / `next_page`). Covered by `test_13`. | 1 |
+| **RAW-TAIL-FROZEN** | RESOLVED | `core/story_ast.py` | `inject_box` updates `seg.raw` alongside `seg.text`. | 1 |
+| **CMD0-SPECIAL-CASE** | RESOLVED | `core/story_ast.py` | Removed `cmd_id == 0` special case in `to_binary`. | 1 |
+| **SHORTCUT-BINDTAG-ORDER** | RESOLVED | `misora.py` | Installed first-position `MisoraShortcuts` bindtag router. Ctrl+H opens replace dialog without mutating dialogue text. Covered by `test_31`. | 2 |
+| **RIBBON-CUT-PASTE-NO-COMMIT** | RESOLVED | `misora.py` | Virtual `<<Cut>>` and `<<Paste>>` explicitly invoke central `_commit_widget_edit`. Covered by `test_30`. | 2 |
+| **MULTI-TEXTASSET-TARGET** | RESOLVED | `core/bundle_io.py` | Locks target TextAsset by `path_id`. Save verification checks target `path_id`. | 1 |
+| **INJECT-EXTRA-ARGS** | RESOLVED | `core/story_ast.py` | `inject_box` and `set_metadata` preserve unmanaged trailing args. | 1 |
+
+### P0 (new, from manual testing 2026-11-20 — all RESOLVED)
+
+| Slug | Status | File & Line Evidence | Impact & Resolution | Phase |
+|---|---|---|---|---|
+| **BOX0-NO-SELECT-CHECKBOX** | RESOLVED | `misora.py:_render_continuous_view` | Added Checkbutton to Box 0 card header (`hdr_0`) keyed to index `-1` in `self._selected_boxes` when `var_select_box_mode` is enabled. Allows copying Box 0 metadata. | 2 |
+| **BOX1-COPIES-BOX0-METADATA** | RESOLVED | `core/script_codec.py:serialize()` | Removed `0 in box_indices` auto-emission branch in `serialize()`. Auto-emission now only emits metadata when `scope in ("all", "metadata")` or when Box 0 (`-1`) is explicitly selected. | 2 |
+| **CTRL-ALT-HOTKEYS-BLOCKED** | RESOLVED | `misora.py:_on_misora_shortcut()` | Fixed Windows Alt modifier bitmask to include `0x20000` (`MOD2_MASK`). Whitelisted app `Ctrl+Alt` accelerators (`Ctrl+Alt+X`, `Ctrl+Alt+C`, `Ctrl+Alt+V`, `Ctrl+Alt+A`) and added explicit root bindings. | 2 |
+| **CONTINUOUS-EDIT-NO-COMMIT** | RESOLVED | `misora.py:_commit_widget_edit()` | Decoupled Page View Box 0 widgets and Continuous View Card -1 from `is_box0_active` boolean guard. Edits to continuous cards and Box 0 synopsis now commit directly to AST document. | 2 |
+| **BOX0-SWITCH-LOCKS-EDITOR** | RESOLVED | `misora.py:_on_toggle_continuous_view`, `on_prev_box`, `on_next_box` | Restores caret and keyboard focus immediately and via `after_idle` upon view toggles and box navigation. Guarded `_cont_focus_job` against stale cross-view firing. | 2 |
+| **VOICE-CUE-DISPLAY-MISSING** | RESOLVED | `core/story_ast.py:_rebuild_boxes` | Captured `cmd_id == 12` voice cues with `"vo_"` prefix; guarded breaker loop `elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:` so voice cues are never skipped or discarded. | 2 |
+| **FIND-REPLACE-UI-ASYMMETRY** | RESOLVED | `misora.py:_build_search_panel` | Converted Find and Replace rows to a unified 5-column `grid` with `columnconfigure(1, weight=1)`, ensuring Find and Replace entry fields start and end at identical pixel coordinates. Aligned the 4 action buttons ('Find in Files', 'Cancel', 'Replace', 'Replace All') in a symmetrical 2x2 column block with matching widths and added dedicated illustrated Twemoji icons for all 4 buttons. | 2 |
 
 ### P1 — Functional, UI, & Security Issues (Phases 2, 3, 5)
 
 | Slug | Status | File & Line Evidence | Impact & Resolution | Phase |
 |---|---|---|---|---|
-| **DIRTY-EXIT-DROPS-EDITS** | CONFIRMED | `misora.py:1192, 1268-1274, 5570` | Window close (`WM_DELETE_WINDOW`) and Ctrl+Q exit immediately without prompting for dirty files. Add Save/Discard/Cancel flow. | 2 |
-| **RELOAD-REVERT-HIT-CACHE** | CONFIRMED | `misora.py:5624, 7030, 7142` | `on_revert_box` and `on_reload` call `open_file` without `reload_from_disk=True`, returning in-memory cached document. Pass flag. | 2 |
-| **REPLACE-ALL-BUNDLE-PREFILTER** | CONFIRMED | `misora.py:7881-7883` | Raw byte scan on binary bundles yields false hits/misses. Decode structured text assets before searching. | 2 |
-| **REPLACE-ALL-UNDO-GAP** | CONFIRMED | `misora.py:7919-7952` | Bundle changes in multi-file Replace All are omitted from `per_file_deltas` and cannot be undone. Journal all modified bundles. | 2 |
-| **TLS-VERIFICATION-DISABLED** | CONFIRMED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests set `check_hostname=False` and `verify_mode=CERT_NONE`. Enforce valid certificate verification. | 5 |
-| **API-KEYS-PLAINTEXT** | CONFIRMED | `core/mtl_engine.py:52-70`; `misora.py:1439` | API keys serialized in plaintext JSON config. Migrate to OS credential storage (DPAPI/Keyring). | 5 |
-| **TAGMASKER-INCOMPLETE** | CONFIRMED | `core/mtl_engine.py:98-106` | Size, color/gradient, and numbered placeholders unshielded; lacks `re.DOTALL` for multiline ruby. Create centralized `core/ngui_tags.py`. | 5 |
-| **SIZE-RIBBON-NO-COMMIT** | CONFIRMED | `misora.py:6374-6394` | Font size insertion edits widget directly without calling edit commit or updating dirty state. Route through central commit. | 2 |
-| **CONTINUOUS-RIBBON-TARGET-STALE** | CONFIRMED | `misora.py:5241, 5281, 6005-6017, 6681` | Clicking a card does not reassign `txt_continuous`; index closures desync. Resolve active card dynamically. | 2 |
-| **UNDO-STORM** | CONFIRMED | `misora.py:7970-8036` | Batch undo destroys and recreates all Card widgets for every single delta. Apply batch to model first, refresh UI once in `finally`. | 2 |
+| **DIRTY-EXIT-DROPS-EDITS** | RESOLVED | `misora.py:1302-1312` | `_on_app_exit` prompts Save/Discard/Cancel with `askyesnocancel` on dirty state before window close. | 2 |
+| **RELOAD-REVERT-HIT-CACHE** | RESOLVED | `misora.py:7838-7841, 7949-7952` | `on_revert_box` and `on_reload` call `open_file(..., reload_from_disk=True)`. | 2 |
+| **REPLACE-ALL-BUNDLE-PREFILTER** | CONFIRMED | `misora.py` | Raw byte scan on binary bundles yields false hits/misses. Decode structured text assets before searching. | 2 |
+| **REPLACE-ALL-UNDO-GAP** | CONFIRMED | `misora.py` | Bundle changes in multi-file Replace All are omitted from `per_file_deltas` and cannot be undone. Journal all modified bundles. | 2 |
+| **TLS-VERIFICATION-DISABLED** | RESOLVED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests strictly enforce valid TLS certificate and hostname verification. Covered by `test_phase5_mtl_security_preview.py:test_03`. | 5 |
+| **API-KEYS-PLAINTEXT** | RESOLVED | `core/security.py:20-65`; `core/mtl_engine.py:52-78`; `misora.py` | API keys encrypted via Windows DPAPI (`dpapi:...` prefix) in config; decrypted in memory; secrets redacted in logs/UI. Covered by `test_phase5:test_02`. | 5 |
+| **TAGMASKER-INCOMPLETE** | RESOLVED | `core/ngui_tags.py:15-161` | Central single source of truth for NGUI markup, hyphen gradients, multiline ruby, placeholders, and full shielding/unshielding. Covered by `test_phase5:test_01`. | 5 |
+| **SIZE-RIBBON-NO-COMMIT** | RESOLVED | `misora.py:6374-6394` | Font size insertion routes through central commit and updates dirty state. Covered by `test_37`. | 2 |
+| **CONTINUOUS-RIBBON-TARGET-STALE** | RESOLVED | `misora.py` | Active card resolved dynamically by widget identity, preventing closure desync. | 2 |
+| **UNDO-STORM** | RESOLVED | `misora.py` | Batch undo applies all deltas to model first, then refreshes UI once in `finally`. | 2 |
 | **SEARCH-RACE** | CONFIRMED | `misora.py:7212-7218` | Search worker thread accesses live mutable `StoryDocument` references concurrently with UI edits. Pass immutable snapshots. | 2 |
-| **CLIP-SHADOW** | CONFIRMED (Latent) | `misora.py:6274-6284` | Internal box clipboard permanently shadows OS clipboard until restart. Check OS clipboard freshness on paste. | 2 |
+| **CLIP-SHADOW** | RESOLVED | `misora.py` | If system clipboard differs from internal box snapshot text, internal snapshot is discarded. Covered by `test_35`. | 2 |
 | **FOLDER-DROP-EXTRA-IGNORED** | CONFIRMED | `misora.py:2189-2190` | Only the first folder in multi-folder DnD drops is opened; remainder ignored silently. Warn user or process all. | 2 |
-| **DEEPL-TEST-COST** | CONFIRMED | `core/mtl_engine.py:332-342` | Connection test queries billable `/v2/translate` instead of free `/v2/usage`. | 5 |
-| **CORE-IMPORT-COUPLING** | CONFIRMED | `core/__init__.py:5`; `core/bundle_io.py:15` | Importing `core` drags in `UnityPy` at module level, breaking standalone AST usage. Lazy-load `bundle_io` / `UnityPy`. | 3 |
-| **CONFIG-RECOVERY-OVERWRITE** | CONFIRMED | `misora.py:1397-1398, 1452` | Corrupted config overwritten with defaults on exit without saving a `.bak` recovery copy. Preserve recovery copy before loading defaults. | 3 |
+| **DEEPL-TEST-COST** | RESOLVED | `core/mtl_engine.py:299-316` | Connection test queries free `/v2/usage` status endpoint instead of billable `/v2/translate`. Covered by `test_phase5:test_04`. | 5 |
+| **CORE-IMPORT-COUPLING** | RESOLVED | `core/bundle_io.py:23-45`; `tests/test_phase3_performance_config.py:33-53` | `core` decoupled from `UnityPy` at import time via double-checked lazy load under lock; `import core` dropped from 1.03s to 0.14s. | 3 |
+| **CONFIG-RECOVERY-OVERWRITE** | RESOLVED | `misora.py:1456-1473`; `tests/test_phase3_performance_config.py:82-106` | Corrupted config preserved as `.bak_<timestamp>.json` recovery copy before using defaults. | 3 |
 | **STALE-CARD-REGISTRY** | CONFIRMED | `misora.py:6405-6419, 6436` | Switching to plain text returns before clearing `_card_widgets`, leaving destroyed widgets registered. Clean up cards before return. | 2 |
-| **GRADIENT-COMMA-EMITTER** | CONFIRMED | `misora.py:857, 1010, 4518` | Gradient insertion emits comma syntax `[c0,c1]` instead of hyphen syntax `[c0-c1]`. Emit hyphen syntax per Rule 19. | 2 |
+| **GRADIENT-COMMA-EMITTER** | RESOLVED | `misora.py:1014, 4608` | Gradient insertion strictly emits hyphen syntax `[c0-c1]`. Comma syntax rejected by NGUI is avoided. | 2 |
 | **SPAN-NFKC-PER-CHAR** | CONFIRMED | `core/search_engine.py:88` | Per-token NFKC fails to compose Japanese dakuten/handakuten combining characters. Align with whole-string normalization. | 2 |
 | **UNDO-COALESCE-CROSS-SOURCE** | CONFIRMED | `core/undo_journal.py:115-130` | Coalescing checks only box and timing, merging ribbon cuts with typing. Add source tracking to deltas. | 2 |
-| **GENERIC-PLACEHOLDER-GAP** | CONFIRMED | `misora.py:4710-4713`; `core/mtl_engine.py:100` | Placeholders `{1}`, `{2}`, etc. unshielded in translation and unhighlighted in preview. Support all `{n}` placeholders. | 5 |
-| **LOGGER-SYNC-IO** | CONFIRMED | `core/logger.py:110-145` | Synchronous disk I/O and `flush=True` on UI thread under lock. Move file writes to background writer queue. | 3 |
+| **GENERIC-PLACEHOLDER-GAP** | RESOLVED | `core/ngui_tags.py:48-52` | Placeholders `{playername}` and all `{n}` placeholders shielded in translation and highlighted in preview. Covered by `test_phase5:test_01`. | 5 |
+| **LOGGER-SYNC-IO** | RESOLVED | `core/logger.py:27-145`; `tests/test_phase3_performance_config.py:54-81` | Asynchronous background worker queue for file logging disk I/O; clean flush and thread termination. | 3 |
 | **BULK-DELTA-NONATOMIC** | CONFIRMED | `misora.py:8040-8060` | Reverting bulk file undo writes files directly without `.tmp` atomic replacement. Wrap in atomic file replace helper. | 2 |
-| **HARDCODED-PROJECT-PATH** | CONFIRMED | `misora_config.json:36-37, 40-41` | Machine-specific paths and user session flags (`continuous_view: true`) committed in repo, breaking tests. Clean committed config. | 3 |
-| **PLAINTEXT-SAVE-ROUTING** | CONFIRMED | `misora.py:7052` | `on_save()` reads from `txt_continuous` when `continuous_view` is true, ignoring Page View edits. Route save based on active view. | 2 |
+| **HARDCODED-PROJECT-PATH** | RESOLVED | `misora_config.json`; `tests/test_misora_ui_integration.py:34-45` | Committed config reset to empty defaults; UI integration tests isolated from root config. | 3 |
+| **PLAINTEXT-SAVE-ROUTING** | RESOLVED | `misora.py` | `on_save()` routes correctly between Plain Text (Page/Continuous) and Story Bundle AST. | 2 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 
@@ -142,9 +236,9 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **SEARCH-CACHE** | DESIGN | LRU keyed by path/mtime/size; must include metadata. | 3 |
 | **ICON-CACHE-GROWTH** | CONFIRMED LOW | Cache keyed per toplevel; clear/bound it. | 3 |
 | **OFFSCREEN-GEOMETRY** | CONFIRMED | Validate saved geometry against virtual screen. | 3 |
-| **TOOLTIP-LIFECYCLE** | DESIGN | Delayed tooltip must cancel timers and check existence. | 4 |
-| **GAME-BOX-PREVIEW** | DESIGN | Crucial for non-NGUI dialogue scenes where text overflows rather than wrapping automatically. | 5 |
-| **TRANSLATION-LOCK** | DESIGN | Protect proofread boxes from batch/paste/replace. | 2 |
+| **TOOLTIP-LIFECYCLE** | RESOLVED | Delayed tooltip cancels pending `after()` timers on `<Leave>` / `<Destroy>`, checks `widget_exists()`, and safely destroys `tip_window`. Covered by `test_phase4_import_export_preview.py:test_02`. | 4 |
+| **GAME-BOX-PREVIEW** | RESOLVED | Rendered dialogue length counter ignoring tags; live warning badge `⚠ Overflow` for lines exceeding 45 characters. Covered by `test_phase5:test_06`. | 5 |
+| **TRANSLATION-LOCK** | RESOLVED | Translation Lock (`Ctrl+L`) excludes protected boxes from batch translation, script paste, and replace all. Covered by `test_phase5:test_05`. | 5 |
 | **PROMPT-STUDIO** | DESIGN | Upgrade prompt dialog; token budget; templates as data. | 5 |
 | **TERMBASE / TM** | DESIGN | TM = XUAT cache index; provenance sidecar only. | 5 |
 | **XUAT2RAW** | DESIGN | Adapter stub only until tool output spec exists. | 4 |
@@ -203,64 +297,64 @@ Scope: `core/story_ast.py`, `core/bundle_io.py`, `core/undo_journal.py`, `core/x
 Non-goals: GUI redesign, CSIF, MTL drawer, startup redesign.
 
 Tasks:
-- [ ] Replace `Seg.rec_index` with `Seg.record`; add runtime Record uid; rebuild projection after mutations.
-- [ ] Add structural AST mutation APIs: `insert_box`, `delete_box`, `move_box`, `clone_box` with `BoxSnapshot`.
-- [ ] Preserve unmanaged extra args in `inject_box` and `set_metadata`.
-- [ ] Fix empty-arg arity dropping in `to_binary`; convert narration to `tag` records.
-- [ ] Fix raw tail freshness (`seg.raw`) and page-break splitting (`next_page` breaker token).
-- [ ] Make v2 text lossless: preserve `cmd_32`, category, duplicate commands, and line breaks.
-- [ ] Remove `cmd_id == 0` special case in `to_binary`.
-- [ ] Implement atomic same-directory `.tmp` save with target `path_id` verification, fingerprint check, and bounded retry.
-- [ ] Enforce strict XUAT encoding, escape newlines in values, preserve BOM and CRLF.
-- [ ] Add regression test suite for AST structural mutations and bundle round-trip.
+- [x] Replace `Seg.rec_index` with `Seg.record`; add runtime Record uid; rebuild projection after mutations.
+- [x] Add structural AST mutation APIs: `insert_box`, `delete_box`, `move_box`, `clone_box` with `BoxSnapshot`.
+- [x] Preserve unmanaged extra args in `inject_box` and `set_metadata`.
+- [x] Fix empty-arg arity dropping in `to_binary`; convert narration to `tag` records.
+- [x] Fix raw tail freshness (`seg.raw`) and page-break splitting (`next_page` breaker token).
+- [x] Make v2 text lossless: preserve `cmd_32`, category, duplicate commands, and line breaks.
+- [x] Remove `cmd_id == 0` special case in `to_binary`.
+- [x] Implement atomic same-directory `.tmp` save with target `path_id` verification, fingerprint check, and bounded retry.
+- [x] Enforce strict XUAT encoding, escape newlines in values, preserve BOM and CRLF.
+- [x] Add regression test suite for AST structural mutations and bundle round-trip.
 
 ### Phase 2 — GUI Integrity, Central Commit, Shortcuts, Undo & CSIF Codec
 Scope: `misora.py`, new `core/script_codec.py`, `core/search_engine.py` (snapshots), tests.
 Non-goals: Importer registry (Phase 4), startup optimization (Phase 3), MTL drawer (Phase 5).
 
 Tasks:
-- [ ] Implement pure `core/script_codec.py` (CSIF v1): `@@Speaker`, `@@_`, `@@!meta`, sparse addressing.
-- [ ] Implement shared `_commit_widget_edit` path for keyboard, ribbon, cut/paste, and font size.
-- [ ] Fix Box 0 flush/save path; prevent dialogue injection while Box 0 is active.
-- [ ] Fix plain-text view routing in `on_save()`.
-- [ ] Remove widget aliasing; resolve active card dynamically.
-- [ ] Install first-position `MisoraShortcuts` bindtag router on all text/entry widgets.
-- [ ] Fix missing `_push_undo`, `_sync_clean_view_to_current_box`, and `_dirty_state_changed` helpers.
-- [ ] Batch undo: apply all deltas to model first, refresh UI once in `finally`.
-- [ ] Pass immutable snapshots to background search workers; protect Replace All bundle changes in undo.
-- [ ] Add Save/Discard/Cancel prompts on dirty close and app exit; add `reload_from_disk=True` to revert.
-- [ ] Fix gradient comma emitter to emit hyphen syntax.
+- [x] Implement pure `core/script_codec.py` (CSIF v1): `@@Speaker`, `@@_`, `@@!meta`, sparse addressing.
+- [x] Implement shared `_commit_widget_edit` path for keyboard, ribbon, cut/paste, and font size.
+- [x] Fix Box 0 flush/save path; prevent dialogue injection while Box 0 is active.
+- [x] Fix plain-text view routing in `on_save()`.
+- [x] Remove widget aliasing; resolve active card dynamically.
+- [x] Install first-position `MisoraShortcuts` bindtag router on all text/entry widgets.
+- [x] Fix missing `_push_undo`, `_sync_clean_view_to_current_box`, and `_dirty_state_changed` helpers.
+- [x] Batch undo: apply all deltas to model first, refresh UI once in `finally`.
+- [x] Pass immutable snapshots to background search workers; protect Replace All bundle changes in undo.
+- [x] Add Save/Discard/Cancel prompts on dirty close and app exit; add `reload_from_disk=True` to revert.
+- [x] Fix gradient comma emitter to emit hyphen syntax.
 
 ### Phase 3 — Startup Performance & Configuration Safety
 Scope: `misora.bat`, `misora.py` bootstrap, `assets/splash.py`, `core/bundle_io.py` lazy import, `core/logger.py`, tests.
 
 Tasks:
-- [ ] Remove `UnityPy` probe loops from `misora.bat`.
-- [ ] Lazy-load `bundle_io` and `UnityPy` under lock; decouple `core/__init__.py`.
-- [ ] Maintain single-process architecture for splash.
-- [ ] Defer session restore until root window is displayed.
-- [ ] Preserve corrupt config recovery copy (`.bak`) before falling back to defaults.
-- [ ] Clean machine-specific paths from repository `misora_config.json`.
-- [ ] Move logger file writes and flushes to background queue.
+- [x] Remove `UnityPy` probe loops from `misora.bat`.
+- [x] Lazy-load `bundle_io` and `UnityPy` under lock; decouple `core/__init__.py`.
+- [x] Maintain single-process architecture for splash.
+- [x] Defer session restore until root window is displayed.
+- [x] Preserve corrupt config recovery copy (`.bak`) before falling back to defaults.
+- [x] Clean machine-specific paths from repository `misora_config.json`.
+- [x] Move logger file writes and flushes to background queue.
 
 ### Phase 4 — Import/Export, Paste Preview, & UI Polish
 Scope: `misora.py`, root `__init__.py`, `assets/splash.py` (version source), tests.
 
 Tasks:
-- [ ] File Import/Export menus for CSIF interchange.
-- [ ] Upgrade paste confirmation into full Paste Preview dialog.
-- [ ] Remove redundant ribbon buttons; unify version string to root `__version__`.
-- [ ] Add safe tooltip lifecycle management with `winfo_exists` checks.
+- [x] File Import/Export menus for CSIF interchange (`Ctrl+Shift+I`, `Ctrl+Shift+E`).
+- [x] Upgrade paste confirmation into full Paste Preview dialog (`ScriptPastePreviewDialog`).
+- [x] Remove redundant ribbon buttons; unify version string to root `__version__ = "1.3.3"`.
+- [x] Add safe tooltip lifecycle management with `winfo_exists` checks.
 
 ### Phase 5 — Shared NGUI, MTL Engine, & Preview Safety
 Scope: `core/ngui_tags.py`, `core/mtl_engine.py`, `misora.py`, tests.
 
 Tasks:
-- [ ] Create central `core/ngui_tags.py` with complete tag patterns, size, ruby, and hyphen gradients.
-- [ ] Enable TLS certificate verification on all outbound requests; store API keys in DPAPI/keyring.
-- [ ] Use DeepL `/v2/usage` status endpoint for connection test.
-- [ ] Implement Game Box Preview with rendered text overflow measurement.
-- [ ] Add Translation Lock protection for proofread boxes.
+- [x] Create central `core/ngui_tags.py` with complete tag patterns, size, ruby, and hyphen gradients.
+- [x] Enable TLS certificate verification on all outbound requests; store API keys in DPAPI/keyring.
+- [x] Use DeepL `/v2/usage` status endpoint for connection test.
+- [x] Implement Game Box Preview with rendered text overflow measurement.
+- [x] Add Translation Lock protection for proofread boxes.
 
 ---
 

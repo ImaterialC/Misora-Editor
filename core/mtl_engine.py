@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.ngui_tags import TagMasker
+from core.security import protect_secret, unprotect_secret, redact_secret
+
 # Supported engine names
 MTL_ENGINES = ["Google", "DeepL", "Local / Sugoi", "LLM / OpenAI", "XUAT Cache"]
 
@@ -49,16 +52,18 @@ class MTLConfig:
     ai_prompt_include_header: bool = True
     ai_prompt_include_speaker: bool = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, secure: bool = False) -> Dict[str, Any]:
+        deepl_key = protect_secret(self.deepl_api_key) if secure else self.deepl_api_key
+        llm_key = protect_secret(self.llm_api_key) if secure else self.llm_api_key
         return {
             "active_engine": self.active_engine,
             "src_lang": self.src_lang,
             "tgt_lang": self.tgt_lang,
-            "deepl_api_key": self.deepl_api_key,
+            "deepl_api_key": deepl_key,
             "deepl_use_pro": self.deepl_use_pro,
             "local_mtl_url": self.local_mtl_url,
             "llm_base_url": self.llm_base_url,
-            "llm_api_key": self.llm_api_key,
+            "llm_api_key": llm_key,
             "llm_model": self.llm_model,
             "llm_system_prompt": self.llm_system_prompt,
             "protect_tags": self.protect_tags,
@@ -75,11 +80,16 @@ class MTLConfig:
         if not isinstance(data, dict):
             return cfg
         for k in (
-            "active_engine", "src_lang", "tgt_lang", "deepl_api_key", "local_mtl_url",
-            "llm_base_url", "llm_api_key", "llm_model", "llm_system_prompt"
+            "active_engine", "src_lang", "tgt_lang", "local_mtl_url",
+            "llm_base_url", "llm_model", "llm_system_prompt"
         ):
             if isinstance(data.get(k), str):
                 setattr(cfg, k, data[k])
+        # Automatically decrypt DPAPI-protected secrets (Rule 17)
+        if "deepl_api_key" in data and isinstance(data["deepl_api_key"], str):
+            cfg.deepl_api_key = unprotect_secret(data["deepl_api_key"])
+        if "llm_api_key" in data and isinstance(data["llm_api_key"], str):
+            cfg.llm_api_key = unprotect_secret(data["llm_api_key"])
         for k in ("deepl_use_pro", "protect_tags", "use_xuat_cache", "ai_prompt_include_header", "ai_prompt_include_speaker"):
             if isinstance(data.get(k), bool):
                 setattr(cfg, k, data[k])
@@ -87,48 +97,6 @@ class MTLConfig:
             if isinstance(data.get(k), (int, float)):
                 setattr(cfg, k, float(data[k]))
         return cfg
-
-
-class TagMasker:
-    """
-    Protects Princess Connect NGUI tags, playername tokens, and control sequences
-    from being translated, mangled, or dropped by translation engines.
-    """
-
-    # Matches {playername}, {0}, [rub:...], [b], [i], [u], [s], [sub], [sup], [c]...[/c], [-], \n
-    TOKEN_REGEX = re.compile(
-        r"(\{playername\}|\{0\}|"
-        r"\[rub:[^\]]+\](?:.*?)\[/rub\]|"
-        r"\[c\][0-9a-fA-F]{6,8}\[/c\]|\[c\][0-9a-fA-F]{6,8}|\[/c\]|\[c\]|"
-        r"\[/?(?:b|i|u|s|sub|sup)\]|\[-\]|"
-        r"\\n|\r?\n)",
-        re.IGNORECASE
-    )
-
-    @classmethod
-    def mask(cls, text: str) -> Tuple[str, Dict[str, str]]:
-        """Replace all tags with safe placeholders and return mapping."""
-        tag_map: Dict[str, str] = {}
-        counter = [0]
-
-        def repl(match: re.Match) -> str:
-            token = match.group(0)
-            tag_id = str(counter[0])
-            counter[0] += 1
-            tag_map[tag_id] = token
-            return f"__M_{tag_id}__"
-
-        masked = cls.TOKEN_REGEX.sub(repl, text)
-        return masked, tag_map
-
-    @classmethod
-    def unmask(cls, text: str, tag_map: Dict[str, str]) -> str:
-        """Restore all original tags from placeholder tokens, resilient to MT engine spacing."""
-        result = text
-        for tag_id, original in tag_map.items():
-            pattern = re.compile(r"__\s*[Mm]_\s*" + re.escape(tag_id) + r"\s*__")
-            result = pattern.sub(lambda m, o=original: o, result)
-        return result
 
 
 class MTLEngine:
@@ -139,9 +107,8 @@ class MTLEngine:
 
     def __init__(self, config: Optional[MTLConfig] = None):
         self.config: MTLConfig = config or MTLConfig()
+        # Enforce valid TLS certificate and hostname verification on all outbound requests (Rule 18)
         self._ssl_ctx = ssl.create_default_context()
-        self._ssl_ctx.check_hostname = False
-        self._ssl_ctx.verify_mode = ssl.CERT_NONE
 
     def translate(self, text: str, config: Optional[MTLConfig] = None, xuat_cache: Optional[Dict[str, str]] = None) -> str:
         """Translate a single text string using the configured active engine."""
@@ -329,9 +296,34 @@ class MTLEngine:
             msg = choices[0].get("message", {})
             return msg.get("content", "").strip()
 
+    def _test_deepl_usage(self, cfg: MTLConfig) -> Tuple[bool, str]:
+        """Test DeepL connectivity using free /v2/usage endpoint without consuming character quota (DEEPL-TEST-COST)."""
+        key = cfg.deepl_api_key.strip()
+        if not key:
+            return False, "DeepL API Key is not configured."
+        base_url = "https://api.deepl.com/v2/usage" if cfg.deepl_use_pro else "https://api-free.deepl.com/v2/usage"
+        req = urllib.request.Request(
+            base_url,
+            headers={
+                "Authorization": f"DeepL-Auth-Key {key}",
+                "User-Agent": "Misora-Story-Editor/1.3",
+            }
+        )
+        with urllib.request.urlopen(req, timeout=cfg.timeout_sec, context=self._ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            used = data.get("character_count", 0)
+            limit = data.get("character_limit", 0)
+            return True, f"DeepL Connected: {used:,} / {limit:,} characters used"
+
     def test_connection(self, config: Optional[MTLConfig] = None) -> Tuple[bool, str]:
-        """Test the specified or active engine with a sample query."""
+        """Test the specified or active engine with a sample query or usage check."""
         cfg = config or self.config
+        if cfg.active_engine == "DeepL":
+            try:
+                return self._test_deepl_usage(cfg)
+            except Exception as exc:
+                return False, f"DeepL Connection Failed: {exc}"
+
         test_phrase = "こんにちは、騎士君！"
         try:
             res = self.translate(test_phrase, config=cfg)

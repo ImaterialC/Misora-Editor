@@ -210,12 +210,12 @@ class MasterUndoJournal:
             self._revision += 1
             return op
 
-    def mark_saved(self) -> None:
+    def mark_saved(self, file_path: Optional[Any] = None) -> None:
         """Mark the current revision as clean/saved (AGENTS.md Rule 13)."""
         with self._lock:
             self._saved_revision = self._revision
 
-    def is_clean(self) -> bool:
+    def is_clean(self, file_path: Optional[Any] = None) -> bool:
         """Check if current revision matches the last saved revision."""
         with self._lock:
             return self._revision == self._saved_revision

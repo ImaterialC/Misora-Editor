@@ -14,11 +14,28 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import UnityPy
 from .story_ast import StoryDocument
 
-# Priconne bundles omit standard Unity version headers, so fallback is essential
-UnityPy.config.FALLBACK_UNITY_VERSION = "2021.3.20f1"
+_unitypy: Any = None
+_unitypy_lock = threading.Lock()
+
+
+def get_unitypy() -> Any:
+    """Lazy-load UnityPy under lock with Priconne fallback version (Rule 22)."""
+    global _unitypy
+    if _unitypy is None:
+        with _unitypy_lock:
+            if _unitypy is None:
+                try:
+                    import UnityPy  # type: ignore
+                    UnityPy.config.FALLBACK_UNITY_VERSION = "2021.3.20f1"
+                    _unitypy = UnityPy
+                except ImportError as e:
+                    raise BundleIOError(
+                        f"UnityPy is required to load and save Unity3D bundles: {e}"
+                    ) from e
+    return _unitypy
+
 
 # Module-level save guard to prevent re-entrant saves
 _save_lock = threading.Lock()
@@ -60,7 +77,7 @@ def load_bundle_story(path: Union[str, Path]) -> Tuple[StoryDocument, Any, Any, 
 
     try:
         raw_bundle_bytes = path.read_bytes()
-        env = UnityPy.load(raw_bundle_bytes)
+        env = get_unitypy().load(raw_bundle_bytes)
     except Exception as e:
         raise BundleIOError(f"Failed to open Unity3D bundle '{path.name}': {e}")
 
@@ -137,7 +154,7 @@ def save_bundle_story(
 
                 # Reopen tmp bytes and verify exact target asset & object count
                 check_tmp_bytes = tmp_path.read_bytes()
-                env_check = UnityPy.load(check_tmp_bytes)
+                env_check = get_unitypy().load(check_tmp_bytes)
                 target_in_check = None
 
                 for o in env_check.objects:

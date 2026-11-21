@@ -1,2 +1,2 @@
 """Misora: Unity3D Revision Tool & Story Editor."""
-__version__ = "1.1.0"
+__version__ = "1.3.3"

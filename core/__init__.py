@@ -9,6 +9,11 @@ from .logger import MisoraLogger, LogEntry, LOG_CATEGORIES, LOG_LEVELS, ALWAYS_O
 from .undo_journal import MasterUndoJournal, UndoOperation, BoxEditDelta, BoxStructuralDelta, PlainTextDelta, BulkFileDelta, MetadataDelta
 from .mtl_engine import MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT
 from .script_codec import serialize, parse, sniff_format, apply_to_document, sanitize_speaker, DialogueBlock, MetadataBlock, ParseResult
+from .ngui_tags import (
+    NGUI_TAG_RE, NGUI_TOKEN_RE, RUBY_RE, SIZE_RE, STYLE_RE, COLOR_HEX_RE, GRADIENT_RE,
+    PLACEHOLDER_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
+)
+from .security import protect_secret, unprotect_secret, redact_secret
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
@@ -19,4 +24,7 @@ __all__ = [
     "MasterUndoJournal", "UndoOperation", "BoxEditDelta", "BoxStructuralDelta", "PlainTextDelta", "BulkFileDelta", "MetadataDelta",
     "MTLConfig", "MTLEngine", "TagMasker", "translate_async", "MTL_ENGINES", "DEFAULT_LLM_PROMPT",
     "serialize", "parse", "sniff_format", "apply_to_document", "sanitize_speaker", "DialogueBlock", "MetadataBlock", "ParseResult",
+    "NGUI_TAG_RE", "NGUI_TOKEN_RE", "RUBY_RE", "SIZE_RE", "STYLE_RE", "COLOR_HEX_RE", "GRADIENT_RE",
+    "PLACEHOLDER_RE", "normalize_gradient_syntax", "strip_tags", "get_rendered_length", "measure_line_lengths",
+    "protect_secret", "unprotect_secret", "redact_secret",
 ]

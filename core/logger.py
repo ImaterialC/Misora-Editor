@@ -10,6 +10,7 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
@@ -64,6 +65,51 @@ class MisoraLogger:
         self._history: List[LogEntry] = []
         self._max_history: int = 2000
         self._file_error_warned: bool = False
+
+        # Dedicated background file writer queue (LOGGER-SYNC-IO / Rule 23)
+        self._file_queue: "queue.Queue[Optional[LogEntry]]" = queue.Queue(maxsize=10000)
+        self._writer_thread: Optional[threading.Thread] = None
+        self._writer_lock = threading.Lock()
+
+    def _start_writer_thread_if_needed(self) -> None:
+        with self._writer_lock:
+            if self._writer_thread is None or not self._writer_thread.is_alive():
+                self._writer_thread = threading.Thread(
+                    target=self._file_writer_loop,
+                    name="MisoraLogWriter",
+                    daemon=True,
+                )
+                self._writer_thread.start()
+
+    def _file_writer_loop(self) -> None:
+        """Background worker thread consuming log entries and writing to disk."""
+        while True:
+            try:
+                entry = self._file_queue.get()
+                if entry is None:
+                    self._file_queue.task_done()
+                    break
+                self._write_entry_to_file(entry)
+                self._file_queue.task_done()
+            except Exception:
+                pass
+
+    def flush(self, timeout: float = 1.0) -> None:
+        """Wait for queued log entries to be written to disk."""
+        deadline = time.time() + timeout
+        while not self._file_queue.empty() and time.time() < deadline:
+            time.sleep(0.01)
+
+    def close(self) -> None:
+        """Stop background log writer thread cleanly."""
+        with self._writer_lock:
+            if self._writer_thread and self._writer_thread.is_alive():
+                try:
+                    self._file_queue.put_nowait(None)
+                    self._writer_thread.join(timeout=0.5)
+                except Exception:
+                    pass
+                self._writer_thread = None
 
     def configure(
         self,
@@ -136,7 +182,11 @@ class MisoraLogger:
                     pass
 
             if self.log_to_file:
-                self._write_entry_to_file(entry)
+                self._start_writer_thread_if_needed()
+                try:
+                    self._file_queue.put_nowait(entry)
+                except queue.Full:
+                    pass
 
     def _write_entry_to_file(self, entry: LogEntry) -> None:
         try:
@@ -198,6 +248,7 @@ class MisoraLogger:
         self.drain_ui_entries()
 
     def clear_log_file(self) -> bool:
+        self.flush()
         with self._lock:
             try:
                 if self.log_file_path.exists():

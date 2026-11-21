@@ -1,6 +1,0 @@
-Audit & dokumentasi
-→ Phase 1: Core / binary / save / XUAT integrity
-→ Phase 2: GUI commit / undo / shortcut / clipboard
-→ Phase 3: Startup
-→ Phase 4: CSIF / import-export / UI polish
-→ Phase 5: NGUI / MTL / Prompt Studio

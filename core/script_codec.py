@@ -355,10 +355,11 @@ def serialize(
     if include_metadata is True:
         emit_meta = True
     elif include_metadata == "auto":
-        # Include metadata if present and scope is 'all' or metadata is selected
+        # Include metadata only when exporting the whole document or when the
+        # caller explicitly scopes to metadata.  A plain dialogue selection that
+        # happens to include box index 0 (the first dialogue box, NOT Box 0 /
+        # story metadata) must NOT bleed metadata into the clipboard.
         if scope in ("all", "metadata") and doc.has_metadata():
-            emit_meta = True
-        elif box_indices is not None and 0 in box_indices and doc.has_metadata():
             emit_meta = True
 
     if emit_meta:
@@ -446,6 +447,7 @@ def apply_to_document(
     start_box_index: int = 0,
     overflow: str = "create",
     apply_speakers: bool = True,
+    locked_indices: Optional[Set[int]] = None,
 ) -> int:
     """
     Apply a ParseResult to a StoryDocument.
@@ -485,6 +487,8 @@ def apply_to_document(
         # Apply blocks to specified 1-based indices
         for b in result.blocks:
             box_idx = b.index - 1
+            if locked_indices and box_idx in locked_indices:
+                continue
             old_box = doc.boxes[box_idx]
             if apply_speakers:
                 sp = "" if b.is_narration else sanitize_speaker(b.speaker)
@@ -515,6 +519,9 @@ def apply_to_document(
         curr_idx = max(0, start_box_index)
         for b in result.blocks:
             if curr_idx < len(doc.boxes):
+                if locked_indices and curr_idx in locked_indices:
+                    curr_idx += 1
+                    continue
                 old_box = doc.boxes[curr_idx]
                 sp = ("" if b.is_narration else sanitize_speaker(b.speaker)) if apply_speakers else old_box.speaker
                 doc.inject_box(curr_idx, new_speaker=sp, new_text=b.text)

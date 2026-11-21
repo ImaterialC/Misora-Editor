@@ -32,6 +32,8 @@ class TestMisoraUIIntegration(unittest.TestCase):
 
     def setUp(self):
         self.tmp_dir = Path(tempfile.mkdtemp(prefix="misora_ui_test_"))
+        self._orig_config_path = misora_app.CONFIG_PATH
+        misora_app.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora_app.MisoraApp(restore_session=False)
         self.app.withdraw()
 
@@ -40,6 +42,7 @@ class TestMisoraUIIntegration(unittest.TestCase):
             self.app.destroy()
         except Exception:
             pass
+        misora_app.CONFIG_PATH = self._orig_config_path
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_01_two_way_project_folder_linking(self):
@@ -446,31 +449,39 @@ class TestMisoraUIIntegration(unittest.TestCase):
         txt_path = Path(tempfile.gettempdir()) / "test_plain_edit.txt"
         txt_path.write_text("Hello World\nLine 2\n", encoding="utf-8")
 
+        orig_ask = misora_app.messagebox.askyesno
+        orig_info = misora_app.messagebox.showinfo
+        orig_err = misora_app.messagebox.showerror
+        misora_app.messagebox.askyesno = lambda *a, **k: True
+        misora_app.messagebox.showinfo = lambda *a, **k: None
+        misora_app.messagebox.showerror = lambda *a, **k: None
+
         try:
             self.app.open_file(txt_path)
             self.assertFalse(self.app.is_dirty)
 
-            # Edit in Page View
+            # --- Page View phase ---
+            # Ensure we're in page view regardless of saved session preference
+            self.app.var_continuous_view.set(False)
+            self.app._on_toggle_continuous_view()
+
             self.app.txt_dialogue.insert("end-1c", "Extra Page Text\n")
             self.app._on_dialogue_edited()
             self.assertTrue(self.app.is_dirty)
 
-            # Save in Page View
             self.app.on_save()
             self.assertFalse(self.app.is_dirty)
             saved_content = txt_path.read_text(encoding="utf-8")
             self.assertIn("Extra Page Text", saved_content)
 
-            # Toggle Continuous View
+            # --- Continuous View phase ---
             self.app.var_continuous_view.set(True)
             self.app._on_toggle_continuous_view()
 
-            # Edit in Continuous View
             self.app.txt_continuous.insert("end-1c", "Extra Continuous Text\n")
             self.app._sync_continuous_box_from_widget()
             self.assertTrue(self.app.is_dirty)
 
-            # Save in Continuous View
             self.app.on_save()
             self.assertFalse(self.app.is_dirty)
             saved_content = txt_path.read_text(encoding="utf-8")
@@ -480,6 +491,9 @@ class TestMisoraUIIntegration(unittest.TestCase):
             self.app.var_continuous_view.set(False)
             self.app._on_toggle_continuous_view()
         finally:
+            misora_app.messagebox.askyesno = orig_ask
+            misora_app.messagebox.showinfo = orig_info
+            misora_app.messagebox.showerror = orig_err
             if txt_path.exists():
                 txt_path.unlink()
 
@@ -505,7 +519,7 @@ class TestMisoraUIIntegration(unittest.TestCase):
             # Continuous View checkbox must toggle and render correctly
             splash_app.var_continuous_view.set(True)
             splash_app._on_toggle_continuous_view()
-            self.assertGreater(len(splash_app.txt_continuous.get("1.0", "end-1c")), 10)
+            self.assertGreater(len(splash_app._card_widgets[0]["txt"].get("1.0", "end-1c")), 10)
             self.assertEqual(len(splash_app._card_widgets), 40)
         finally:
             splash_app.destroy()
@@ -622,7 +636,7 @@ class TestMisoraUIIntegration(unittest.TestCase):
         self.assertEqual(self.app.current_box_idx, 5)
 
     def test_26_paste_script_triple_enter(self):
-        """Triple-enter script copy and paste distributes cleanly across boxes preserving character names."""
+        """Script copy now emits CSIF (@@Speaker headers); paste distributes cleanly across boxes."""
         bundle_path = MISORA_DIR / "storydata_1001005.unity3d"
         if not bundle_path.exists():
             return
@@ -632,13 +646,14 @@ class TestMisoraUIIntegration(unittest.TestCase):
         orig_spk1 = self.app.current_doc.boxes[1].speaker
         orig_spk2 = self.app.current_doc.boxes[2].speaker
 
-        # Copy all boxes separated by triple enter
+        # on_copy_script now emits CSIF (Phase 2), not triple-enter
         self.app.on_copy_script_triple_enter()
         copied = self.app.clipboard_get()
-        self.assertIn("\n\n\n", copied)
+        # Must contain CSIF speaker headers (@@) not triple-enter delimiters
+        self.assertIn("@@", copied)
         self.assertNotIn("=== [BOX:", copied)
 
-        # Paste 3 triple-enter blocks
+        # Paste using triple-enter delimited content (legacy input still accepted)
         clip_content = "Triple Block 1\n\n\nTriple Block 2 with\ninternal newline\n\n\nTriple Block 3"
         self.app.clipboard_get = lambda: clip_content
         orig_ask = misora_app.messagebox.askyesno

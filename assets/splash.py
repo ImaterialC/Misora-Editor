@@ -21,6 +21,22 @@ except ImportError:
     _HAS_PIL = False
 
 SPLASH_DIR = Path(__file__).resolve().parent
+
+def _load_app_version() -> str:
+    try:
+        init_p = Path(__file__).resolve().parent.parent / "__init__.py"
+        if init_p.is_file():
+            for line in init_p.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("__version__"):
+                    parts = line.split("=")
+                    if len(parts) == 2:
+                        return parts[1].strip().strip('"\'')
+    except Exception:
+        pass
+    return "1.3.3"
+
+_VERSION = _load_app_version()
+
 # Auto-discover all Splash_N.jpg files — add new splash images by dropping Splash_N.jpg here
 SPLASH_IMAGES = sorted(
     [p.name for p in SPLASH_DIR.glob("Splash_*.jpg")],
@@ -97,7 +113,7 @@ class MisoraSplashScreen:
         self._canvas.create_text(
             SPLASH_W - 20, SPLASH_H - 52,
             anchor="e",
-            text="Priconne Unity3D Story Tool · v1.3.1",
+            text=f"Priconne Unity3D Story Tool · v{_VERSION}",
             font=("Segoe UI", 8),
             fill="#d4c4ec",
         )
