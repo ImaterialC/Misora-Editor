@@ -1,0 +1,4 @@
+*.py text
+*.bat text eol=crlf
+*.unity3d binary
+*.asset binary

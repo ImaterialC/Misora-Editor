@@ -6070,111 +6070,193 @@ class MisoraApp(tk.Tk):
             self.logger.error("File I/O", f"Cannot find file: {file_path}")
             messagebox.showerror("File Error", f"Cannot find file: {file_path}")
             return
-        self.last_opened_dir = file_path.parent
-        self.title(f"Misora Editor - {file_path.name}")
-        if not hasattr(self, "recent_files"):
-            self.recent_files = []
-        if file_path in self.recent_files:
-            self.recent_files.remove(file_path)
-        self.recent_files.insert(0, file_path)
-        self.recent_files = self.recent_files[:15]
 
-        # Check in-memory opened files cache if not explicitly reloading from disk
+        staged = None
+        ext = file_path.suffix.lower()
+
+        # Cache-hit switches do not need a disk load, but still flush the old
+        # editor context after staging/target resolution succeeds.
         if not reload_from_disk and file_path in self.open_documents:
             entry = self.open_documents[file_path]
-            self.current_file_path = file_path
-            self.current_doc = entry.get("doc")
-            self.current_unity_env = entry.get("env")
-            self.current_text_obj = entry.get("obj")
-            self.is_bundle_file = entry.get("is_bundle", False)
-            self.is_dirty = entry.get("dirty", False)
-            self._plain_text_content = entry.get("plain_text", "")
-            self.current_box_idx = 0
-            self.is_box0_active = False
-            if self.current_doc and self.current_doc.boxes:
-                self._original_box_texts = {i: b.clean_text for i, b in enumerate(self.current_doc.boxes)}
-            self._update_views()
-            self._refresh_opened_files_list()
-            self.lbl_status.config(text=f"Switched to {file_path.name}")
-            return
-
-        ext = file_path.suffix.lower()
-        self.current_file_path = file_path
-        self.is_dirty = False
-        self.is_box0_active = False
-        self._modified_boxes.clear()
-        self._original_box_texts.clear()
-        self._locked_boxes.clear()
-        self._plain_text_content = ""
-
-        if ext in (".unity3d", ".asset"):
+            staged = {
+                "kind": "cache",
+                "entry": entry,
+                "doc": entry.get("doc"),
+                "env": entry.get("env"),
+                "obj": entry.get("obj"),
+                "is_bundle": entry.get("is_bundle", False),
+                "dirty": entry.get("dirty", False),
+                "plain_text": entry.get("plain_text", ""),
+                "status": f"Switched to {file_path.name}",
+            }
+        elif ext in (".unity3d", ".asset"):
             try:
                 doc, env, obj, asset_name = load_bundle_story(file_path)
-                self.current_doc = doc
-                self.current_unity_env = env
-                self.current_text_obj = obj
-                self.is_bundle_file = True
-                self.current_box_idx = 0
-                self._original_box_texts = {i: b.clean_text for i, b in enumerate(doc.boxes)}
-                self._update_views()
-                size_kb = file_path.stat().st_size / 1024
-                self.lbl_status.config(text=f"Loaded Bundle: {file_path.name} ({asset_name}) | Size: {size_kb:.1f} KB | {len(doc.boxes)} dialogue boxes")
-                self.logger.info("File I/O", f"Opened bundle '{file_path}' (asset={asset_name}, boxes={len(doc.boxes)})")
-                self.open_documents[file_path] = {
+                staged = {
+                    "kind": "bundle",
                     "doc": doc,
                     "env": env,
                     "obj": obj,
+                    "asset_name": asset_name,
                     "is_bundle": True,
                     "dirty": False,
                     "plain_text": "",
-                    "boxes_count": len(doc.boxes),
+                    "status": (
+                        f"Loaded Bundle: {file_path.name} ({asset_name}) | "
+                        f"Size: {file_path.stat().st_size / 1024:.1f} KB | "
+                        f"{len(doc.boxes)} dialogue boxes"
+                    ),
+                    "cache": {
+                        "doc": doc,
+                        "env": env,
+                        "obj": obj,
+                        "is_bundle": True,
+                        "dirty": False,
+                        "plain_text": "",
+                        "boxes_count": len(doc.boxes),
+                    },
                 }
-                self._refresh_opened_files_list()
             except Exception as e:
                 self.logger.exception(f"Failed to open bundle '{file_path.name}':", e)
                 messagebox.showerror("Bundle Load Error", f"Failed to open '{file_path.name}':\n{e}")
+                return
         else:
             try:
-                content = file_path.read_text(encoding="utf-8", errors="replace")
+                content = file_path.read_text(encoding="utf-8")
                 if content.startswith("#!priconne-story"):
                     doc = StoryDocument.from_v2_text(content)
-                    self.current_doc = doc
-                    self.is_bundle_file = False
-                    self.current_box_idx = 0
-                    self._original_box_texts = {i: b.clean_text for i, b in enumerate(doc.boxes)}
-                    self._update_views()
-                    self.lbl_status.config(text=f"Loaded Script: {file_path.name} | {len(doc.boxes)} dialogue boxes")
-                    self.logger.info("File I/O", f"Opened v2 script '{file_path}' (boxes={len(doc.boxes)})")
-                    self.open_documents[file_path] = {
+                    staged = {
+                        "kind": "v2",
                         "doc": doc,
                         "env": None,
                         "obj": None,
                         "is_bundle": False,
                         "dirty": False,
                         "plain_text": "",
-                        "boxes_count": len(doc.boxes),
+                        "status": f"Loaded Script: {file_path.name} | {len(doc.boxes)} dialogue boxes",
+                        "cache": {
+                            "doc": doc,
+                            "env": None,
+                            "obj": None,
+                            "is_bundle": False,
+                            "dirty": False,
+                            "plain_text": "",
+                            "boxes_count": len(doc.boxes),
+                        },
                     }
-                    self._refresh_opened_files_list()
                 else:
-                    self.current_doc = None
-                    self.is_bundle_file = False
-                    self._plain_text_content = content
-                    self._update_views()
-                    self.lbl_status.config(text=f"Opened Text File: {file_path.name}")
-                    self.logger.info("File I/O", f"Opened plain text file '{file_path}' ({len(content)} chars)")
-                    self.open_documents[file_path] = {
+                    staged = {
+                        "kind": "text",
                         "doc": None,
                         "env": None,
                         "obj": None,
                         "is_bundle": False,
                         "dirty": False,
                         "plain_text": content,
-                        "boxes_count": 0,
+                        "status": f"Opened Text File: {file_path.name}",
+                        "cache": {
+                            "doc": None,
+                            "env": None,
+                            "obj": None,
+                            "is_bundle": False,
+                            "dirty": False,
+                            "plain_text": content,
+                            "boxes_count": 0,
+                        },
                     }
-                    self._refresh_opened_files_list()
             except Exception as e:
                 self.logger.exception(f"Failed to read '{file_path.name}':", e)
                 messagebox.showerror("File Load Error", f"Failed to read '{file_path.name}':\n{e}")
+                return
+
+        # Flush the previous context only after the target is ready. Resolve
+        # the actual editor widget explicitly; focus must not decide this switch.
+        if getattr(self, "current_file_path", None) is not None:
+            widget = None
+            if getattr(self, "is_box0_active", False):
+                candidate = getattr(self, "txt_box0_summary", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            elif (
+                getattr(self, "var_continuous_view", None)
+                and self.var_continuous_view.get()
+                and 0 <= getattr(self, "current_box_idx", -1)
+                and getattr(self, "current_box_idx", -1) in getattr(self, "_card_widgets", {})
+            ):
+                candidate = self._card_widgets[self.current_box_idx].get("txt")
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            elif (
+                getattr(self, "current_doc", None) is None
+                and getattr(self, "var_continuous_view", None)
+                and self.var_continuous_view.get()
+            ):
+                candidate = getattr(self, "txt_continuous", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            else:
+                candidate = getattr(self, "txt_dialogue", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+
+            if widget is not None:
+                try:
+                    self._commit_widget_edit(widget)
+                except Exception as e:
+                    self.logger.exception("Failed to flush pending edit before file switch:", e)
+                    messagebox.showerror("Edit Commit Error", f"Could not preserve the current edit:\n{e}")
+                    return
+
+        doc = staged["doc"]
+        is_bundle = staged["is_bundle"]
+        plain_text = staged["plain_text"]
+
+        self.current_file_path = file_path
+        self.current_doc = doc
+        self.current_unity_env = staged["env"]
+        self.current_text_obj = staged["obj"]
+        self.is_bundle_file = is_bundle
+        self.current_box_idx = 0
+        self.is_box0_active = False
+        self.is_dirty = staged["dirty"]
+        self._plain_text_content = plain_text
+        self._modified_boxes.clear()
+        self._locked_boxes.clear()
+        self._original_box_texts = (
+            {i: b.clean_text for i, b in enumerate(doc.boxes)}
+            if doc is not None and doc.boxes
+            else {}
+        )
+
+        if hasattr(self, "recent_files"):
+            if file_path in self.recent_files:
+                self.recent_files.remove(file_path)
+        else:
+            self.recent_files = []
+        self.recent_files.insert(0, file_path)
+        self.recent_files = self.recent_files[:15]
+        self.last_opened_dir = file_path.parent
+        self.title(f"Misora Editor - {file_path.name}")
+
+        if staged["kind"] == "cache":
+            entry = staged["entry"]
+            self.is_dirty = entry.get("dirty", False)
+        else:
+            self.open_documents[file_path] = staged["cache"]
+
+        self._update_views()
+        self._refresh_opened_files_list()
+        self.lbl_status.config(text=staged["status"])
+
+        if staged["kind"] == "bundle":
+            self.logger.info(
+                "File I/O",
+                f"Opened bundle '{file_path}' (asset={staged['asset_name']}, boxes={len(doc.boxes)})",
+            )
+        elif staged["kind"] == "v2":
+            self.logger.info("File I/O", f"Opened v2 script '{file_path}' (boxes={len(doc.boxes)})")
+        elif staged["kind"] == "text":
+            self.logger.info("File I/O", f"Opened plain text file '{file_path}' ({len(plain_text)} chars)")
 
     def _update_views(self) -> None:
         """Update Game Display View (Page or Continuous, Raw or Compiled Preview) and Raw AST View."""

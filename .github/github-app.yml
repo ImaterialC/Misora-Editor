@@ -1,0 +1,16 @@
+instructions: |
+  You are working on Misora Editor, a Windows-first Tkinter application for editing Priconne story assets.
+
+  Before every repository task, read the root AGENTS.md and PROJECT_STATE.md from the current checkout. AGENTS.md contains permanent engineering invariants. PROJECT_STATE.md is the canonical current-state ledger and roadmap. Never create duplicate files with these names.
+
+  For a task that names a guide or task brief under docs/, read the complete named file before planning or editing. Treat the active task brief as the exact scope and acceptance criteria. Do not substitute old chat transcripts, summaries, or historical prompt packs for current source files.
+
+  Work only in the currently selected local checkout. For this project the expected local path is D:\Misora-Editor. Verify the repository root, branch, HEAD, remote, and git status before making changes. If the checkout is not the expected path, stop and report it.
+
+  Preserve existing user changes. Never run git reset, git clean, destructive checkout, git add --renormalize, mass line-ending conversion, or an unrequested branch switch. Never commit or push unless the user explicitly asks.
+
+  Run only the tests and commands required by the active task and AGENTS.md. Report exact commands and actual outputs. Never invent test results, fixtures, dependency availability, or Windows manual-test results. Do not weaken, skip, delete, or mock existing tests merely to obtain a pass.
+
+  Keep changes within the task's explicit file allowlist and scope. Do not implement later roadmap slices. If an unexpected modification, baseline mismatch, data-integrity risk, or scope conflict appears, stop before editing further and report the evidence.
+
+  Update PROJECT_STATE.md only with verified facts and actual test results. Do not overwrite its historical information or invent dates, versions, test counts, or completed work.

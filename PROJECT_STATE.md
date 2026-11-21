@@ -1,10 +1,6 @@
 # Misora Editor — Canonical Project State
 
-<<<<<<< Updated upstream
 Last updated: 2026-11-21
-=======
-Last updated: 2026-11-21 (Phase 4 completion session — Import/Export, Paste Preview Dialog, Safe Tooltips, Version Unification; 93/93 tests pass)
->>>>>>> Stashed changes
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
 Target release: v1.4.0
@@ -60,7 +56,30 @@ Test suites included in the 100 tests:
 ```
 
 ### Current Test Failures
-None — all 100 tests pass without errors, failures, or skips.
+The S0/S1 full-suite baseline has one existing repository-hygiene failure:
+`test_phase3_performance_config.TestPhase3PerformanceAndConfig.test_05_clean_committed_config_has_no_machine_paths`
+expects `misora_config.json.project_folder == ""`, but the tracked committed value contains a
+machine-specific Priconne text path. This file is outside the S0/S1 allowed-file scope.
+
+### S0/S1 Open-File Safety Verification (2026-11-21)
+- Pre-edit `misora.py`: 510,461 raw bytes; SHA-256 `2188eab968e031d4d5469f117f3cfb8403dc27622b5b6009d38b3880dd97babe`; LF-normalized 499,293 bytes.
+- Exact interpreter: `C:\Users\Cornelia\AppData\Local\Programs\Python\Python312\python.exe`, Python 3.12.10, Windows AMD64.
+- Workspace: `D:\Misora-Editor`; branch `main`; HEAD `026fc599a491fbfe6713de3f1a8530950ea537c0`.
+- `misora_config.json` is not tracked by Git.
+- Added `.gitattributes` with `*.py text`, `*.bat text eol=crlf`, `*.unity3d binary`, and `*.asset binary`.
+- Removed unresolved Git conflict markers from `PROJECT_STATE.md`; no mass line-ending churn occurred.
+- `py -3.12 -m compileall -q misora.py core assets tests`: PASS, exit code 0.
+- Failing-first focused suite: 5 failures and 1 pass under the unpatched `open_file()` implementation.
+- Final focused suite: `py -3.12 -m unittest tests.test_s1_open_file_safety -v`: 6 tests run, 6 pass.
+- Final full suite: `py -3.12 -m unittest discover -s tests -v`: 106 tests run, 105 pass, 1 failure, 0 skips.
+- The remaining full-suite failure is the out-of-scope machine-path config test described above.
+
+### S1 staged open-file implementation
+- `MisoraApp.open_file()` stages bundle, v2, and ordinary text loads in local variables before mutating active state.
+- Ordinary text now uses strict UTF-8 decoding; `UnicodeDecodeError`, v2 parse errors, and bundle load errors fail without replacing the active document.
+- Cache-hit switches retain the existing cache architecture and flush pending edits only after the target is ready.
+- Pending edits are flushed through the explicitly resolved previous editor widget, without relying on focus.
+- Active state and `open_documents` are committed together only after successful loading or cache resolution.
 
 ### Phase 5 New Deliverables (complete)
 - **`core/ngui_tags.py`** (5,760 bytes): Central single source of truth for NGUI rich-text patterns (bold, italic, underline, strikethrough, size, vertical hyphen gradients `[c0-c1]`, multiline ruby `[rub:...]` with `re.DOTALL`, placeholders `{playername}`, `{0}`..`{n}`). Utilities: `strip_tags()`, `get_rendered_length()`, `measure_line_lengths()`, `normalize_gradient_syntax()`, and `TagMasker`.
