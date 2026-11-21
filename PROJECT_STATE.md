@@ -1,6 +1,6 @@
 # Misora Editor — Canonical Project State
 
-Last updated: 2026-11-20
+Last updated: 2026-11-21
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
 Target release: v1.4.0
@@ -280,3 +280,9 @@ Direct verification on disk and user platform testing have resolved key platform
 4. **Remaining Open Questions**:
    - Exact command arities for chapters using 3+ arguments in metadata or choice branches.
    - Presence of multiple story TextAssets within a single production `.unity3d` bundle.
+
+## 9. GitHub Documentation Audit (2026-11-21)
+
+- `HEAD` matches `origin/main`; both GitHub API and the tracked tree contain `docs/ANTIGRAVITY_PROMPTS.md` and `docs/SCRIPT_FORMAT.md`.
+- The reviewed `README.md` and `docs/` history contains no documentation deletions or detected renames. Every local image/link reference in `README.md` resolves.
+- The README's Project Structure list is stale: it omits `docs/`, newer files under `core/` and `tests/`, and `assets/Splash_4.jpg` through `Splash_8.jpg`. This is a README accuracy issue, not missing repository content.
