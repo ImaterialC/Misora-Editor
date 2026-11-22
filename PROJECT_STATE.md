@@ -1,6 +1,6 @@
 # Misora Editor — Canonical Project State
 
-Last updated: 2026-11-21
+Last updated: 2026-11-22
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
 Target release: v1.4.0
@@ -84,6 +84,26 @@ This test design issue is owned by a future Phase 3 test hygiene slice.
 - Cache-hit switches retain the existing cache architecture and flush pending edits only after the target is ready.
 - Pending edits are flushed through the explicitly resolved previous editor widget across both Page View and Continuous View (including Card #0 synopsis and dialogue cards), without relying on focus.
 - Active state and `open_documents` are committed together only after successful loading or cache resolution.
+
+### S2 Per-Document Dirty Contract & Explicit `on_save() -> bool` (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- `open_documents[path]["dirty"]` is established as the single authoritative unsaved dirty flag per document.
+- Flag-only helper `_mark_document_dirty(path)` mutates flags ONLY (`open_documents[p]["dirty"] = True`, mirrors `self.is_dirty = True` if active); contains zero Tk calls and zero dock/title rebuilds, eliminating Rule 13 UNDO-STORM risk and safely handling pre-existing background thread calls.
+- Pure-UI `_dirty_state_changed()` mirrors `self.is_dirty` strictly from `open_documents[path]["dirty"]` for open documents; never queries or derives dirty state from global `undo_journal.is_clean()`, completely eliminating the multi-file cross-file false-clean clobber bug.
+- True no-op `<KeyRelease>` guards added to dialogue editor (`_on_dialogue_edited() -> bool`) and speaker editor (`_on_speaker_edited()`), preventing navigation keypresses, arrow keys, and unmodified focus changes from dirtying clean documents or triggering premature UI sync.
+- Plain-text cache content synchronization (`open_documents[path]["plain_text"]`) enforced across Page View commits, Continuous card commits, pre-switch flushes, and PlainTextDelta undo/redo.
+- Deterministic per-document saved-state checkpoint map `_saved_state_checkpoints` stores SHA-256 content hashes (via `doc.to_v2_text()` or plain text) upon save/load, enabling undo-to-clean restoration for each file independently without cross-document interference.
+- Uncached / test-only synthetic paths (e.g. `test_34`) gracefully fall back to `undo_journal.is_clean(p)` during undo evaluation when not registered in `open_documents`.
+- Explicit `on_save() -> bool` contract: returns `True` strictly on successful primary persistence, `False` on pre-save preparation failure, missing file path, or disk write exception. Outer `try...except` catches all I/O errors and preserves `dirty=True`. Secondary XUAT sync failure logs a warning, retains `_modified_boxes`, and returns `True` (primary save succeeded).
+- Pre-existing Rule 15 note: `BatchTranslateDialog.worker()` currently mutates document and UndoJournal state from a background worker thread. S2 uses flag-only `_mark_document_dirty(target_path)` with zero Tk calls and defers the full worker queue redesign to S6.
+- Latent defect note: S7 / F20 latent issue noted for `_commit_widget_edit()` speaker branch calling `inject_box(..., None)` (handled safely by AST `inject_box`, full speaker central commit unification deferred to S7).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s2_dirty_contract -v`: 12/12 pass (18.1s).
+  - `py -3.12 -m unittest tests.test_s1_open_file_safety -v`: 7/7 pass (10.9s).
+  - `py -3.12 -m unittest tests.test_phase2_required -v`: 13/13 pass (37.0s, including `test_34` and `test_39`).
+  - `py -3.12 -m unittest discover -s tests -v`: 119 tests run, 118 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips.
+- Handoff note: S3 (`close_file()` abort on dirty cancel, `_on_app_exit()` Save-All loop, atomic writer) is now unblocked.
 
 ### Phase 5 New Deliverables (complete)
 - **`core/ngui_tags.py`** (5,760 bytes): Central single source of truth for NGUI rich-text patterns (bold, italic, underline, strikethrough, size, vertical hyphen gradients `[c0-c1]`, multiline ruby `[rub:...]` with `re.DOTALL`, placeholders `{playername}`, `{0}`..`{n}`). Utilities: `strip_tags()`, `get_rendered_length()`, `measure_line_lengths()`, `normalize_gradient_syntax()`, and `TagMasker`.
@@ -378,6 +398,37 @@ Tasks:
 - [x] Use DeepL `/v2/usage` status endpoint for connection test.
 - [x] Implement Game Box Preview with rendered text overflow measurement.
 - [x] Add Translation Lock protection for proofread boxes.
+
+### Phase 6 — Safety & Multi-Document Architecture Roadmap (S-Series)
+
+- [x] **S0 — Preflight Baseline & Repository Hygiene (2026-11-21)**: Baseline verification, `.gitattributes`, conflict marker resolution, preflight gate.
+- [x] **S1 — Staged `open_file()` Loading & Safety (2026-11-21)**: Local variable staging before state mutation, strict UTF-8 validation, pending edit flush routing across Page/Continuous views, zero document corruption on load failure.
+- [x] **S2 — Minimum Per-Document Dirty Contract & Explicit `on_save() -> bool` (2026-11-22)**:
+  - Single authoritative dirty flag per document in `open_documents[path]["dirty"]`.
+  - Flag-only `_mark_document_dirty(path)` with zero Tk calls / zero dock/title rebuilds (Rule 13 / Rule 15 safe).
+  - Pure-UI `_dirty_state_changed()` decoupled from `undo_journal.is_clean()` (eliminates cross-file false-clean clobber).
+  - True no-op `<KeyRelease>` guards on dialogue and speaker editors.
+  - Plain-text cache content synchronization (`open_documents[path]["plain_text"]`).
+  - Deterministic per-document saved-state checkpoints (`_saved_state_checkpoints`) with uncached fallback to `undo_journal.is_clean()`.
+  - Explicit `on_save() -> bool` return value with outer `try...except`, secondary XUAT sync failure isolation (`_modified_boxes` retained, warning logged, returns `True`).
+- [ ] **S3 — Safe Document Close & Atomic Persistence**:
+  - `close_file()` aborts on Save/Discard/Cancel cancel.
+  - `_on_app_exit()` multi-document Save-All loop with cancellation support.
+  - Raw plain-text save (`F-GPT-04`) and shared `write_atomic_utf8()` helper.
+  - *(Now UNBLOCKED by S2 completion)*.
+- [ ] **S4 — View/Model Synchronization & Widget Caret Decoupling**: Centralize continuous/page view widget event synchronization, remove widget state dependencies.
+- [ ] **S5 — Multi-File Replace-All & BulkFileDelta Disk Safety**: Atomic file replacement and transaction rollbacks for multi-file bulk operations.
+- [ ] **S6 — Threading Architecture Decoupling (Rule 15)**:
+  - Redesign `BatchTranslateDialog.worker()` and search threads to communicate strictly via main-thread queues.
+  - Eliminate pre-existing Rule 15 violation where background threads mutate Tkinter or `UndoJournal` state directly.
+- [ ] **S7 — Per-File MasterUndoJournal Revision Rewrite (F16) & Speaker Commit Unification (F20)**:
+  - True per-file undo revisions with isolated journal stacks.
+  - Central speaker edit commit unification: address latent issue where `_commit_widget_edit()` speaker branch calls `inject_box(..., None)`.
+- [ ] **S8a — Dialog Architecture & Modal Grab Hardening**: Audit all Toplevel dialogs for explicit parent transients, grab releases, and window destruction safety.
+- [ ] **S8b-1 — Status-Bar & Toast Notification Manager**: Unified toast/status queue with safe dismissal and geometry tracking.
+- [ ] **S8b-2 — Asset & Bundle Memory Leak Guards**: Bounded asset caching, explicit UnityPy environment garbage collection, and texture buffer release.
+- [ ] **S8b-3 — Encoding Detection & Strict Fallback Architecture**: Deterministic BOM/encoding detection with strict error handling.
+- [ ] **S8b-4 — Remaining UI Polishing & Responsive Scaling**: Final DPI awareness verification, responsive paned-window constraints, and icon rendering polish.
 
 ---
 

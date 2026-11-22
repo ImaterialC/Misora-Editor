@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import colorsys
 import ctypes
+import hashlib
 import json
 import os
 import queue
@@ -1071,6 +1072,37 @@ class NguiColorPickerPopup(tk.Toplevel):
         self.destroy()
 
 
+def write_atomic_utf8(path: Union[str, Path], content: str, encoding: str = "utf-8") -> None:
+    """Write text content atomically: same-dir .tmp -> bounded-retry os.replace() (S3).
+
+    Raises on write or replacement failure, ensuring original file is not corrupted.
+    Cleans up temporary file in finally block.
+    """
+    path = Path(path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}_{time.time_ns()}.tmp")
+
+    try:
+        tmp_path.write_text(content, encoding=encoding)
+        # Bounded retry for Windows file sharing violations
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, path)
+                break
+            except (PermissionError, OSError) as e:
+                if attempt == 4:
+                    raise OSError(
+                        f"Failed to replace '{path.name}' after 5 attempts (Windows sharing violation): {e}"
+                    )
+                time.sleep(0.05 * (2 ** attempt))
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+
+
 class MisoraApp(tk.Tk):
     """Main Application Window for Misora: Unity3D Revision Tool."""
 
@@ -1170,6 +1202,8 @@ class MisoraApp(tk.Tk):
         # Multi-box edit tracking for Continuous View & XUAT sync
         self._original_box_texts: Dict[int, str] = {}
         self._modified_boxes: Set[int] = set()
+        # S2: Per-document saved-state checkpoint map (SHA-256 fingerprints keyed by resolved str(path))
+        self._saved_state_checkpoints: Dict[str, str] = {}
         self._cont_header_spans: Dict[int, Tuple[str, str]] = {}
         self._suppress_continuous_events: bool = False
         self._card_widgets: Dict[int, Dict[str, Any]] = {}
@@ -1347,14 +1381,35 @@ class MisoraApp(tk.Tk):
             pass
 
     def _on_app_exit(self) -> None:
-        """Save configuration cleanly on window close and exit."""
-        if getattr(self, "is_dirty", False) or any(d.get("dirty") for d in getattr(self, "open_documents", {}).values()):
-            ans = messagebox.askyesnocancel("Unsaved Changes", "There are unsaved changes. Do you want to save before exiting?", parent=self)
+        """Save configuration cleanly on window close and exit (S3).
+
+        Prompts Save/Discard/Cancel per dirty document.
+        Aborts exit if Cancel is chosen or if any save fails.
+        """
+        if not self._flush_active_widget():
+            return
+
+        dirty_paths = [
+            p for p, d in list(self.open_documents.items())
+            if (p == self.current_file_path and self.is_dirty) or d.get("dirty")
+        ]
+        if self.current_file_path and self.is_dirty:
+            cur_p = Path(self.current_file_path).resolve()
+            if cur_p not in [p.resolve() for p in dirty_paths]:
+                dirty_paths.append(cur_p)
+
+        for p in dirty_paths:
+            ans = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                f"'{p.name}' has unsaved changes.\nSave before exiting?",
+                parent=self,
+            )
             if ans is None:
                 return
             if ans:
-                self.on_save()
-                if getattr(self, "is_dirty", False):
+                if p != self.current_file_path:
+                    self.open_file(p)
+                if not self.on_save():
                     return
 
         self.logger.info("UI / Theme / Config", "Saving configuration on exit...")
@@ -6067,6 +6122,50 @@ class MisoraApp(tk.Tk):
     # -------------------------------------------------------------------------
     # Document Loading & Box Display (Page Mode + Continuous Stream Mode)
     # -------------------------------------------------------------------------
+    def _flush_active_widget(self) -> bool:
+        """Explicitly resolve the active editor widget and commit any pending edits (S1/S3).
+
+        Returns True if flushed cleanly or no active widget, False on commit failure.
+        """
+        if getattr(self, "current_file_path", None) is None:
+            return True
+
+        widget = None
+        is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
+        cards = getattr(self, "_card_widgets", {})
+
+        if is_cont:
+            if getattr(self, "is_box0_active", False) and -1 in cards:
+                candidate = cards[-1].get("txt")
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            elif getattr(self, "current_box_idx", -1) in cards:
+                candidate = cards[self.current_box_idx].get("txt")
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            elif getattr(self, "current_doc", None) is None:
+                candidate = getattr(self, "txt_continuous", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+        else:
+            if getattr(self, "is_box0_active", False):
+                candidate = getattr(self, "txt_box0_summary", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+            else:
+                candidate = getattr(self, "txt_dialogue", None)
+                if candidate is not None and candidate.winfo_exists():
+                    widget = candidate
+
+        if widget is not None:
+            try:
+                self._commit_widget_edit(widget)
+            except Exception as e:
+                self.logger.exception("Failed to flush pending edit:", e)
+                messagebox.showerror("Edit Commit Error", f"Could not preserve the current edit:\n{e}")
+                return False
+        return True
+
     def open_file(self, file_path: Union[str, Path], reload_from_disk: bool = False) -> None:
         """Open and display a .unity3d bundle or plain-text script file."""
         file_path = Path(file_path).resolve()
@@ -6175,41 +6274,8 @@ class MisoraApp(tk.Tk):
 
         # Flush the previous context only after the target is ready. Resolve
         # the actual editor widget explicitly; focus must not decide this switch.
-        if getattr(self, "current_file_path", None) is not None:
-            widget = None
-            is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
-            cards = getattr(self, "_card_widgets", {})
-
-            if is_cont:
-                if getattr(self, "is_box0_active", False) and -1 in cards:
-                    candidate = cards[-1].get("txt")
-                    if candidate is not None and candidate.winfo_exists():
-                        widget = candidate
-                elif getattr(self, "current_box_idx", -1) in cards:
-                    candidate = cards[self.current_box_idx].get("txt")
-                    if candidate is not None and candidate.winfo_exists():
-                        widget = candidate
-                elif getattr(self, "current_doc", None) is None:
-                    candidate = getattr(self, "txt_continuous", None)
-                    if candidate is not None and candidate.winfo_exists():
-                        widget = candidate
-            else:
-                if getattr(self, "is_box0_active", False):
-                    candidate = getattr(self, "txt_box0_summary", None)
-                    if candidate is not None and candidate.winfo_exists():
-                        widget = candidate
-                else:
-                    candidate = getattr(self, "txt_dialogue", None)
-                    if candidate is not None and candidate.winfo_exists():
-                        widget = candidate
-
-            if widget is not None:
-                try:
-                    self._commit_widget_edit(widget)
-                except Exception as e:
-                    self.logger.exception("Failed to flush pending edit before file switch:", e)
-                    messagebox.showerror("Edit Commit Error", f"Could not preserve the current edit:\n{e}")
-                    return
+        if not self._flush_active_widget():
+            return
 
         doc = staged["doc"]
         is_bundle = staged["is_bundle"]
@@ -6244,12 +6310,14 @@ class MisoraApp(tk.Tk):
 
         if staged["kind"] == "cache":
             entry = staged["entry"]
-            self.is_dirty = entry.get("dirty", False)
+            self.is_dirty = bool(entry.get("dirty", False))
         else:
             self.open_documents[file_path] = staged["cache"]
+            # Record a fresh saved-state checkpoint for newly loaded documents
+            self._record_saved_checkpoint(file_path, staged.get("doc"), staged.get("plain_text", ""))
 
         self._update_views()
-        self._refresh_opened_files_list()
+        self._dirty_state_changed()
         self.lbl_status.config(text=staged["status"])
 
         if staged["kind"] == "bundle":
@@ -6459,10 +6527,9 @@ class MisoraApp(tk.Tk):
                         label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
                     )
                     self._plain_text_content = new_tx
-                    self.is_dirty = True
                     if self.current_file_path and self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["dirty"] = True
-                        self._refresh_opened_files_list()
+                        self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                    self._mark_document_dirty(self.current_file_path)
             return
 
         if not getattr(self, "_card_widgets", None):
@@ -6490,11 +6557,8 @@ class MisoraApp(tk.Tk):
                             ),
                             label=f"Edit box #{b_idx + 1}"
                         )
-                        self.is_dirty = True
                         self._modified_boxes.add(b_idx)
-                        if self.current_file_path and self.current_file_path in self.open_documents:
-                            self.open_documents[self.current_file_path]["dirty"] = True
-                            self._refresh_opened_files_list()
+                        self._mark_document_dirty(self.current_file_path)
                         try:
                             self.current_doc.inject_box(b_idx, None, new_tx)
                         except Exception:
@@ -6523,11 +6587,8 @@ class MisoraApp(tk.Tk):
                 ),
                 label=f"Edit box #{box_idx + 1}"
             )
-            self.is_dirty = True
             self._modified_boxes.add(box_idx)
-            if self.current_file_path and self.current_file_path in self.open_documents:
-                self.open_documents[self.current_file_path]["dirty"] = True
-                self._refresh_opened_files_list()
+            self._mark_document_dirty(self.current_file_path)
             try:
                 self.current_doc.inject_box(box_idx, None, new_tx)
                 self._update_raw_view()
@@ -6767,14 +6828,39 @@ class MisoraApp(tk.Tk):
         """Fallback hook for callers expecting _push_undo; structural handlers record typed deltas."""
         pass
 
+    # -------------------------------------------------------------------------
+    # S2: Per-Document Dirty Contract Helpers
+    # -------------------------------------------------------------------------
+
+    def _mark_document_dirty(self, file_path: Optional[Union[str, Path]]) -> None:
+        """Flag-only dirty marker — ZERO Tk calls, ZERO dock/title rebuilds (Rule 13 / S2).
+
+        Mutates only open_documents[path]["dirty"] and self.is_dirty.
+        Safe to call from worker threads (BatchTranslateDialog.worker) provided ZERO Tk ops follow.
+        """
+        if not file_path:
+            return
+        p = Path(file_path).resolve()
+        if p in self.open_documents:
+            self.open_documents[p]["dirty"] = True
+        if self.current_file_path and Path(self.current_file_path).resolve() == p:
+            self.is_dirty = True
+
     def _dirty_state_changed(self) -> None:
-        """Update window title and opened files registry to reflect dirty state based on revision."""
-        if self.current_file_path and hasattr(self, "undo_journal"):
-            is_clean = self.undo_journal.is_clean(self.current_file_path)
-            self.is_dirty = not is_clean
-            if self.current_file_path in self.open_documents:
-                self.open_documents[self.current_file_path]["dirty"] = self.is_dirty
-                self._refresh_opened_files_list()
+        """Pure UI synchronization: title *, Opened Files dock, undo/redo menu states (S2).
+
+        Mirrors self.is_dirty from open_documents[path]["dirty"] when the active document is cached.
+        When the active path is NOT in open_documents (e.g., test_34 synthetic tmp path), PRESERVES
+        the current self.is_dirty value unchanged.
+        Calls _refresh_opened_files_list() exactly once.
+        NEVER derives dirty state from undo_journal.is_clean() — that was the cross-file clobber bug.
+        """
+        if self.current_file_path:
+            p = Path(self.current_file_path).resolve()
+            if p in self.open_documents:
+                # Mirror from authoritative per-document entry
+                self.is_dirty = bool(self.open_documents[p].get("dirty", False))
+            # If NOT in open_documents: preserve self.is_dirty unchanged (do not reset to False)
 
         dirty_marker = "*" if self.is_dirty else ""
         file_name = self.current_file_path.name if self.current_file_path else "Untitled"
@@ -6782,6 +6868,86 @@ class MisoraApp(tk.Tk):
             self.title(f"Misora Editor - {file_name}{dirty_marker}")
         except Exception:
             pass
+
+        self._refresh_opened_files_list()
+        self._sync_edit_menu_states()
+
+    def _record_saved_checkpoint(self, file_path: Optional[Union[str, Path]],
+                                  doc: Optional[Any], plain_text: str = "") -> None:
+        """Record saved-state fingerprint for a document (S2 / Rule 13).
+
+        Story docs: SHA-256 of doc.to_v2_text(). Plain-text: SHA-256 of plain_text.
+        Called at: open_file() fresh load, open_file() reload_from_disk=True, on_save() primary success.
+        Never mutates dirty flags; purely stores a comparison baseline.
+        """
+        if not file_path:
+            return
+        key = str(Path(file_path).resolve())
+        try:
+            if doc is not None:
+                content = doc.to_v2_text()
+            else:
+                content = plain_text
+            self._saved_state_checkpoints[key] = hashlib.sha256(
+                content.encode("utf-8", errors="replace")
+            ).hexdigest()
+        except Exception:
+            pass
+
+    def _evaluate_checkpoints_for_op(self, op: Any) -> None:
+        """After undo/redo delta loop: compare live fingerprints to saved checkpoints (S2).
+
+        For each path touched by the op:
+        - If a checkpoint exists and the live fingerprint matches → mark clean.
+        - If no checkpoint exists → leave dirty as set by _mark_document_dirty (never clear speculatively).
+        """
+        touched: set = set()
+        for delta in op.deltas:
+            fp = getattr(delta, "file_path", None)
+            if fp:
+                try:
+                    touched.add(Path(fp).resolve())
+                except Exception:
+                    pass
+        if self.current_file_path:
+            try:
+                touched.add(Path(self.current_file_path).resolve())
+            except Exception:
+                pass
+
+        for p in touched:
+            key = str(p)
+            entry = self.open_documents.get(p)
+            if entry is not None:
+                if key not in self._saved_state_checkpoints:
+                    # No baseline — cannot determine clean; leave dirty flag as-is
+                    continue
+                saved_fp = self._saved_state_checkpoints[key]
+                try:
+                    doc = entry.get("doc")
+                    if doc is not None:
+                        live_content = doc.to_v2_text()
+                    else:
+                        live_content = entry.get("plain_text", "")
+                    live_fp = hashlib.sha256(live_content.encode("utf-8", errors="replace")).hexdigest()
+                except Exception:
+                    continue
+
+                is_clean = (live_fp == saved_fp)
+                entry["dirty"] = not is_clean
+                if self.current_file_path:
+                    try:
+                        if Path(self.current_file_path).resolve() == p:
+                            self.is_dirty = not is_clean
+                    except Exception:
+                        pass
+            elif self.current_file_path:
+                try:
+                    if Path(self.current_file_path).resolve() == p and hasattr(self, "undo_journal"):
+                        is_clean = self.undo_journal.is_clean(p)
+                        self.is_dirty = not is_clean
+                except Exception:
+                    pass
 
     def _sync_clean_view_to_current_box(self) -> None:
         """
@@ -6846,7 +7012,7 @@ class MisoraApp(tk.Tk):
             label="New Box"
         )
         self.current_box_idx = ins_idx
-        self.is_dirty = True
+        self._mark_document_dirty(self.current_file_path)
         self._modified_boxes.add(ins_idx)
         self._render_continuous_view()
         self._sync_clean_view_to_current_box()
@@ -6904,7 +7070,7 @@ class MisoraApp(tk.Tk):
         self._selected_boxes.clear()
         if self.current_box_idx >= len(self.current_doc.boxes):
             self.current_box_idx = max(0, len(self.current_doc.boxes) - 1)
-        self.is_dirty = True
+        self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
         self._render_continuous_view()
         self._sync_clean_view_to_current_box()
@@ -6985,7 +7151,7 @@ class MisoraApp(tk.Tk):
             self.undo_journal.end_batch()
 
         self.current_box_idx = ins_idx + len(snaps_to_ins) - 1
-        self.is_dirty = True
+        self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
         self._render_continuous_view()
         self._sync_clean_view_to_current_box()
@@ -7542,10 +7708,6 @@ class MisoraApp(tk.Tk):
         """Triggered when editing the pinned Speaker entry in either Page or Continuous mode."""
         if getattr(self, "is_box0_active", False):
             return
-        self.is_dirty = True
-        if self.current_file_path and self.current_file_path in self.open_documents:
-            self.open_documents[self.current_file_path]["dirty"] = True
-            self._refresh_opened_files_list()
         if not self.current_doc or not self.current_doc.boxes:
             return
 
@@ -7553,7 +7715,6 @@ class MisoraApp(tk.Tk):
         old_sp = self.current_doc.boxes[idx].speaker
         old_tx = self.current_doc.boxes[idx].clean_text
         new_sp = self.speaker_var.get()
-        self._modified_boxes.add(idx)
 
         if self.var_continuous_view.get():
             if hasattr(self, "_card_widgets") and idx in self._card_widgets:
@@ -7572,6 +7733,8 @@ class MisoraApp(tk.Tk):
                     ),
                     label=f"Rename speaker #{idx + 1}"
                 )
+                self._modified_boxes.add(idx)
+                self._mark_document_dirty(self.current_file_path)
             try:
                 self.current_doc.inject_box(idx, new_sp, cur_tx)
                 self._refresh_continuous_box_header(idx)
@@ -7596,6 +7759,8 @@ class MisoraApp(tk.Tk):
                     ),
                     label=f"Rename speaker #{idx + 1}"
                 )
+                self._modified_boxes.add(idx)
+                self._mark_document_dirty(self.current_file_path)
             try:
                 self.current_doc.inject_box(idx, new_sp, new_tx)
                 self._update_raw_view()
@@ -7673,13 +7838,10 @@ class MisoraApp(tk.Tk):
                     label="Edit Synopsis"
                 )
                 self.current_doc.set_metadata(summary=new_sum)
-                self.is_dirty = True
+                self._mark_document_dirty(self.current_file_path)
                 if hasattr(self, "txt_box0_summary") and self.txt_box0_summary.winfo_exists():
                     self.txt_box0_summary.delete("1.0", tk.END)
                     self.txt_box0_summary.insert("1.0", new_sum)
-                if self.current_file_path and self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
                 self._update_raw_view()
                 self._dirty_state_changed()
             return
@@ -7721,7 +7883,7 @@ class MisoraApp(tk.Tk):
                     )
                     self.current_doc.inject_box(self.current_box_idx, new_sp, None)
                     self._modified_boxes.add(self.current_box_idx)
-                    self.is_dirty = True
+                    self._mark_document_dirty(self.current_file_path)
                     self._dirty_state_changed()
                     if hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
                         lbl_sp = self._card_widgets[self.current_box_idx].get("lbl_sp")
@@ -7731,8 +7893,8 @@ class MisoraApp(tk.Tk):
 
         # 3. Page View Dialogue Editor (txt_dialogue)
         if widget == getattr(self, "txt_dialogue", None):
-            self._on_dialogue_edited()
-            self._dirty_state_changed()
+            if self._on_dialogue_edited():
+                self._dirty_state_changed()
             return
 
         # 4. Continuous View Card text widgets
@@ -7757,61 +7919,78 @@ class MisoraApp(tk.Tk):
                     label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
                 )
                 self._plain_text_content = new_tx
-                self.is_dirty = True
+                if self.current_file_path and self.current_file_path in self.open_documents:
+                    self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                self._mark_document_dirty(self.current_file_path)
                 self._dirty_state_changed()
             return
 
-    def _on_dialogue_edited(self) -> None:
-        """Triggered on every keystroke in the single-box Game Display dialogue editor."""
+    def _on_dialogue_edited(self) -> bool:
+        """Triggered on every keystroke in the single-box Game Display dialogue editor.
+
+        Returns True if a real mutation occurred (content changed), False if no-op (S2).
+        Only marks dirty and records undo when content actually changed.
+        """
         if self.var_preview_compiled.get():
-            return
-        self.is_dirty = True
-        if self.current_file_path and self.current_file_path in self.open_documents:
-            self.open_documents[self.current_file_path]["dirty"] = True
-            self._refresh_opened_files_list()
+            return False
 
         if self.current_doc and self.current_doc.boxes:
             idx = self.current_box_idx
             old_sp = self.current_doc.boxes[idx].speaker
             old_tx = self.current_doc.boxes[idx].clean_text
             new_tx = self.txt_dialogue.get("1.0", "end-1c")
-            if old_tx != new_tx:
-                self.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=idx,
-                        old_speaker=old_sp,
-                        new_speaker=old_sp,
-                        old_text=old_tx,
-                        new_text=new_tx,
-                        file_path=str(self.current_file_path or ""),
-                    ),
-                    label=f"Edit box #{idx + 1}"
-                )
+            # S2: guard no-op — dirty/undo only on actual change
+            if old_tx == new_tx:
+                self._auto_resize_dialogue_box()
+                self._highlight_ngui_tags()
+                self._highlight_dialogue_matches()
+                return False
+            self.undo_journal.record(
+                BoxEditDelta(
+                    box_index=idx,
+                    old_speaker=old_sp,
+                    new_speaker=old_sp,
+                    old_text=old_tx,
+                    new_text=new_tx,
+                    file_path=str(self.current_file_path or ""),
+                ),
+                label=f"Edit box #{idx + 1}"
+            )
             self._modified_boxes.add(idx)
+            self._mark_document_dirty(self.current_file_path)
             try:
                 self.current_doc.inject_box(idx, None, new_tx)
                 self._update_raw_view()
             except Exception:
                 pass
+            self._auto_resize_dialogue_box()
+            self._highlight_ngui_tags()
+            self._highlight_dialogue_matches()
+            self._update_rendered_char_count(new_tx)
+            return True
         else:
             old_content = self._plain_text_content
             new_content = self.txt_dialogue.get("1.0", "end-1c")
-            if old_content != new_content:
-                self.undo_journal.record(
-                    PlainTextDelta(
-                        file_path=str(self.current_file_path or ""),
-                        old_content=old_content,
-                        new_content=new_content,
-                    ),
-                    label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
-                )
+            # S2: guard no-op
+            if old_content == new_content:
+                self._auto_resize_dialogue_box()
+                return False
+            self.undo_journal.record(
+                PlainTextDelta(
+                    file_path=str(self.current_file_path or ""),
+                    old_content=old_content,
+                    new_content=new_content,
+                ),
+                label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
+            )
             self._plain_text_content = new_content
-
-        self._auto_resize_dialogue_box()
-        self._highlight_ngui_tags()
-        self._highlight_dialogue_matches()
-        if self.current_doc and self.current_doc.boxes:
-            self._update_rendered_char_count(new_tx)
+            if self.current_file_path and self.current_file_path in self.open_documents:
+                self.open_documents[self.current_file_path]["plain_text"] = new_content
+            self._mark_document_dirty(self.current_file_path)
+            self._auto_resize_dialogue_box()
+            self._highlight_ngui_tags()
+            self._highlight_dialogue_matches()
+            return True
 
     def _update_box0_char_counter(self) -> None:
         if not hasattr(self, "lbl_box0_summary_len") or not hasattr(self, "txt_box0_summary"):
@@ -7850,15 +8029,12 @@ class MisoraApp(tk.Tk):
                 label="Edit story metadata (Box 0)"
             )
             self.current_doc.set_metadata(title=new_title, subtitle=new_subtitle, summary=new_summary)
-            self.is_dirty = True
+            self._mark_document_dirty(self.current_file_path)
             if hasattr(self, "_card_widgets") and -1 in self._card_widgets:
                 c0_txt = self._card_widgets[-1].get("txt")
                 if c0_txt and c0_txt.winfo_exists():
                     c0_txt.delete("1.0", tk.END)
                     c0_txt.insert("1.0", new_summary)
-            if self.current_file_path and self.current_file_path in self.open_documents:
-                self.open_documents[self.current_file_path]["dirty"] = True
-                self._refresh_opened_files_list()
             self._update_box0_char_counter()
             self._update_raw_view()
 
@@ -7948,51 +8124,56 @@ class MisoraApp(tk.Tk):
     # -------------------------------------------------------------------------
     # Save & Patch Actions (Byte-Exact In-Place Repack)
     # -------------------------------------------------------------------------
-    def on_save(self) -> None:
-        """Repack and save the active file in-place, with optional XUAT dictionary sync."""
+    def on_save(self) -> bool:
+        """Repack and save the active file in-place, with optional XUAT dictionary sync.
+
+        Returns True on successful primary save, False on failure or no active file (S2).
+        Secondary XUAT failure logs a warning, retains _modified_boxes, and returns True.
+        """
         if not self.current_file_path:
             messagebox.showinfo("Nothing to Save", "No active file is open.")
-            return
+            return False
 
-        backup_dir = self._get_backup_dir()
+        try:
+            backup_dir = self._get_backup_dir()
+            cur_p = Path(self.current_file_path).resolve()
 
-        if not self.is_bundle_file and not self.current_doc:
-            try:
+            if not self.is_bundle_file and not self.current_doc:
                 if self.current_file_path.is_file() and backup_dir:
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
                 content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
-                self.current_file_path.write_text(content, encoding="utf-8")
-                self.undo_journal.mark_saved(str(self.current_file_path))
-                self.is_dirty = False
+                write_atomic_utf8(self.current_file_path, content)
                 self._plain_text_content = content
+                if cur_p in self.open_documents:
+                    self.open_documents[cur_p]["dirty"] = False
+                    self.open_documents[cur_p]["plain_text"] = content
+                self.is_dirty = False
+                self._record_saved_checkpoint(self.current_file_path, None, content)
+                self.undo_journal.mark_saved(str(self.current_file_path))
                 self._dirty_state_changed()
                 self.lbl_status.config(text=f"[SAVED] {self.current_file_path.name} saved successfully!")
-                self.logger.info("File I/O", f"Saved plain text file '{self.current_file_path}' (backup in {backup_dir.name})")
-            except Exception as e:
-                self.logger.exception(f"Failed to save text file '{self.current_file_path}':", e)
-                messagebox.showerror("Save Failed", f"Failed to save text file:\n{e}")
-            return
+                self.logger.info("File I/O", f"Saved plain text file '{self.current_file_path}' (backup in {backup_dir.name if backup_dir else 'none'})")
+                return True
 
-        if getattr(self, "is_box0_active", False):
-            self._on_box0_metadata_edited()
-        elif self.var_preview_compiled.get():
-            new_sp = self.speaker_var.get()
-            cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-            self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
-        elif self.var_continuous_view.get():
-            self._sync_continuous_box_from_widget()
-            new_sp = self.speaker_var.get()
-            cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-            self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
-        else:
-            new_sp = self.speaker_var.get()
-            new_tx = self.txt_dialogue.get("1.0", "end-1c")
-            self.current_doc.inject_box(self.current_box_idx, new_sp, new_tx)
-            self._modified_boxes.add(self.current_box_idx)
+            if getattr(self, "is_box0_active", False):
+                self._on_box0_metadata_edited()
+            elif self.var_preview_compiled.get():
+                new_sp = self.speaker_var.get()
+                cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
+                self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+            elif self.var_continuous_view.get():
+                self._sync_continuous_box_from_widget()
+                new_sp = self.speaker_var.get()
+                cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
+                self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+            else:
+                new_sp = self.speaker_var.get()
+                new_tx = self.txt_dialogue.get("1.0", "end-1c")
+                self.current_doc.inject_box(self.current_box_idx, new_sp, new_tx)
+                self._modified_boxes.add(self.current_box_idx)
 
-        try:
             if self.is_bundle_file:
                 written_size = save_bundle_story(
                     self.current_unity_env,
@@ -8001,8 +8182,11 @@ class MisoraApp(tk.Tk):
                     self.current_file_path,
                     backup_dir=backup_dir
                 )
-                self.undo_journal.mark_saved(str(self.current_file_path))
+                if cur_p in self.open_documents:
+                    self.open_documents[cur_p]["dirty"] = False
                 self.is_dirty = False
+                self._record_saved_checkpoint(self.current_file_path, self.current_doc, "")
+                self.undo_journal.mark_saved(str(self.current_file_path))
                 self._dirty_state_changed()
                 self.lbl_status.config(text=f"[SAVED & PATCHED] {self.current_file_path.name} ({written_size / 1024:.1f} KB) in-place successfully!")
                 self.logger.info("File I/O", f"Patched bundle '{self.current_file_path}' ({written_size} bytes)")
@@ -8012,42 +8196,53 @@ class MisoraApp(tk.Tk):
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
                 v2_text = self.current_doc.to_v2_text()
-                self.current_file_path.write_text(v2_text, encoding="utf-8")
-                self.undo_journal.mark_saved(str(self.current_file_path))
+                write_atomic_utf8(self.current_file_path, v2_text)
+                if cur_p in self.open_documents:
+                    self.open_documents[cur_p]["dirty"] = False
                 self.is_dirty = False
+                self._record_saved_checkpoint(self.current_file_path, self.current_doc, "")
+                self.undo_journal.mark_saved(str(self.current_file_path))
                 self._dirty_state_changed()
                 self.lbl_status.config(text=f"[SAVED] {self.current_file_path.name} saved successfully!")
                 self.logger.info("File I/O", f"Saved v2 script '{self.current_file_path}'")
 
             if self.var_sync_xuat.get() and self.xuat_search_roots:
-                boxes_to_sync = sorted(self._modified_boxes) if self._modified_boxes else [self.current_box_idx]
-                synced_files: Set[str] = set()
-                for b_idx in boxes_to_sync:
-                    if not (0 <= b_idx < len(self.current_doc.boxes)):
-                        continue
-                    box_obj = self.current_doc.boxes[b_idx]
-                    orig_key = self._original_box_texts.get(b_idx, box_obj.clean_text)
-                    matches = self.sync_manager.find_and_update(
-                        japanese_key=orig_key,
-                        new_english_text=box_obj.clean_text,
-                        search_roots=self.xuat_search_roots,
-                        backup=True,
-                        backup_dir=backup_dir
-                    )
-                    for m in matches:
-                        synced_files.add(m.file_path.name)
-                    self._original_box_texts[b_idx] = box_obj.clean_text
+                try:
+                    boxes_to_sync = sorted(self._modified_boxes) if self._modified_boxes else [self.current_box_idx]
+                    synced_files: Set[str] = set()
+                    for b_idx in boxes_to_sync:
+                        if not (0 <= b_idx < len(self.current_doc.boxes)):
+                            continue
+                        box_obj = self.current_doc.boxes[b_idx]
+                        orig_key = self._original_box_texts.get(b_idx, box_obj.clean_text)
+                        matches = self.sync_manager.find_and_update(
+                            japanese_key=orig_key,
+                            new_english_text=box_obj.clean_text,
+                            search_roots=self.xuat_search_roots,
+                            backup=True,
+                            backup_dir=backup_dir
+                        )
+                        for m in matches:
+                            synced_files.add(m.file_path.name)
+                        self._original_box_texts[b_idx] = box_obj.clean_text
 
-                if synced_files:
-                    files_str = ", ".join(sorted(synced_files))
-                    self.lbl_status.config(text=self.lbl_status.cget("text") + f" | Synced XUAT file(s): {files_str}")
-                    self.logger.info("XUAT Sync", f"Synced XUAT file(s): {files_str}")
+                    if synced_files:
+                        files_str = ", ".join(sorted(synced_files))
+                        self.lbl_status.config(text=self.lbl_status.cget("text") + f" | Synced XUAT file(s): {files_str}")
+                        self.logger.info("XUAT Sync", f"Synced XUAT file(s): {files_str}")
+                    self._modified_boxes.clear()
+                except Exception as xuat_err:
+                    self.logger.warning("XUAT", f"Secondary XUAT sync failed (primary save succeeded): {xuat_err}")
+                    self.lbl_status.config(text=self.lbl_status.cget("text") + f" | (XUAT sync failed: {xuat_err})")
+            else:
+                self._modified_boxes.clear()
 
-            self._modified_boxes.clear()
+            return True
 
         except Exception as e:
             self.logger.exception(f"Save/Patch failed for '{self.current_file_path}':", e)
             messagebox.showerror("Save Failed", f"Failed to repack or save:\n{e}")
+            return False
 
     def on_reload(self) -> None:
         if self.current_file_path:
@@ -8662,11 +8857,9 @@ class MisoraApp(tk.Tk):
                         label=f"Replace in box #{self.current_box_idx + 1}"
                     )
                     self.current_doc.inject_box(self.current_box_idx, None, new_tx)
-                    self.is_dirty = True
                     self._modified_boxes.add(self.current_box_idx)
-                    if self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["dirty"] = True
-                        self._refresh_opened_files_list()
+                    self._mark_document_dirty(self.current_file_path)
+                    self._dirty_state_changed()
                     self._update_views()
                     self.lbl_status.config(text=f"Replaced 1 occurrence in Box #{self.current_box_idx + 1}")
                     return
@@ -8693,10 +8886,10 @@ class MisoraApp(tk.Tk):
                     label=f"Replace in {self.current_file_path.name}"
                 )
                 self._plain_text_content = new_tx
-                self.is_dirty = True
-                if self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
+                if self.current_file_path and self.current_file_path in self.open_documents:
+                    self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                self._mark_document_dirty(self.current_file_path)
+                self._dirty_state_changed()
                 self._update_views()
                 self.lbl_status.config(text=f"Replaced 1 occurrence in {self.current_file_path.name}")
             else:
@@ -8742,10 +8935,8 @@ class MisoraApp(tk.Tk):
                         count += 1
                 self.undo_journal.end_batch()
                 if count > 0:
-                    self.is_dirty = True
-                    if self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["dirty"] = True
-                        self._refresh_opened_files_list()
+                    self._mark_document_dirty(self.current_file_path)
+                    self._dirty_state_changed()
                     self._update_views()
                     msg = f"Replaced in {count} box(es) in {self.current_file_path.name}"
                     if skipped_locked > 0:
@@ -8772,10 +8963,10 @@ class MisoraApp(tk.Tk):
                         label=f"Replace All in {self.current_file_path.name}"
                     )
                     self._plain_text_content = new_tx
-                    self.is_dirty = True
-                    if self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["dirty"] = True
-                        self._refresh_opened_files_list()
+                    if self.current_file_path and self.current_file_path in self.open_documents:
+                        self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                    self._mark_document_dirty(self.current_file_path)
+                    self._dirty_state_changed()
                     self._update_views()
                     self.lbl_status.config(text=f"Replaced {occurrences} occurrence(s) in {self.current_file_path.name}")
                 else:
@@ -8911,6 +9102,7 @@ class MisoraApp(tk.Tk):
             self._apply_delta(delta, reverse=True, refresh_ui=False)
         self._update_views()
         self._sync_clean_view_to_current_box()
+        self._evaluate_checkpoints_for_op(op)
         self._dirty_state_changed()
         self.lbl_status.config(text=f"Undid: {op.label}")
         self.logger.info("Edit", f"Undid operation: {op.label}")
@@ -8926,6 +9118,7 @@ class MisoraApp(tk.Tk):
             self._apply_delta(delta, reverse=False, refresh_ui=False)
         self._update_views()
         self._sync_clean_view_to_current_box()
+        self._evaluate_checkpoints_for_op(op)
         self._dirty_state_changed()
         self.lbl_status.config(text=f"Redid: {op.label}")
         self.logger.info("Edit", f"Redid operation: {op.label}")
@@ -8949,11 +9142,8 @@ class MisoraApp(tk.Tk):
             if self.current_doc and 0 <= delta.box_index < len(self.current_doc.boxes):
                 self.current_doc.inject_box(delta.box_index, target_sp, target_tx)
                 self.current_box_idx = delta.box_index
-                self.is_dirty = True
                 self._modified_boxes.add(delta.box_index)
-                if self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
+                self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
         elif isinstance(delta, MetadataDelta):
@@ -8967,10 +9157,7 @@ class MisoraApp(tk.Tk):
                 self.current_doc.set_metadata(title=target_title, subtitle=target_sub, summary=target_summary)
                 self.is_box0_active = True
                 self.current_box_idx = 0
-                self.is_dirty = True
-                if self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
+                self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
         elif isinstance(delta, BoxStructuralDelta):
@@ -8987,10 +9174,7 @@ class MisoraApp(tk.Tk):
                     delete_indices = list(range(delta.box_index, delta.box_index + len(delta.snapshots)))
                     self.current_doc.delete_boxes(delete_indices)
                     self.current_box_idx = max(0, min(delta.box_index, len(self.current_doc.boxes) - 1))
-                self.is_dirty = True
-                if self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["dirty"] = True
-                    self._refresh_opened_files_list()
+                self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
                     self._sync_clean_view_to_current_box()
@@ -9001,10 +9185,12 @@ class MisoraApp(tk.Tk):
             if target_file and target_file != self.current_file_path:
                 self.open_file(target_file)
             self._plain_text_content = target_tx
-            self.is_dirty = True
-            if self.current_file_path in self.open_documents:
-                self.open_documents[self.current_file_path]["dirty"] = True
-                self._refresh_opened_files_list()
+            target_p = target_file or self.current_file_path
+            if target_p:
+                p_res = Path(target_p).resolve()
+                if p_res in self.open_documents:
+                    self.open_documents[p_res]["plain_text"] = target_tx
+            self._mark_document_dirty(target_p)
             if refresh_ui:
                 self._update_views()
         elif isinstance(delta, BulkFileDelta):
@@ -9086,7 +9272,7 @@ class MisoraApp(tk.Tk):
             line_no = idx
             self._opened_files_line_map[line_no] = fpath
             is_active = (fpath == self.current_file_path)
-            is_dirty = info.get("dirty", False) or (is_active and self.is_dirty)
+            is_dirty = bool(info.get("dirty", False))
 
             prefix = "● " if is_active else "  "
             dirty_mark = "* " if is_dirty else "  "
@@ -9120,26 +9306,38 @@ class MisoraApp(tk.Tk):
                 self.open_file(fpath)
         return "break"
 
-    def close_file(self, file_path: Path) -> None:
-        """Close an opened file from in-memory cache, prompting if dirty."""
+    def close_file(self, file_path: Path) -> bool:
+        """Close an opened file from in-memory cache, prompting if dirty (S3).
+
+        Returns True if the file was closed, False if close was cancelled or aborted.
+        """
         file_path = Path(file_path).resolve()
+        if file_path == self.current_file_path:
+            if not self._flush_active_widget():
+                return False
+
         info = self.open_documents.get(file_path)
         is_dirty = (file_path == self.current_file_path and self.is_dirty) or (info and info.get("dirty", False))
 
         if is_dirty:
-            ans = messagebox.askyesnocancel("Unsaved Changes", f"'{file_path.name}' has unsaved changes.\nSave before closing?")
+            ans = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                f"'{file_path.name}' has unsaved changes.\nSave before closing?",
+                parent=self,
+            )
             if ans is None:
-                return
+                return False
             if ans:
-                if file_path == self.current_file_path:
-                    self.on_save()
-                else:
+                if file_path != self.current_file_path:
                     self.open_file(file_path)
-                    self.on_save()
+                if not self.on_save():
+                    return False
 
         if file_path in self.open_documents:
             del self.open_documents[file_path]
             self.undo_journal.prune_file(str(file_path))
+
+        self._saved_state_checkpoints.pop(str(file_path), None)
 
         if file_path == self.current_file_path:
             if self.open_documents:
@@ -9157,12 +9355,15 @@ class MisoraApp(tk.Tk):
                 self.lbl_status.config(text="Ready. No files open.")
 
         self._refresh_opened_files_list()
+        return True
 
     def close_others(self, keep_path: Path) -> None:
         """Close all opened files except keep_path."""
+        keep_path = Path(keep_path).resolve()
         to_close = [p for p in list(self.open_documents.keys()) if p != keep_path]
         for p in to_close:
-            self.close_file(p)
+            if not self.close_file(p):
+                break
 
     def close_all_unmodified(self) -> None:
         """Close all opened files that do not have unsaved changes."""
@@ -9172,12 +9373,14 @@ class MisoraApp(tk.Tk):
             if not is_dirty:
                 to_close.append(p)
         for p in to_close:
-            self.close_file(p)
+            if not self.close_file(p):
+                break
 
     def close_all_files(self) -> None:
         """Close all opened files, prompting on any unsaved changes."""
         for p in list(self.open_documents.keys()):
-            self.close_file(p)
+            if not self.close_file(p):
+                break
 
     # -------------------------------------------------------------------------
     # Right-Click Context Menus & External Editor Launching (#4D)
@@ -9750,7 +9953,8 @@ class MisoraApp(tk.Tk):
                 )
                 self.current_doc.inject_box(b_idx, old_b.speaker, result)
                 self._modified_boxes.add(b_idx)
-                self.is_dirty = True
+                self._mark_document_dirty(self.current_file_path)
+                self._dirty_state_changed()
                 self._update_views()
                 self.show_toast(f"✓ Translated Box {b_idx + 1} via {engine_name}")
                 self.lbl_status.config(text=f"Box {b_idx + 1} translated via {engine_name}")
@@ -9850,7 +10054,7 @@ class MisoraApp(tk.Tk):
                 )
             finally:
                 self.undo_journal.end_batch()
-            self.is_dirty = True
+            self._mark_document_dirty(self.current_file_path)
             self._dirty_state_changed()
             self._update_views()
             self.show_toast("✓ Metadata applied to Box 0")
@@ -9965,7 +10169,7 @@ class MisoraApp(tk.Tk):
         finally:
             self.undo_journal.end_batch()
 
-        self.is_dirty = True
+        self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
         self._update_views()
         msg = f"✓ Applied script across {applied_count} boxes"
@@ -10107,7 +10311,8 @@ class MisoraApp(tk.Tk):
                 self.current_doc.inject_box(i, box.speaker, "")
                 self._modified_boxes.add(i)
         self.undo_journal.end_batch()
-        self.is_dirty = True
+        self._mark_document_dirty(self.current_file_path)
+        self._dirty_state_changed()
         self._update_views()
         self.show_toast(f"✓ Cleared dialogue skeleton for {total} boxes")
         self.lbl_status.config(text=f"Cleared dialogue skeleton for {total} boxes.")
@@ -11046,7 +11251,8 @@ class TranslatorAssistantDialog(tk.Toplevel):
         )
         doc.inject_box(b_idx, old_box.speaker, new_text)
         self.app._modified_boxes.add(b_idx)
-        self.app.is_dirty = True
+        self.app._mark_document_dirty(self.app.current_file_path)
+        self.app._dirty_state_changed()
         self.app._update_views()
         self.app.show_toast(f"✓ Applied translation to Box {b_idx + 1}")
         return True
@@ -11222,7 +11428,7 @@ class BatchTranslateDialog(tk.Toplevel):
                     time.sleep(delay)
 
             self.app.undo_journal.end_batch()
-            self.app.is_dirty = True
+            self.app._mark_document_dirty(self.app.current_file_path)
 
             def finish():
                 if self.winfo_exists():
@@ -11234,6 +11440,7 @@ class BatchTranslateDialog(tk.Toplevel):
                         stat_txt += f" ({skipped_locked} locked boxes preserved)"
                         toast_txt += f" ({skipped_locked} locked boxes preserved)"
                     self.lbl_status.config(text=stat_txt)
+                    self.app._dirty_state_changed()
                     self.app._update_views()
                     self.app.show_toast(toast_txt)
             self.after_idle(finish)
