@@ -3,20 +3,34 @@
 """
 misora.core.undo_journal - Bounded coalescing undo/redo journal for Misora.
 Tracks box edits, structural operations (insert/delete), plain-text edits, and bulk operations.
-Thread-safe, exception-safe batches, and source-aware coalescing.
+Thread-safe, exception-safe batches, per-file stack isolation, and source-aware coalescing.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from .story_ast import BoxSnapshot
 
 MAX_HISTORY = 50
 COALESCE_WINDOW_SECS = 2.0
+
+
+def _norm_path(p: Optional[Any]) -> str:
+    """Normalize file path for dictionary keying (case-insensitive on Windows)."""
+    if p is None:
+        return ""
+    if isinstance(p, Path):
+        p = str(p)
+    s = str(p).strip()
+    if not s:
+        return ""
+    return os.path.normcase(os.path.normpath(s))
 
 
 @dataclass
@@ -78,30 +92,66 @@ class UndoOperation:
     coalesced: bool = False
 
 
+@dataclass
+class _FileJournalState:
+    """Internal per-file undo/redo stacks and revision tracking (Rule 13)."""
+    undo_stack: List[UndoOperation] = field(default_factory=list)
+    redo_stack: List[UndoOperation] = field(default_factory=list)
+    revision: int = 0
+    saved_revision: int = 0
+
+
 class MasterUndoJournal:
     """
-    Thread-safe bounded coalescing undo/redo journal.
-    - Max MAX_HISTORY operations; oldest dropped on overflow.
+    Thread-safe bounded coalescing undo/redo journal with per-file stack isolation (Rule 13, 16).
+    - Max MAX_HISTORY operations per file; oldest dropped on overflow.
     - Consecutive BoxEditDelta ops for the same box and same source within COALESCE_WINDOW_SECS are merged.
     - begin_batch()/end_batch() and contextmanager batch() group multiple deltas into one UndoOperation.
+    - Independent revision and saved_revision per file path for accurate dirty state.
+    - Full backward-compatibility: parameterless methods operate on the active/default file.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._undo_stack: List[UndoOperation] = []
-        self._redo_stack: List[UndoOperation] = []
+        self._file_states: Dict[str, _FileJournalState] = {}
+        self._active_file: str = ""
+        self._last_active_file: str = ""
         self._batch: Optional[UndoOperation] = None
         self._batch_depth: int = 0
-        self._revision: int = 0
-        self._saved_revision: int = 0
+        self._batch_file: str = ""
+
+    def _get_key(self, file_path: Optional[Any] = None) -> str:
+        """Resolve normalized key for file_path or active/fallback file."""
+        if file_path is not None:
+            return _norm_path(file_path)
+        if self._active_file:
+            return self._active_file
+        if self._last_active_file:
+            return self._last_active_file
+        return ""
+
+    def _get_state(self, file_path: Optional[Any] = None) -> _FileJournalState:
+        """Get or create the _FileJournalState for file_path (must be called with _lock held)."""
+        key = self._get_key(file_path)
+        if key not in self._file_states:
+            self._file_states[key] = _FileJournalState()
+        return self._file_states[key]
+
+    def set_active_file(self, file_path: Optional[Any]) -> None:
+        """Set the current active file path for subsequent default operations."""
+        with self._lock:
+            self._active_file = _norm_path(file_path)
+            if self._active_file:
+                self._last_active_file = self._active_file
 
     # ------------------------------------------------------------------
     # Batch API
     # ------------------------------------------------------------------
-    def begin_batch(self, label: str) -> None:
+    def begin_batch(self, label: str, file_path: Optional[Any] = None) -> None:
         with self._lock:
             if self._batch_depth == 0:
                 self._batch = UndoOperation(label=label, timestamp=time.monotonic())
+                self._batch_file = _norm_path(file_path) if file_path is not None else self._active_file
             self._batch_depth += 1
 
     def end_batch(self) -> None:
@@ -111,13 +161,23 @@ class MasterUndoJournal:
             self._batch_depth -= 1
             if self._batch_depth == 0 and self._batch is not None:
                 if self._batch.deltas:
-                    self._push(self._batch)
+                    target_file = self._batch_file
+                    if not target_file:
+                        for d in self._batch.deltas:
+                            fp = getattr(d, "file_path", "")
+                            if fp:
+                                target_file = _norm_path(fp)
+                                break
+                    if not target_file:
+                        target_file = self._get_key(None)
+                    self._push_to_state(self._get_state(target_file), self._batch, target_file)
                 self._batch = None
+                self._batch_file = ""
 
     @contextmanager
-    def batch(self, label: str) -> Generator[MasterUndoJournal, None, None]:
+    def batch(self, label: str, file_path: Optional[Any] = None) -> Generator[MasterUndoJournal, None, None]:
         """Exception-safe batch context manager: guarantees end_batch() in finally."""
-        self.begin_batch(label)
+        self.begin_batch(label, file_path=file_path)
         try:
             yield self
         finally:
@@ -133,17 +193,25 @@ class MasterUndoJournal:
                 self._batch.deltas.append(delta)
                 if label and not self._batch.label:
                     self._batch.label = label
+                if not self._batch_file:
+                    fp = getattr(delta, "file_path", "")
+                    if fp:
+                        self._batch_file = _norm_path(fp)
                 return
 
+            delta_fp = getattr(delta, "file_path", "")
+            key = _norm_path(delta_fp) if delta_fp else self._get_key(None)
+            state = self._get_state(key)
             now = time.monotonic()
+
             # Coalescing: merge consecutive BoxEditDelta for same box, same source within window
             if (
                 isinstance(delta, BoxEditDelta)
-                and self._undo_stack
-                and len(self._undo_stack[-1].deltas) == 1
-                and isinstance(self._undo_stack[-1].deltas[0], BoxEditDelta)
+                and state.undo_stack
+                and len(state.undo_stack[-1].deltas) == 1
+                and isinstance(state.undo_stack[-1].deltas[0], BoxEditDelta)
             ):
-                prev_delta = self._undo_stack[-1].deltas[0]
+                prev_delta = state.undo_stack[-1].deltas[0]
                 same_box = (
                     (prev_delta.box_uid is not None and prev_delta.box_uid == delta.box_uid)
                     or (prev_delta.box_index == delta.box_index)
@@ -151,11 +219,11 @@ class MasterUndoJournal:
                 same_source = (prev_delta.source == delta.source)
                 same_file = (prev_delta.file_path == delta.file_path)
 
-                if same_box and same_source and same_file and (now - self._undo_stack[-1].timestamp) <= COALESCE_WINDOW_SECS:
+                if same_box and same_source and same_file and (now - state.undo_stack[-1].timestamp) <= COALESCE_WINDOW_SECS:
                     prev_delta.new_text = delta.new_text
                     prev_delta.new_speaker = delta.new_speaker
-                    self._undo_stack[-1].timestamp = now
-                    self._undo_stack[-1].coalesced = True
+                    state.undo_stack[-1].timestamp = now
+                    state.undo_stack[-1].coalesced = True
                     return
 
             op = UndoOperation(
@@ -163,88 +231,125 @@ class MasterUndoJournal:
                 timestamp=now,
                 deltas=[delta],
             )
-            self._push(op)
+            self._push_to_state(state, op, key)
 
-    def _push(self, op: UndoOperation) -> None:
-        """Push op to undo stack, clear redo stack, enforce MAX_HISTORY."""
-        self._redo_stack.clear()
-        self._undo_stack.append(op)
-        self._revision += 1
-        if len(self._undo_stack) > MAX_HISTORY:
-            self._undo_stack = self._undo_stack[-MAX_HISTORY:]
+    def _push_to_state(self, state: _FileJournalState, op: UndoOperation, key: str) -> None:
+        """Push op to state's undo stack, clear redo stack, enforce MAX_HISTORY, advance revision."""
+        state.redo_stack.clear()
+        state.undo_stack.append(op)
+        state.revision += 1
+        if key:
+            self._last_active_file = key
+        if len(state.undo_stack) > MAX_HISTORY:
+            state.undo_stack = state.undo_stack[-MAX_HISTORY:]
 
     # ------------------------------------------------------------------
     # Undo / Redo
     # ------------------------------------------------------------------
-    def can_undo(self) -> bool:
+    def can_undo(self, file_path: Optional[Any] = None) -> bool:
         with self._lock:
-            return bool(self._undo_stack)
+            state = self._get_state(file_path)
+            return bool(state.undo_stack)
 
-    def can_redo(self) -> bool:
+    def can_redo(self, file_path: Optional[Any] = None) -> bool:
         with self._lock:
-            return bool(self._redo_stack)
+            state = self._get_state(file_path)
+            return bool(state.redo_stack)
 
-    def undo_label(self) -> str:
+    def undo_label(self, file_path: Optional[Any] = None) -> str:
         with self._lock:
-            return self._undo_stack[-1].label if self._undo_stack else ""
+            state = self._get_state(file_path)
+            return state.undo_stack[-1].label if state.undo_stack else ""
 
-    def redo_label(self) -> str:
+    def redo_label(self, file_path: Optional[Any] = None) -> str:
         with self._lock:
-            return self._redo_stack[-1].label if self._redo_stack else ""
+            state = self._get_state(file_path)
+            return state.redo_stack[-1].label if state.redo_stack else ""
 
-    def pop_undo(self) -> Optional[UndoOperation]:
+    def pop_undo(self, file_path: Optional[Any] = None) -> Optional[UndoOperation]:
         with self._lock:
-            if not self._undo_stack:
+            state = self._get_state(file_path)
+            if not state.undo_stack:
                 return None
-            op = self._undo_stack.pop()
-            self._redo_stack.append(op)
-            self._revision -= 1
+            op = state.undo_stack.pop()
+            state.redo_stack.append(op)
+            state.revision -= 1
             return op
 
-    def pop_redo(self) -> Optional[UndoOperation]:
+    def pop_redo(self, file_path: Optional[Any] = None) -> Optional[UndoOperation]:
         with self._lock:
-            if not self._redo_stack:
+            state = self._get_state(file_path)
+            if not state.redo_stack:
                 return None
-            op = self._redo_stack.pop()
-            self._undo_stack.append(op)
-            self._revision += 1
+            op = state.redo_stack.pop()
+            state.undo_stack.append(op)
+            state.revision += 1
             return op
 
     def mark_saved(self, file_path: Optional[Any] = None) -> None:
-        """Mark the current revision as clean/saved (AGENTS.md Rule 13)."""
+        """Mark the current revision as clean/saved for file_path (AGENTS.md Rule 13)."""
         with self._lock:
-            self._saved_revision = self._revision
+            state = self._get_state(file_path)
+            state.saved_revision = state.revision
 
     def is_clean(self, file_path: Optional[Any] = None) -> bool:
-        """Check if current revision matches the last saved revision."""
+        """Check if current revision matches the last saved revision for file_path."""
         with self._lock:
-            return self._revision == self._saved_revision
+            state = self._get_state(file_path)
+            return state.revision == state.saved_revision
 
     def prune_file(self, file_path: str) -> None:
         """Prune undo/redo deltas associated with a closed file path (AGENTS.md Rule 16)."""
         with self._lock:
-            def keep_op(op: UndoOperation) -> bool:
-                return any(getattr(d, "file_path", "") != file_path for d in op.deltas)
+            key = _norm_path(file_path)
+            if key in self._file_states:
+                del self._file_states[key]
+            if self._active_file == key:
+                self._active_file = ""
+            if self._last_active_file == key:
+                self._last_active_file = ""
 
-            self._undo_stack = [op for op in self._undo_stack if keep_op(op)]
-            self._redo_stack = [op for op in self._redo_stack if keep_op(op)]
-
-    def clear(self) -> None:
+    def clear(self, file_path: Optional[Any] = None) -> None:
         with self._lock:
-            self._undo_stack.clear()
-            self._redo_stack.clear()
-            self._batch = None
-            self._batch_depth = 0
+            if file_path is not None:
+                key = _norm_path(file_path)
+                if key in self._file_states:
+                    del self._file_states[key]
+            else:
+                self._file_states.clear()
+                self._active_file = ""
+                self._last_active_file = ""
+                self._batch = None
+                self._batch_depth = 0
+                self._batch_file = ""
 
     @property
     def undo_depth(self) -> int:
-        with self._lock:
-            return len(self._undo_stack)
+        return self.get_undo_depth()
 
     @property
     def redo_depth(self) -> int:
+        return self.get_redo_depth()
+
+    def get_undo_depth(self, file_path: Optional[Any] = None) -> int:
         with self._lock:
-            return len(self._redo_stack)
+            state = self._get_state(file_path)
+            return len(state.undo_stack)
+
+    def get_redo_depth(self, file_path: Optional[Any] = None) -> int:
+        with self._lock:
+            state = self._get_state(file_path)
+            return len(state.redo_stack)
+
+    @property
+    def _revision(self) -> int:
+        with self._lock:
+            return self._get_state(None).revision
+
+    @property
+    def _saved_revision(self) -> int:
+        with self._lock:
+            return self._get_state(None).saved_revision
 
 
 def _auto_label(delta: Any) -> str:

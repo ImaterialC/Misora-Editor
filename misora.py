@@ -8,6 +8,7 @@ of Princess Connect! Re:Dive Unity3D story bundles (.unity3d) and XUAT translati
 """
 from __future__ import annotations
 
+import collections
 import colorsys
 import ctypes
 import hashlib
@@ -45,14 +46,14 @@ if str(SCRIPT_DIR.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR.parent))
 
 try:
-    from misora.assets.icon import THEME, apply_window_icon, get_icon
+    from misora.assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
     from misora.assets.splash import MisoraSplashScreen
     from misora.core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
         BoxEditDelta, BoxStructuralDelta, BulkFileDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
-        save_bundle_story,
+        save_bundle_story, dispose_unity_env,
         MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT,
         serialize, parse, sniff_format, apply_to_document, sanitize_speaker,
         DialogueBlock, MetadataBlock, ParseResult,
@@ -60,14 +61,14 @@ try:
         protect_secret, unprotect_secret, redact_secret,
     )
 except ImportError:
-    from assets.icon import THEME, apply_window_icon, get_icon
+    from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
     from assets.splash import MisoraSplashScreen
     from core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
         BoxEditDelta, BoxStructuralDelta, BulkFileDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
-        save_bundle_story,
+        save_bundle_story, dispose_unity_env,
         MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT,
         serialize, parse, sniff_format, apply_to_document, sanitize_speaker,
         DialogueBlock, MetadataBlock, ParseResult,
@@ -1069,7 +1070,28 @@ class NguiColorPickerPopup(tk.Toplevel):
 
     def _on_close(self) -> None:
         self._stop_eyedropper()
+        safe_grab_release(self)
+        try:
+            if hasattr(self, "app") and getattr(self.app, "_color_picker_win", None) is self:
+                self.app._color_picker_win = None
+            self._sv_photo = None
+            self._hue_photo = None
+            self._grad_photo = None
+            if hasattr(self, "canvas_grad_preview"):
+                self.canvas_grad_preview.image = None
+        except Exception:
+            pass
         self.destroy()
+
+
+def safe_grab_release(dialog: Optional[tk.Toplevel]) -> None:
+    """Safely release modal grab on a Toplevel dialog before destruction (Rule 3, S8a)."""
+    if dialog is not None:
+        try:
+            if dialog.winfo_exists():
+                dialog.grab_release()
+        except Exception:
+            pass
 
 
 def write_atomic_utf8(path: Union[str, Path], content: str, encoding: str = "utf-8") -> None:
@@ -1214,6 +1236,14 @@ class MisoraApp(tk.Tk):
         self._is_speaker_pinned: bool = False
         self._icon_cache: dict = {}
         self._cont_resize_job: Optional[str] = None
+
+        # S8b-1: Toast & Status Notification Manager state
+        self._toast_queue: collections.deque = collections.deque()
+        self._toast_active: bool = False
+        self._toast_after_id: Optional[str] = None
+        self._status_after_id: Optional[str] = None
+        self._default_status_text: str = "Ready. Drag & Drop or open a .unity3d bundle or folder to begin."
+        self._toast_widget: Optional[tk.Label] = None
 
         # Side Drawer (Customization & NGUI Glossary) state
         self._side_drawer_visible: bool = False
@@ -1375,8 +1405,9 @@ class MisoraApp(tk.Tk):
     def report_callback_exception(self, exc, val, tb) -> None:  # type: ignore[override]
         self.logger.exception("Unhandled Tkinter callback exception:", val)
         try:
-            if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
-                self.lbl_status.config(text=f"Error: {val}")
+            err_msg = f"Error: {val}"
+            self.set_status(err_msg, is_error=True)
+            self.show_toast(err_msg, duration_ms=4000, is_accent=False, is_error=True, status_bar=False)
         except Exception:
             pass
 
@@ -1425,6 +1456,19 @@ class MisoraApp(tk.Tk):
                     self.after_cancel(self._search_poll_job)
                 except Exception:
                     pass
+                self._search_poll_job = None
+            if hasattr(self, "_toast_after_id") and self._toast_after_id:
+                try:
+                    self.after_cancel(self._toast_after_id)
+                except Exception:
+                    pass
+                self._toast_after_id = None
+            if hasattr(self, "_status_after_id") and self._status_after_id:
+                try:
+                    self.after_cancel(self._status_after_id)
+                except Exception:
+                    pass
+                self._status_after_id = None
             self._cleanup_drag_and_drop()
 
     def destroy(self) -> None:
@@ -1435,6 +1479,50 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._search_poll_job = None
+        if hasattr(self, "_toast_after_id") and self._toast_after_id:
+            try:
+                self.after_cancel(self._toast_after_id)
+            except Exception:
+                pass
+            self._toast_after_id = None
+        if hasattr(self, "_status_after_id") and self._status_after_id:
+            try:
+                self.after_cancel(self._status_after_id)
+            except Exception:
+                pass
+            self._status_after_id = None
+        if hasattr(self, "_toast_queue"):
+            self._toast_queue.clear()
+        if hasattr(self, "_toast_widget") and self._toast_widget:
+            try:
+                self._toast_widget.destroy()
+            except Exception:
+                pass
+            self._toast_widget = None
+        self._toast_active = False
+
+        for job_attr in ("_cont_resize_job", "_eyedropper_after_id"):
+            if hasattr(self, job_attr):
+                job_id = getattr(self, job_attr)
+                if job_id:
+                    try:
+                        self.after_cancel(job_id)
+                    except Exception:
+                        pass
+                    setattr(self, job_attr, None)
+
+        # S8b-2: Dispose all open document environments and prune icon cache
+        try:
+            for entry in list(getattr(self, "open_documents", {}).values()):
+                if isinstance(entry, dict) and entry.get("env"):
+                    dispose_unity_env(entry["env"])
+            if getattr(self, "current_unity_env", None):
+                dispose_unity_env(self.current_unity_env)
+                self.current_unity_env = None
+            prune_icon_cache(self)
+        except Exception:
+            pass
+
         self._cleanup_drag_and_drop()
         super().destroy()
 
@@ -1925,13 +2013,100 @@ class MisoraApp(tk.Tk):
         if save:
             self._save_user_prefs()
 
-    def show_toast(self, message: str, duration_ms: int = 2200, is_accent: bool = True) -> None:
-        """Display a non-intrusive floating toast notification in the bottom right corner."""
+    def set_status(
+        self,
+        message: str,
+        is_error: bool = False,
+        timeout_ms: Optional[int] = None,
+    ) -> None:
+        """Update the main status bar label text with contrast/error styling and optional timeout."""
         try:
-            if hasattr(self, "_toast_after_id") and self._toast_after_id:
-                self.after_cancel(self._toast_after_id)
-                self._toast_after_id = None
-            if not hasattr(self, "_toast_widget") or not self._toast_widget.winfo_exists():
+            if hasattr(self, "_status_after_id") and self._status_after_id:
+                try:
+                    self.after_cancel(self._status_after_id)
+                except Exception:
+                    pass
+                self._status_after_id = None
+
+            if not hasattr(self, "lbl_status") or not self.lbl_status or not self.lbl_status.winfo_exists():
+                return
+
+            t = self.theme
+            if is_error:
+                error_fg = "#d94862" if t.get("fg_muted") != "#d94862" else "#ff7da7"
+                self.lbl_status.config(text=message, fg=error_fg)
+            else:
+                normal_fg = t.get("fg_muted", "#9c8ec0")
+                self.lbl_status.config(text=message, fg=normal_fg)
+
+            if timeout_ms is not None and timeout_ms > 0:
+                self._status_after_id = self.after(timeout_ms, self._reset_status)
+        except Exception:
+            pass
+
+    def _reset_status(self) -> None:
+        """Restore the status bar to default text and normal theme styling."""
+        try:
+            self._status_after_id = None
+            if hasattr(self, "lbl_status") and self.lbl_status and self.lbl_status.winfo_exists():
+                t = self.theme
+                self.lbl_status.config(
+                    text=self._default_status_text,
+                    fg=t.get("fg_muted", "#9c8ec0"),
+                )
+        except Exception:
+            pass
+
+    def show_toast(
+        self,
+        message: str,
+        duration_ms: int = 2200,
+        is_accent: bool = True,
+        is_error: bool = False,
+        status_bar: bool = True,
+    ) -> None:
+        """Display a non-intrusive floating toast notification above the action bar."""
+        try:
+            if status_bar:
+                self.set_status(message, is_error=is_error)
+
+            # Check if active toast has identical message (coalesce duplicate)
+            if self._toast_active and hasattr(self, "_toast_widget") and self._toast_widget and self._toast_widget.winfo_exists():
+                try:
+                    current_text = self._toast_widget.cget("text")
+                except Exception:
+                    current_text = None
+                if current_text == message:
+                    if self._toast_after_id:
+                        try:
+                            self.after_cancel(self._toast_after_id)
+                        except Exception:
+                            pass
+                    self._toast_after_id = self.after(duration_ms, self._dismiss_toast)
+                    return
+
+            if self._toast_active:
+                if hasattr(self, "_toast_queue"):
+                    if self._toast_queue and self._toast_queue[-1][0] == message:
+                        return
+                    self._toast_queue.append((message, duration_ms, is_accent, is_error))
+                return
+
+            self._display_toast(message, duration_ms, is_accent, is_error)
+        except Exception:
+            pass
+
+    def _display_toast(
+        self,
+        message: str,
+        duration_ms: int,
+        is_accent: bool,
+        is_error: bool,
+    ) -> None:
+        """Render and place the toast widget with appropriate theme styling and auto-dismiss timer."""
+        try:
+            self._toast_active = True
+            if not hasattr(self, "_toast_widget") or not self._toast_widget or not self._toast_widget.winfo_exists():
                 self._toast_widget = tk.Label(
                     self,
                     text="",
@@ -1940,27 +2115,66 @@ class MisoraApp(tk.Tk):
                     relief="solid",
                     padx=14,
                     pady=6,
+                    cursor="hand2",
                 )
+                self._toast_widget.bind("<Button-1>", lambda _e=None: self._dismiss_toast())
+
             t = self.theme
-            bg_col = t["misora_pink"] if is_accent else t["bg_editor"]
-            fg_col = best_contrast_fg(bg_col)
+            if is_error:
+                bg_col = "#d94862"
+                fg_col = best_contrast_fg(bg_col, "#14141a", "#ffffff")
+            elif is_accent:
+                bg_col = t.get("misora_pink", "#a66cff")
+                fg_col = best_contrast_fg(bg_col)
+            else:
+                bg_col = t.get("bg_editor", "#282c34")
+                fg_col = best_contrast_fg(bg_col)
+
+            border_col = t.get("border", "#4b5263")
             self._toast_widget.configure(
                 text=message,
                 bg=bg_col,
                 fg=fg_col,
                 highlightthickness=1,
-                highlightbackground=t["border"],
+                highlightbackground=border_col,
             )
-            self._toast_widget.place(relx=0.98, rely=0.94, anchor="se")
+            # Geometry: place anchored south-east above action bar without occluding buttons
+            self._toast_widget.place(relx=1.0, rely=1.0, x=-16, y=-52, anchor="se")
             self._toast_widget.lift()
 
-            def hide():
-                if hasattr(self, "_toast_widget") and self._toast_widget.winfo_exists():
-                    self._toast_widget.place_forget()
+            if hasattr(self, "_toast_after_id") and self._toast_after_id:
+                try:
+                    self.after_cancel(self._toast_after_id)
+                except Exception:
+                    pass
+                self._toast_after_id = None
 
-            self._toast_after_id = self.after(duration_ms, hide)
+            self._toast_after_id = self.after(duration_ms, self._dismiss_toast)
         except Exception:
-            pass
+            self._toast_active = False
+
+    def _dismiss_toast(self) -> None:
+        """Dismiss active toast and display next queued notification if any."""
+        try:
+            if hasattr(self, "_toast_after_id") and self._toast_after_id:
+                try:
+                    self.after_cancel(self._toast_after_id)
+                except Exception:
+                    pass
+                self._toast_after_id = None
+
+            if hasattr(self, "_toast_widget") and self._toast_widget and self._toast_widget.winfo_exists():
+                self._toast_widget.place_forget()
+
+            if hasattr(self, "_toast_queue") and self._toast_queue:
+                msg, dur, acc, err = self._toast_queue.popleft()
+                if len(self._toast_queue) > 2 and dur > 1200:
+                    dur = 1200
+                self._display_toast(msg, dur, acc, err)
+            else:
+                self._toast_active = False
+        except Exception:
+            self._toast_active = False
 
     def _configure_editor_rich_tags(self, widget: tk.Text, d_fam: str, d_sz: int) -> None:
         """Configure syntax highlight & compiled NGUI preview tags on a dialogue text widget."""
@@ -2248,6 +2462,10 @@ class MisoraApp(tk.Tk):
         btn_bar = tk.Frame(dlg, bg=t["bg_panel"], padx=18, pady=12)
         btn_bar.pack(fill="x", side="bottom")
 
+        def _safe_close(_e: Optional[tk.Event] = None):
+            safe_grab_release(dlg)
+            dlg.destroy()
+
         def _save():
             try:
                 b_val = max(0, int(var_batch.get().strip()))
@@ -2262,6 +2480,7 @@ class MisoraApp(tk.Tk):
             self.dnd_filter_binary = bool(var_filter.get())
             self._save_user_prefs(silent=True)
             self.lbl_status.config(text="Drag & Drop safety settings saved.")
+            safe_grab_release(dlg)
             dlg.destroy()
             messagebox.showinfo(
                 "Settings Saved",
@@ -2269,8 +2488,10 @@ class MisoraApp(tk.Tk):
                 parent=self,
             )
 
+        dlg.protocol("WM_DELETE_WINDOW", _safe_close)
+        dlg.bind("<Escape>", _safe_close)
         ttk.Button(btn_bar, text="Save Settings", style="Accent.TButton", command=_save).pack(side="left", padx=(0, 6))
-        ttk.Button(btn_bar, text="Cancel", style="TButton", command=dlg.destroy).pack(side="left")
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=_safe_close).pack(side="left")
 
     def _handle_dropped_paths(self, paths: List[Path]) -> None:
         """Process files or folders dropped onto the Misora window safely."""
@@ -3579,6 +3800,8 @@ class MisoraApp(tk.Tk):
         )
         self.entry_speaker.pack(side="left")
         self.entry_speaker.bind("<KeyRelease>", lambda e: self._on_speaker_edited())
+        self.entry_speaker.bind("<<Cut>>", lambda e: self.after_idle(self._commit_speaker_edit))
+        self.entry_speaker.bind("<<Paste>>", lambda e: self.after_idle(self._commit_speaker_edit))
 
         self.btn_speaker_dropdown = ttk.Button(
             speaker_ribbon_row,
@@ -4530,15 +4753,21 @@ class MisoraApp(tk.Tk):
         btn_row = tk.Frame(dlg, bg=t["bg_panel"])
         btn_row.pack(fill="x", padx=14, pady=10)
 
+        def _safe_close(_e: Optional[tk.Event] = None):
+            safe_grab_release(dlg)
+            dlg.destroy()
+
         def _commit():
             val = var_attr.get().strip()
             if val:
                 self._append_speaker_attribute(val)
-            dlg.destroy()
+            _safe_close()
 
+        dlg.protocol("WM_DELETE_WINDOW", _safe_close)
+        dlg.bind("<Escape>", _safe_close)
         ent.bind("<Return>", lambda e: _commit())
         ttk.Button(btn_row, text="Append", style="Pink.TButton", command=_commit).pack(side="right", padx=(4, 0))
-        ttk.Button(btn_row, text="Cancel", style="TButton", command=dlg.destroy).pack(side="right")
+        ttk.Button(btn_row, text="Cancel", style="TButton", command=_safe_close).pack(side="right")
 
     # -------------------------------------------------------------------------
     # Line Numbers Gutter & Column Ruler Synchronization (#12)
@@ -5572,10 +5801,15 @@ class MisoraApp(tk.Tk):
         var_base.trace_add("write", _update_preview)
         var_ruby.trace_add("write", _update_preview)
 
+        def _safe_close(_event: Optional[tk.Event] = None) -> None:
+            safe_grab_release(dlg)
+            if dlg.winfo_exists():
+                dlg.destroy()
+
         def _commit(_event: Optional[tk.Event] = None) -> None:
             r_txt = var_ruby.get().strip()
             b_txt = var_base.get()
-            dlg.destroy()
+            _safe_close()
             if not b_txt and not r_txt:
                 return
             if selected_base:
@@ -5585,12 +5819,15 @@ class MisoraApp(tk.Tk):
 
         btn_row = tk.Frame(dlg, bg=t["bg_panel"])
         btn_row.pack(fill="x", padx=14, pady=(0, 12))
-        ttk.Button(btn_row, text="Cancel", style="TButton", command=dlg.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_row, text="Cancel", style="TButton", command=_safe_close).pack(side="right", padx=(6, 0))
         ttk.Button(btn_row, text="Insert Ruby Tag", style="Pink.TButton", command=_commit).pack(side="right")
 
+        dlg.protocol("WM_DELETE_WINDOW", _safe_close)
         dlg.bind("<Return>", _commit)
-        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.bind("<Escape>", _safe_close)
         (ent_ruby if selected_base else ent_base).focus_set()
+
+    _prompt_insert_ruby = on_insert_ruby
 
     def _highlight_ngui_tags(self) -> None:
         """Apply non-destructive syntax coloring to NGUI & Priconne ruby tags."""
@@ -5740,7 +5977,7 @@ class MisoraApp(tk.Tk):
         action_bar.pack(fill="x", padx=8, pady=(0, 6))
 
         self.lbl_status = self._tag_role(
-            tk.Label(action_bar, text="Ready. Drag & Drop or open a .unity3d bundle or folder to begin.", font=("Segoe UI", 9), bg=t["bg_panel"], fg=t["fg_muted"]),
+            tk.Label(action_bar, text=getattr(self, "_default_status_text", "Ready. Drag & Drop or open a .unity3d bundle or folder to begin."), font=("Segoe UI", 9), bg=t["bg_panel"], fg=t["fg_muted"]),
             "label_muted"
         )
         self.lbl_status.pack(side="left", padx=8, pady=6)
@@ -5787,6 +6024,22 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists():
             return self.txt_dialogue
         return getattr(self, "txt_dialogue", None)
+
+    def _get_card_text_widget(self, box_idx: int) -> "tk.Text":
+        """Return the card Text widget for box_idx if it exists, else txt_dialogue fallback (S4).
+
+        Guards with winfo_exists() before returning the card widget to avoid stale references
+        (STALE-CARD-REGISTRY / Rule 3 widget aliasing guard).
+        """
+        if hasattr(self, "_card_widgets") and box_idx in self._card_widgets:
+            w = self._card_widgets[box_idx].get("txt")
+            if w is not None:
+                try:
+                    if w.winfo_exists():
+                        return w
+                except Exception:
+                    pass
+        return self.txt_dialogue
 
     def _install_shortcuts_bindtag(self, widget: tk.Widget) -> None:
         """Install MisoraShortcuts as the FIRST bindtag on an editor widget (Rule 12)."""
@@ -6164,6 +6417,12 @@ class MisoraApp(tk.Tk):
                 self.logger.exception("Failed to flush pending edit:", e)
                 messagebox.showerror("Edit Commit Error", f"Could not preserve the current edit:\n{e}")
                 return False
+
+        try:
+            if hasattr(self, "focus_get") and self.focus_get() == getattr(self, "entry_speaker", None):
+                self._commit_speaker_edit()
+        except Exception:
+            pass
         return True
 
     def open_file(self, file_path: Union[str, Path], reload_from_disk: bool = False) -> None:
@@ -6282,6 +6541,8 @@ class MisoraApp(tk.Tk):
         plain_text = staged["plain_text"]
 
         self.current_file_path = file_path
+        if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
+            self.undo_journal.set_active_file(str(file_path))
         self.current_doc = doc
         self.current_unity_env = staged["env"]
         self.current_text_obj = staged["obj"]
@@ -6318,6 +6579,7 @@ class MisoraApp(tk.Tk):
 
         self._update_views()
         self._dirty_state_changed()
+        self._sync_edit_menu_states()
         self.lbl_status.config(text=staged["status"])
 
         if staged["kind"] == "bundle":
@@ -6335,6 +6597,7 @@ class MisoraApp(tk.Tk):
         compiled = self.var_preview_compiled.get()
 
         if not self.current_doc:
+            self._clear_card_registry()  # S4: prune stale card refs on plain-text / empty state
             self.speaker_var.set("")
             self.lbl_box_counter.config(text="Box: 0 / 0")
             self.lbl_voice_cue.config(text="")
@@ -6633,6 +6896,22 @@ class MisoraApp(tk.Tk):
         self._sync_header_controls_for_card(box_idx)
         self._update_raw_view()
 
+    def _clear_card_registry(self) -> None:
+        """Destroy and prune all stale card widget references (S4 / STALE-CARD-REGISTRY).
+
+        Safe to call even if widgets are already destroyed. Clears _card_widgets entirely.
+        Must be called whenever the document that produced the cards is unloaded so that
+        destroyed Tk widget references do not persist in the registry (Rule 3 / Rule 11).
+        """
+        for _b_idx, card_info in list(self._card_widgets.items()):
+            card = card_info.get("card")
+            try:
+                if card is not None and card.winfo_exists():
+                    card.destroy()
+            except Exception:
+                pass
+        self._card_widgets.clear()
+
     def _highlight_active_card_header(self, active_idx: int) -> None:
         """Highlight the header background of the active card in Continuous View."""
         t = self.theme
@@ -6795,7 +7074,7 @@ class MisoraApp(tk.Tk):
         """Cut text in active editor to clipboard."""
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
-            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+            target = self._get_card_text_widget(self.current_box_idx)
         try:
             target.event_generate("<<Cut>>")
         except Exception:
@@ -6805,7 +7084,7 @@ class MisoraApp(tk.Tk):
         """Copy text in active editor to clipboard."""
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
-            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+            target = self._get_card_text_widget(self.current_box_idx)
         try:
             target.event_generate("<<Copy>>")
         except Exception:
@@ -6816,7 +7095,7 @@ class MisoraApp(tk.Tk):
         target = self.txt_dialogue
         idx = self.current_box_idx
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
-            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+            target = self._get_card_text_widget(self.current_box_idx)
         res = self._on_card_paste_caret(idx, target)
         if res != "break":
             try:
@@ -6909,6 +7188,12 @@ class MisoraApp(tk.Tk):
                     touched.add(Path(fp).resolve())
                 except Exception:
                     pass
+            elif hasattr(delta, "per_file"):
+                for fpath_str, _, _ in delta.per_file:
+                    try:
+                        touched.add(Path(fpath_str).resolve())
+                    except Exception:
+                        pass
         if self.current_file_path:
             try:
                 touched.add(Path(self.current_file_path).resolve())
@@ -7704,68 +7989,78 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
 
-    def _on_speaker_edited(self) -> None:
-        """Triggered when editing the pinned Speaker entry in either Page or Continuous mode."""
+    def _commit_speaker_edit(self) -> bool:
+        """Central edit commit path for speaker entry edits (Rule 11, F20).
+        Returns True if a mutation occurred, False if no-op or aborted.
+        """
+        if getattr(self, "_suppress_continuous_events", False):
+            return False
         if getattr(self, "is_box0_active", False):
-            return
+            return False
         if not self.current_doc or not self.current_doc.boxes:
-            return
+            return False
+        if not (0 <= self.current_box_idx < len(self.current_doc.boxes)):
+            return False
 
         idx = self.current_box_idx
-        old_sp = self.current_doc.boxes[idx].speaker
-        old_tx = self.current_doc.boxes[idx].clean_text
+        box = self.current_doc.boxes[idx]
+        old_sp = box.speaker
         new_sp = self.speaker_var.get()
 
-        if self.var_continuous_view.get():
+        # Resolve current text cleanly from active view
+        if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
             if hasattr(self, "_card_widgets") and idx in self._card_widgets:
                 cur_tx = self._card_widgets[idx]["txt"].get("1.0", "end-1c")
             else:
-                cur_tx = self.current_doc.boxes[idx].clean_text
-            if old_sp != new_sp:
-                self.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=idx,
-                        old_speaker=old_sp,
-                        new_speaker=new_sp,
-                        old_text=old_tx,
-                        new_text=cur_tx,
-                        file_path=str(self.current_file_path or ""),
-                    ),
-                    label=f"Rename speaker #{idx + 1}"
-                )
-                self._modified_boxes.add(idx)
-                self._mark_document_dirty(self.current_file_path)
-            try:
-                self.current_doc.inject_box(idx, new_sp, cur_tx)
-                self._refresh_continuous_box_header(idx)
-                self._update_raw_view()
-            except Exception:
-                pass
+                cur_tx = box.clean_text
         else:
-            new_tx = (
-                self.current_doc.boxes[idx].clean_text
-                if self.var_preview_compiled.get()
-                else self.txt_dialogue.get("1.0", "end-1c")
-            )
-            if old_sp != new_sp:
-                self.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=idx,
-                        old_speaker=old_sp,
-                        new_speaker=new_sp,
-                        old_text=old_tx,
-                        new_text=new_tx,
-                        file_path=str(self.current_file_path or ""),
-                    ),
-                    label=f"Rename speaker #{idx + 1}"
-                )
-                self._modified_boxes.add(idx)
-                self._mark_document_dirty(self.current_file_path)
-            try:
-                self.current_doc.inject_box(idx, new_sp, new_tx)
-                self._update_raw_view()
-            except Exception:
-                pass
+            if getattr(self, "var_preview_compiled", None) and self.var_preview_compiled.get():
+                cur_tx = box.clean_text
+            elif hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists():
+                cur_tx = self.txt_dialogue.get("1.0", "end-1c")
+            else:
+                cur_tx = box.clean_text
+
+        if old_sp == new_sp:
+            return False
+
+        self.undo_journal.record(
+            BoxEditDelta(
+                box_index=idx,
+                old_speaker=old_sp,
+                new_speaker=new_sp,
+                old_text=box.clean_text,
+                new_text=cur_tx,
+                file_path=str(self.current_file_path or ""),
+                box_uid=box.uid,
+                source="keyboard",
+            ),
+            label=f"Rename speaker #{idx + 1}"
+        )
+
+        try:
+            self.current_doc.inject_box(idx, new_sp, cur_tx)
+        except Exception as ex:
+            self.logger.error("AST", f"Failed to inject speaker rename: {ex}")
+            return False
+
+        self._modified_boxes.add(idx)
+        self._mark_document_dirty(self.current_file_path)
+
+        if hasattr(self, "_refresh_continuous_box_header"):
+            self._refresh_continuous_box_header(idx)
+        elif hasattr(self, "_card_widgets") and idx in self._card_widgets:
+            lbl_sp = self._card_widgets[idx].get("lbl_sp")
+            if lbl_sp and lbl_sp.winfo_exists():
+                lbl_sp.config(text=new_sp if new_sp else "(Narration)")
+
+        self._update_raw_view()
+        self._dirty_state_changed()
+        return True
+
+    def _on_speaker_edited(self) -> None:
+        """Triggered when editing the pinned Speaker entry in either Page or Continuous mode."""
+        self._commit_speaker_edit()
 
     def _refresh_continuous_box_header(self, box_idx: int) -> None:
         """Update a single box header in Continuous View in-place when its speaker changes."""
@@ -7863,32 +8158,7 @@ class MisoraApp(tk.Tk):
 
         # 2. Speaker Entry
         if widget == getattr(self, "entry_speaker", None):
-            if self.current_doc and (0 <= self.current_box_idx < len(self.current_doc.boxes)):
-                b = self.current_doc.boxes[self.current_box_idx]
-                new_sp = self.speaker_var.get().strip()
-                if b.speaker != new_sp:
-                    old_sp = b.speaker
-                    old_tx = b.clean_text
-                    self.undo_journal.record(
-                        BoxEditDelta(
-                            box_index=self.current_box_idx,
-                            old_speaker=old_sp,
-                            new_speaker=new_sp,
-                            old_text=old_tx,
-                            new_text=old_tx,
-                            file_path=str(self.current_file_path or ""),
-                            box_uid=b.uid,
-                        ),
-                        label=f"Edit speaker #{self.current_box_idx + 1}"
-                    )
-                    self.current_doc.inject_box(self.current_box_idx, new_sp, None)
-                    self._modified_boxes.add(self.current_box_idx)
-                    self._mark_document_dirty(self.current_file_path)
-                    self._dirty_state_changed()
-                    if hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
-                        lbl_sp = self._card_widgets[self.current_box_idx].get("lbl_sp")
-                        if lbl_sp and lbl_sp.winfo_exists():
-                            lbl_sp.config(text=new_sp if new_sp else "(Narration)")
+            self._commit_speaker_edit()
             return
 
         # 3. Page View Dialogue Editor (txt_dialogue)
@@ -8320,7 +8590,16 @@ class MisoraApp(tk.Tk):
         if getattr(self, "open_documents", None):
             for fp, entry in self.open_documents.items():
                 if isinstance(entry, dict) and entry.get("doc"):
-                    mem_docs[fp] = entry["doc"]
+                    orig_doc = entry["doc"]
+                    # Capture immutable snapshot on UI thread before thread start (Rule 15 / SEARCH-RACE)
+                    try:
+                        snap_records = [
+                            Record(cmd_id=r.cmd_id, cmd_name=r.cmd_name, args=list(r.args), category=r.category)
+                            for r in orig_doc.records
+                        ]
+                        mem_docs[fp] = StoryDocument(snap_records)
+                    except Exception:
+                        mem_docs[fp] = orig_doc
 
         t = threading.Thread(target=self._run_background_search, args=(target_paths, opts, mem_docs), daemon=True)
         t.start()
@@ -9049,16 +9328,21 @@ class MisoraApp(tk.Tk):
             for fpath in matching_files:
                 try:
                     if fpath.suffix.lower() in (".unity3d", ".asset"):
-                        doc, env, obj, _ = load_bundle_story(fpath)
-                        modified = False
-                        for idx, box in enumerate(doc.boxes):
-                            if find_text in box.clean_text:
-                                new_box_tx = box.clean_text.replace(find_text, replace_text)
-                                doc.inject_box(idx, None, new_box_tx)
-                                modified = True
-                        if modified:
-                            save_bundle_story(env, obj, doc, fpath, backup_dir=self._get_backup_dir())
-                            replaced_files_count += 1
+                        bundle_env = None
+                        try:
+                            doc, bundle_env, obj, _ = load_bundle_story(fpath)
+                            modified = False
+                            for idx, box in enumerate(doc.boxes):
+                                if find_text in box.clean_text:
+                                    new_box_tx = box.clean_text.replace(find_text, replace_text)
+                                    doc.inject_box(idx, None, new_box_tx)
+                                    modified = True
+                            if modified:
+                                save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=self._get_backup_dir())
+                                replaced_files_count += 1
+                        finally:
+                            if bundle_env is not None:
+                                dispose_unity_env(bundle_env)
                     else:
                         old_txt = fpath.read_text(encoding="utf-8", errors="replace")
                         if find_text in old_txt:
@@ -9067,9 +9351,15 @@ class MisoraApp(tk.Tk):
                             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                             bak_path = bak_dir / f"{fpath.stem}.bak_{ts}{fpath.suffix}"
                             shutil.copy2(fpath, bak_path)
-                            fpath.write_text(new_txt, encoding="utf-8")
+                            write_atomic_utf8(fpath, new_txt, encoding="utf-8")
                             per_file_deltas.append((str(fpath), old_txt, new_txt))
                             replaced_files_count += 1
+                            # S5: Synchronize in-memory open_documents cache & checkpoint
+                            f_res = fpath.resolve()
+                            if f_res in self.open_documents:
+                                self.open_documents[f_res]["plain_text"] = new_txt
+                                self._record_saved_checkpoint(f_res, None, plain_text=new_txt)
+                                self._mark_document_dirty(f_res)
                 except Exception as ex:
                     self.logger.error("Search", f"Failed replacing in {fpath}: {ex}")
 
@@ -9094,7 +9384,8 @@ class MisoraApp(tk.Tk):
     def on_undo(self) -> None:
         """Undo the most recent operation from MasterUndoJournal (Rule 13, Part B.6)."""
         self._commit_widget_edit()
-        op = self.undo_journal.pop_undo()
+        cur_fp = str(self.current_file_path) if self.current_file_path else None
+        op = self.undo_journal.pop_undo(cur_fp)
         if not op:
             self.lbl_status.config(text="Nothing to undo.")
             return
@@ -9104,13 +9395,15 @@ class MisoraApp(tk.Tk):
         self._sync_clean_view_to_current_box()
         self._evaluate_checkpoints_for_op(op)
         self._dirty_state_changed()
+        self._sync_edit_menu_states()
         self.lbl_status.config(text=f"Undid: {op.label}")
         self.logger.info("Edit", f"Undid operation: {op.label}")
 
     def on_redo(self) -> None:
         """Redo the most recent undone operation from MasterUndoJournal (Rule 13, Part B.6)."""
         self._commit_widget_edit()
-        op = self.undo_journal.pop_redo()
+        cur_fp = str(self.current_file_path) if self.current_file_path else None
+        op = self.undo_journal.pop_redo(cur_fp)
         if not op:
             self.lbl_status.config(text="Nothing to redo.")
             return
@@ -9120,6 +9413,7 @@ class MisoraApp(tk.Tk):
         self._sync_clean_view_to_current_box()
         self._evaluate_checkpoints_for_op(op)
         self._dirty_state_changed()
+        self._sync_edit_menu_states()
         self.lbl_status.config(text=f"Redid: {op.label}")
         self.logger.info("Edit", f"Redid operation: {op.label}")
 
@@ -9194,13 +9488,37 @@ class MisoraApp(tk.Tk):
             if refresh_ui:
                 self._update_views()
         elif isinstance(delta, BulkFileDelta):
-            for fpath_str, old_tx, new_tx in delta.per_file:
-                fp = Path(fpath_str)
-                text_to_set = old_tx if reverse else new_tx
-                try:
-                    fp.write_text(text_to_set, encoding="utf-8")
-                except Exception as ex:
-                    self.logger.error("File I/O", f"Failed applying bulk delta to {fp}: {ex}")
+            applied_files: List[Tuple[Path, str]] = []
+            try:
+                for fpath_str, old_tx, new_tx in delta.per_file:
+                    fp = Path(fpath_str).resolve()
+                    text_to_set = old_tx if reverse else new_tx
+                    prev_text = new_tx if reverse else old_tx
+                    write_atomic_utf8(fp, text_to_set, encoding="utf-8")
+                    applied_files.append((fp, prev_text))
+
+                    # S5: Synchronize in-memory cache and checkpoints if open
+                    if fp in self.open_documents:
+                        self.open_documents[fp]["plain_text"] = text_to_set
+                        self._record_saved_checkpoint(fp, None, plain_text=text_to_set)
+                        self._mark_document_dirty(fp)
+            except Exception as ex:
+                self.logger.error("File I/O", f"Failed applying bulk delta: {ex}")
+                # S5: Rollback applied files in reverse order to ensure all-or-nothing transaction safety
+                for rolled_fp, prev_tx in reversed(applied_files):
+                    try:
+                        write_atomic_utf8(rolled_fp, prev_tx, encoding="utf-8")
+                        if rolled_fp in self.open_documents:
+                            self.open_documents[rolled_fp]["plain_text"] = prev_tx
+                            self._record_saved_checkpoint(rolled_fp, None, plain_text=prev_tx)
+                    except Exception as rb_ex:
+                        self.logger.critical("File I/O", f"Rollback failed for '{rolled_fp}': {rb_ex}")
+                messagebox.showerror(
+                    "Undo/Redo Error",
+                    f"Failed applying bulk file changes:\n{ex}\n\nOperation was safely rolled back."
+                )
+                raise
+
             if self.current_file_path:
                 self.open_file(self.current_file_path, reload_from_disk=True)
 
@@ -9217,11 +9535,12 @@ class MisoraApp(tk.Tk):
         if not hasattr(self, "edit_menu"):
             return
         try:
-            can_u = self.undo_journal.can_undo()
-            u_lbl = self.undo_journal.undo_label()
+            cur_fp = str(self.current_file_path) if self.current_file_path else None
+            can_u = self.undo_journal.can_undo(cur_fp)
+            u_lbl = self.undo_journal.undo_label(cur_fp)
             self.edit_menu.entryconfigure(0, label=f"Undo {u_lbl}" if u_lbl else "Undo", state="normal" if can_u else "disabled")
-            can_r = self.undo_journal.can_redo()
-            r_lbl = self.undo_journal.redo_label()
+            can_r = self.undo_journal.can_redo(cur_fp)
+            r_lbl = self.undo_journal.redo_label(cur_fp)
             self.edit_menu.entryconfigure(1, label=f"Redo {r_lbl}" if r_lbl else "Redo", state="normal" if can_r else "disabled")
         except Exception:
             pass
@@ -9333,13 +9652,21 @@ class MisoraApp(tk.Tk):
                 if not self.on_save():
                     return False
 
+        closed_env = None
         if file_path in self.open_documents:
+            closed_env = self.open_documents[file_path].get("env") if isinstance(self.open_documents[file_path], dict) else None
             del self.open_documents[file_path]
             self.undo_journal.prune_file(str(file_path))
+            if closed_env is not None:
+                dispose_unity_env(closed_env)
 
         self._saved_state_checkpoints.pop(str(file_path), None)
 
         if file_path == self.current_file_path:
+            if self.current_unity_env is not None and (self.current_unity_env is closed_env or not self.open_documents):
+                dispose_unity_env(self.current_unity_env)
+                self.current_unity_env = None
+                self.current_text_obj = None
             if self.open_documents:
                 next_file = next(iter(self.open_documents))
                 self.open_file(next_file)
@@ -9351,7 +9678,11 @@ class MisoraApp(tk.Tk):
                 self.is_bundle_file = False
                 self.is_dirty = False
                 self._plain_text_content = ""
+                self._clear_card_registry()  # S4: prune stale card refs before view reset
+                if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
+                    self.undo_journal.set_active_file("")
                 self._update_views()
+                self._sync_edit_menu_states()
                 self.lbl_status.config(text="Ready. No files open.")
 
         self._refresh_opened_files_list()
@@ -9549,14 +9880,21 @@ class MisoraApp(tk.Tk):
             btn_frame = tk.Frame(dlg, bg=t["bg_panel"])
             btn_frame.pack(fill="x", padx=16, pady=(8, 12), side="bottom")
 
-            def _cancel():
-                dlg.destroy()
+            def _cancel(_e: Optional[tk.Event] = None) -> None:
+                safe_grab_release(dlg)
+                if dlg.winfo_exists():
+                    dlg.destroy()
 
-            def _ok():
+            def _ok() -> None:
                 confirmed[0] = True
                 if skip_var.get():
                     self._datamine_confirm_skip = True
-                dlg.destroy()
+                safe_grab_release(dlg)
+                if dlg.winfo_exists():
+                    dlg.destroy()
+
+            dlg.protocol("WM_DELETE_WINDOW", _cancel)
+            dlg.bind("<Escape>", _cancel)
 
             btn_cancel = ttk.Button(btn_frame, text="Cancel", style="TButton", command=_cancel)
             btn_cancel.pack(side="right", padx=4)
@@ -9845,6 +10183,11 @@ class MisoraApp(tk.Tk):
         tk.Label(r_log, text=str(DEBUG_LOG_PATH), font=("Consolas", 8), bg=t["bg_panel"], fg=fg_panel, anchor="w").pack(side="left", fill="x", expand=True)
 
         # Buttons at bottom
+        def _safe_close(_e: Optional[tk.Event] = None) -> None:
+            safe_grab_release(dlg)
+            if dlg.winfo_exists():
+                dlg.destroy()
+
         def _save_and_close():
             if var_use_default_bak.get():
                 self.backup_folder = None
@@ -9875,14 +10218,17 @@ class MisoraApp(tk.Tk):
             self._save_user_prefs()
             self.lbl_status.config(text="Updated paths and backup configuration.")
             self.show_toast("Paths and backup settings saved successfully!")
-            dlg.destroy()
+            _safe_close()
             messagebox.showinfo(
                 "Settings Saved",
                 "Paths, backups, and preferences have been saved successfully.",
                 parent=self,
             )
 
-        ttk.Button(btn_bar, text="Cancel", style="TButton", command=dlg.destroy).pack(side="right", padx=4)
+        dlg.protocol("WM_DELETE_WINDOW", _safe_close)
+        dlg.bind("<Escape>", _safe_close)
+
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=_safe_close).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Save & Apply", style="Pink.TButton", command=_save_and_close).pack(side="right", padx=4)
 
     # -------------------------------------------------------------------------
@@ -10451,7 +10797,7 @@ class ScriptPastePreviewDialog(tk.Toplevel):
             pass
 
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
-        self.bind("<Escape>", lambda e: self.on_cancel())
+        self.bind("<Escape>", lambda _e=None: self.on_cancel())
 
     def _build_ui(self, t: dict, fg_panel: str, fg_editor: str, total_doc_boxes: int, blocks: list, has_meta: bool) -> None:
         container = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=10)
@@ -10610,10 +10956,12 @@ class ScriptPastePreviewDialog(tk.Toplevel):
         self.apply_speakers = self.var_apply_speakers.get()
         self.apply_metadata = self.var_apply_metadata.get()
         self.confirmed = True
+        safe_grab_release(self)
         self.destroy()
 
     def on_cancel(self) -> None:
         self.confirmed = False
+        safe_grab_release(self)
         self.destroy()
 
 
@@ -10655,7 +11003,7 @@ class MTLSettingsDialog(tk.Toplevel):
         r_eng = tk.Frame(content, bg=t["bg_panel"])
         r_eng.pack(fill="x", pady=4)
         tk.Label(r_eng, text="Active Engine:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=fg_panel, width=18, anchor="w").pack(side="left")
-        self.var_engine = tk.StringVar(value=self.app.mtl_config.active_engine)
+        self.var_engine = tk.StringVar(master=self, value=self.app.mtl_config.active_engine)
         cb_engine = ttk.Combobox(r_eng, textvariable=self.var_engine, values=MTL_ENGINES, state="readonly", width=22)
         cb_engine.pack(side="left", padx=4)
 
@@ -10664,11 +11012,11 @@ class MTLSettingsDialog(tk.Toplevel):
         r_lang.pack(fill="x", pady=4)
         tk.Label(r_lang, text="Languages:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=fg_panel, width=18, anchor="w").pack(side="left")
         tk.Label(r_lang, text="From:", bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="left")
-        self.var_src = tk.StringVar(value=self.app.mtl_config.src_lang)
+        self.var_src = tk.StringVar(master=self, value=self.app.mtl_config.src_lang)
         ent_src = tk.Entry(r_lang, textvariable=self.var_src, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid", width=6)
         ent_src.pack(side="left", padx=(2, 10))
         tk.Label(r_lang, text="To:", bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="left")
-        self.var_tgt = tk.StringVar(value=self.app.mtl_config.tgt_lang)
+        self.var_tgt = tk.StringVar(master=self, value=self.app.mtl_config.tgt_lang)
         ent_tgt = tk.Entry(r_lang, textvariable=self.var_tgt, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid", width=6)
         ent_tgt.pack(side="left", padx=2)
         tk.Label(r_lang, text="(e.g. ja -> en)", font=("Segoe UI", 8), bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="left", padx=8)
@@ -10682,17 +11030,17 @@ class MTLSettingsDialog(tk.Toplevel):
         r_dp1 = tk.Frame(sec_deepl, bg=t["bg_panel"])
         r_dp1.pack(fill="x", pady=2)
         tk.Label(r_dp1, text="Auth Key:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
-        self.var_deepl_key = tk.StringVar(value=self.app.mtl_config.deepl_api_key)
+        self.var_deepl_key = tk.StringVar(master=self, value=self.app.mtl_config.deepl_api_key)
         self.ent_deepl_key = tk.Entry(r_dp1, textvariable=self.var_deepl_key, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid", show="*")
         self.ent_deepl_key.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.var_show_key = tk.BooleanVar(value=False)
+        self.var_show_key = tk.BooleanVar(master=self, value=False)
         def _toggle_key():
             self.ent_deepl_key.config(show="" if self.var_show_key.get() else "*")
         tk.Checkbutton(r_dp1, text="Show", variable=self.var_show_key, command=_toggle_key, bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(side="left")
 
         r_dp2 = tk.Frame(sec_deepl, bg=t["bg_panel"])
         r_dp2.pack(fill="x", pady=2)
-        self.var_deepl_pro = tk.BooleanVar(value=self.app.mtl_config.deepl_use_pro)
+        self.var_deepl_pro = tk.BooleanVar(master=self, value=self.app.mtl_config.deepl_use_pro)
         tk.Checkbutton(
             r_dp2,
             text="Use DeepL Pro subscription endpoint (api.deepl.com instead of api-free.deepl.com)",
@@ -10709,7 +11057,7 @@ class MTLSettingsDialog(tk.Toplevel):
         r_loc = tk.Frame(sec_local, bg=t["bg_panel"])
         r_loc.pack(fill="x", pady=2)
         tk.Label(r_loc, text="Server URL:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
-        self.var_local_url = tk.StringVar(value=self.app.mtl_config.local_mtl_url)
+        self.var_local_url = tk.StringVar(master=self, value=self.app.mtl_config.local_mtl_url)
         ent_loc = tk.Entry(r_loc, textvariable=self.var_local_url, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid")
         ent_loc.pack(side="left", fill="x", expand=True)
         tk.Label(sec_local, text="Default Sugoi Toolkit: http://127.0.0.1:14366  |  LibreTranslate: http://127.0.0.1:5000/translate", font=("Segoe UI", 8), bg=t["bg_panel"], fg=t["fg_muted"]).pack(anchor="w", pady=(2, 0))
@@ -10721,19 +11069,19 @@ class MTLSettingsDialog(tk.Toplevel):
         r_llm1 = tk.Frame(sec_llm, bg=t["bg_panel"])
         r_llm1.pack(fill="x", pady=2)
         tk.Label(r_llm1, text="Base URL:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
-        self.var_llm_url = tk.StringVar(value=self.app.mtl_config.llm_base_url)
+        self.var_llm_url = tk.StringVar(master=self, value=self.app.mtl_config.llm_base_url)
         ent_llm_url = tk.Entry(r_llm1, textvariable=self.var_llm_url, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid")
         ent_llm_url.pack(side="left", fill="x", expand=True)
 
         r_llm2 = tk.Frame(sec_llm, bg=t["bg_panel"])
         r_llm2.pack(fill="x", pady=2)
         tk.Label(r_llm2, text="Model Name:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
-        self.var_llm_model = tk.StringVar(value=self.app.mtl_config.llm_model)
+        self.var_llm_model = tk.StringVar(master=self, value=self.app.mtl_config.llm_model)
         ent_llm_model = tk.Entry(r_llm2, textvariable=self.var_llm_model, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid", width=24)
         ent_llm_model.pack(side="left", padx=(0, 10))
 
         tk.Label(r_llm2, text="API Key (optional):", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel).pack(side="left")
-        self.var_llm_key = tk.StringVar(value=self.app.mtl_config.llm_api_key)
+        self.var_llm_key = tk.StringVar(master=self, value=self.app.mtl_config.llm_api_key)
         ent_llm_key = tk.Entry(r_llm2, textvariable=self.var_llm_key, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid", show="*")
         ent_llm_key.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
@@ -10741,16 +11089,16 @@ class MTLSettingsDialog(tk.Toplevel):
         sec_opt = tk.Frame(content, bg=t["bg_panel"])
         sec_opt.pack(fill="x", pady=6)
 
-        self.var_protect = tk.BooleanVar(value=self.app.mtl_config.protect_tags)
+        self.var_protect = tk.BooleanVar(master=self, value=self.app.mtl_config.protect_tags)
         tk.Checkbutton(sec_opt, text="Shield NGUI tags, Ruby tags & {playername} during translation", variable=self.var_protect, bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(anchor="w")
 
-        self.var_xuat_cache = tk.BooleanVar(value=self.app.mtl_config.use_xuat_cache)
+        self.var_xuat_cache = tk.BooleanVar(master=self, value=self.app.mtl_config.use_xuat_cache)
         tk.Checkbutton(sec_opt, text="Use loaded XUAT translation dictionary as instant offline lookup", variable=self.var_xuat_cache, bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(anchor="w")
 
         r_to = tk.Frame(sec_opt, bg=t["bg_panel"])
         r_to.pack(fill="x", pady=2)
         tk.Label(r_to, text="Timeout (sec):", bg=t["bg_panel"], fg=fg_panel).pack(side="left")
-        self.var_timeout = tk.DoubleVar(value=self.app.mtl_config.timeout_sec)
+        self.var_timeout = tk.DoubleVar(master=self, value=self.app.mtl_config.timeout_sec)
         sp_to = ttk.Spinbox(r_to, from_=3.0, to=60.0, increment=1.0, textvariable=self.var_timeout, width=6)
         sp_to.pack(side="left", padx=6)
 
@@ -10768,10 +11116,17 @@ class MTLSettingsDialog(tk.Toplevel):
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
         btn_bar.pack(fill="x", side="bottom")
 
-        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self.destroy).pack(side="right", padx=4)
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.bind("<Escape>", lambda _e=None: self._on_cancel())
+
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_cancel).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Save & Apply", style="Pink.TButton", command=self._on_save).pack(side="right", padx=4)
 
         ttk.Button(btn_bar, text="AI Prompt Settings...", style="Small.TButton", command=self._open_ai_prompt).pack(side="left")
+
+    def _on_cancel(self) -> None:
+        safe_grab_release(self)
+        self.destroy()
 
     def _open_ai_prompt(self):
         self.app.on_open_ai_prompt_settings()
@@ -10819,6 +11174,7 @@ class MTLSettingsDialog(tk.Toplevel):
         self.app.mtl_config = self._get_draft_config()
         self.app._save_user_prefs()
         self.app.show_toast(f"✓ Saved MTL preferences ({self.app.mtl_config.active_engine})")
+        safe_grab_release(self)
         self.destroy()
         messagebox.showinfo(
             "Settings Saved",
@@ -10872,7 +11228,7 @@ class AIPromptSettingsDialog(tk.Toplevel):
         opts_frame = tk.Frame(content, bg=t["bg_panel"])
         opts_frame.pack(fill="x", pady=4)
 
-        self.var_include_hdr = tk.BooleanVar(value=self.app.mtl_config.ai_prompt_include_header)
+        self.var_include_hdr = tk.BooleanVar(master=self, value=self.app.mtl_config.ai_prompt_include_header)
         tk.Checkbutton(
             opts_frame,
             text="Include Prompt Header & Rules when copying script",
@@ -10883,7 +11239,7 @@ class AIPromptSettingsDialog(tk.Toplevel):
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w")
 
-        self.var_include_spk = tk.BooleanVar(value=self.app.mtl_config.ai_prompt_include_speaker)
+        self.var_include_spk = tk.BooleanVar(master=self, value=self.app.mtl_config.ai_prompt_include_speaker)
         tk.Checkbutton(
             opts_frame,
             text="Include Speaker Names in Box delimiters (=== [BOX:0|Speaker:コッコロ] ===)",
@@ -10920,11 +11276,18 @@ class AIPromptSettingsDialog(tk.Toplevel):
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
         btn_bar.pack(fill="x", side="bottom")
 
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.bind("<Escape>", lambda _e=None: self._on_cancel())
+
         ttk.Button(btn_bar, text="Reset to Recommended Default", style="Small.TButton", command=self._reset_default).pack(side="left")
         ttk.Button(btn_bar, text="📋 Copy Script with Prompt Now", style="Small.TButton", command=self._copy_prompt_now).pack(side="left", padx=8)
 
-        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self.destroy).pack(side="right", padx=4)
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_cancel).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Save & Close", style="Pink.TButton", command=self._save_and_close).pack(side="right", padx=4)
+
+    def _on_cancel(self) -> None:
+        safe_grab_release(self)
+        self.destroy()
 
     def _reset_default(self):
         self.txt_prompt.delete("1.0", tk.END)
@@ -10943,6 +11306,7 @@ class AIPromptSettingsDialog(tk.Toplevel):
     def _save_and_close(self):
         self._apply_settings_to_app()
         self.app.show_toast("✓ Saved AI prompt configuration")
+        safe_grab_release(self)
         self.destroy()
         messagebox.showinfo(
             "Settings Saved",
@@ -11008,7 +11372,7 @@ class TranslatorAssistantDialog(tk.Toplevel):
         self.btn_pin.pack(side="right", padx=(4, 0))
 
         # Engine selector on right
-        self.var_engine = tk.StringVar(value=self.app.mtl_config.active_engine)
+        self.var_engine = tk.StringVar(master=self, value=self.app.mtl_config.active_engine)
         cb = ttk.Combobox(top_bar, textvariable=self.var_engine, values=MTL_ENGINES, state="readonly", width=14)
         cb.pack(side="right", padx=(4, 0))
         cb.bind("<<ComboboxSelected>>", self._on_engine_change)
@@ -11063,7 +11427,7 @@ class TranslatorAssistantDialog(tk.Toplevel):
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=10)
         btn_bar.pack(fill="x", side="bottom")
 
-        ttk.Button(btn_bar, text="Close", style="TButton", command=self.destroy).pack(side="right", padx=4)
+        ttk.Button(btn_bar, text="Close", style="TButton", command=self._on_close).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Copy Translation", style="Small.TButton", command=self._on_copy).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Apply & Next (Alt+S)", style="TButton", command=self._on_apply_and_next).pack(side="right", padx=4)
         ttk.Button(btn_bar, text="Apply to Box (Ctrl+Enter)", style="Pink.TButton", command=self._on_apply).pack(side="right", padx=4)
@@ -11071,6 +11435,7 @@ class TranslatorAssistantDialog(tk.Toplevel):
         ttk.Button(btn_bar, text="Configure Engines...", style="Small.TButton", command=self.app.on_open_mtl_settings).pack(side="left")
 
         # Key bindings
+        self.bind("<Escape>", lambda _e=None: self._on_close())
         self.bind("<F8>", lambda e: self._on_translate())
         self.bind("<Control-Return>", lambda e: self._on_apply())
         self.bind("<Alt-Left>", lambda e: self._on_prev())
@@ -11090,7 +11455,9 @@ class TranslatorAssistantDialog(tk.Toplevel):
 
     def _on_close(self):
         self.app._translator_dialog = None
-        self.destroy()
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
 
     def _on_engine_change(self, _event=None):
         self.app.mtl_config.active_engine = self.var_engine.get()
@@ -11288,6 +11655,7 @@ class BatchTranslateDialog(tk.Toplevel):
 
         self._cancelled = False
         self._is_running = False
+        self.worker_queue: queue.Queue = queue.Queue()
 
         content = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
         content.pack(fill="both", expand=True)
@@ -11298,7 +11666,7 @@ class BatchTranslateDialog(tk.Toplevel):
         r_eng = tk.Frame(content, bg=t["bg_panel"])
         r_eng.pack(fill="x", pady=4)
         tk.Label(r_eng, text="Translation Engine:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=fg_panel, width=18, anchor="w").pack(side="left")
-        self.var_engine = tk.StringVar(value=self.app.mtl_config.active_engine)
+        self.var_engine = tk.StringVar(master=self, value=self.app.mtl_config.active_engine)
         cb_eng = ttk.Combobox(r_eng, textvariable=self.var_engine, values=MTL_ENGINES, state="readonly", width=18)
         cb_eng.pack(side="left")
 
@@ -11306,7 +11674,7 @@ class BatchTranslateDialog(tk.Toplevel):
         sec_scope = tk.LabelFrame(content, text="Scope & Filter", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["misora_pink"], padx=10, pady=6)
         sec_scope.pack(fill="x", pady=6)
 
-        self.var_scope = tk.StringVar(value="untranslated")
+        self.var_scope = tk.StringVar(master=self, value="untranslated")
         tk.Radiobutton(sec_scope, text="Untranslated Only (Contains Japanese characters)", variable=self.var_scope, value="untranslated", bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(anchor="w")
         tk.Radiobutton(sec_scope, text="All Boxes in Story", variable=self.var_scope, value="all", bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(anchor="w")
         tk.Radiobutton(sec_scope, text=f"From Current Box ({self.app.current_box_idx + 1}) to End", variable=self.var_scope, value="from_current", bg=t["bg_panel"], fg=fg_panel, selectcolor=t["bg_dark"]).pack(anchor="w")
@@ -11315,7 +11683,7 @@ class BatchTranslateDialog(tk.Toplevel):
         r_del = tk.Frame(content, bg=t["bg_panel"])
         r_del.pack(fill="x", pady=4)
         tk.Label(r_del, text="Delay between requests (sec):", bg=t["bg_panel"], fg=fg_panel).pack(side="left")
-        self.var_delay = tk.DoubleVar(value=0.3)
+        self.var_delay = tk.DoubleVar(master=self, value=0.3)
         sp_del = ttk.Spinbox(r_del, from_=0.0, to=5.0, increment=0.1, textvariable=self.var_delay, width=6)
         sp_del.pack(side="left", padx=6)
 
@@ -11329,6 +11697,9 @@ class BatchTranslateDialog(tk.Toplevel):
         # Bottom Buttons
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
         btn_bar.pack(fill="x", side="bottom")
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
 
         self.btn_close = ttk.Button(btn_bar, text="Close", style="TButton", command=self._on_close)
         self.btn_close.pack(side="right", padx=4)
@@ -11345,7 +11716,18 @@ class BatchTranslateDialog(tk.Toplevel):
     def _on_close(self):
         if self._is_running:
             self._cancelled = True
-        self.destroy()
+            self._is_running = False
+            try:
+                self.app.undo_journal.end_batch()
+            except Exception:
+                pass
+            if self.app.current_file_path:
+                self.app._mark_document_dirty(self.app.current_file_path)
+                self.app._dirty_state_changed()
+                self.app._update_views()
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
 
     def _start_batch(self):
         doc = self.app.current_doc
@@ -11383,69 +11765,113 @@ class BatchTranslateDialog(tk.Toplevel):
         self.btn_start.config(state="disabled")
         self.progress.config(maximum=len(targets), value=0)
 
+        # Drain any stale messages from queue
+        while not self.worker_queue.empty():
+            try:
+                self.worker_queue.get_nowait()
+            except queue.Empty:
+                break
+
         cfg = MTLConfig.from_dict(self.app.mtl_config.to_dict())
         cfg.active_engine = self.var_engine.get()
         delay = float(self.var_delay.get())
         engine = MTLEngine(cfg)
+        xuat_cache = getattr(self.app, "xuat_entries", None)
+
+        # Snapshot target box data on UI thread (Rule 15)
+        target_inputs = [
+            (b_idx, doc.boxes[b_idx].speaker, doc.boxes[b_idx].clean_text)
+            for b_idx in targets
+        ]
+
+        # Begin undo batch on UI thread before worker thread starts
+        self.app.undo_journal.begin_batch(f"Batch Translate ({len(targets)} boxes)")
 
         def worker():
-            self.app.undo_journal.begin_batch(f"Batch Translate ({len(targets)} boxes)")
             translated_count = 0
+            try:
+                for step, (b_idx, spk, raw_text) in enumerate(target_inputs):
+                    if self._cancelled:
+                        break
+                    raw_clean = raw_text.strip()
+                    if not raw_clean:
+                        continue
+                    try:
+                        res = engine.translate(raw_clean, config=cfg, xuat_cache=xuat_cache)
+                        translated_count += 1
+                        self.worker_queue.put(("progress", step + 1, b_idx, spk, raw_text, res))
+                    except Exception as exc:
+                        self.worker_queue.put(("error", step + 1, b_idx, str(exc)))
 
-            for step, b_idx in enumerate(targets):
-                if self._cancelled:
-                    break
-                box = doc.boxes[b_idx]
-                raw_text = box.clean_text.strip()
-                if not raw_text:
-                    continue
-
-                def update_prog(idx=step + 1, box_num=b_idx + 1):
-                    if self.winfo_exists():
-                        self.progress.config(value=idx)
-                        self.lbl_status.config(text=f"Translating Box {box_num} ({idx} / {len(targets)})...")
-                self.after_idle(update_prog)
-
-                try:
-                    res = engine.translate(raw_text, config=cfg, xuat_cache=getattr(self.app, "xuat_entries", None))
-                    self.app.undo_journal.record(
-                        BoxEditDelta(
-                            box_index=b_idx,
-                            old_speaker=box.speaker,
-                            new_speaker=box.speaker,
-                            old_text=box.clean_text,
-                            new_text=res,
-                            file_path=str(self.app.current_file_path) if self.app.current_file_path else "",
-                        )
-                    )
-                    doc.inject_box(b_idx, box.speaker, res)
-                    self.app._modified_boxes.add(b_idx)
-                    translated_count += 1
-                except Exception as exc:
-                    self.app.logger.warning("MTL", f"Batch translate failed on box {b_idx}: {exc}")
-
-                if delay > 0 and step < len(targets) - 1:
-                    time.sleep(delay)
-
-            self.app.undo_journal.end_batch()
-            self.app._mark_document_dirty(self.app.current_file_path)
-
-            def finish():
-                if self.winfo_exists():
-                    self._is_running = False
-                    self.btn_start.config(state="normal")
-                    stat_txt = f"Completed: {translated_count} boxes translated."
-                    toast_txt = f"✓ Batch translated {translated_count} boxes"
-                    if skipped_locked > 0:
-                        stat_txt += f" ({skipped_locked} locked boxes preserved)"
-                        toast_txt += f" ({skipped_locked} locked boxes preserved)"
-                    self.lbl_status.config(text=stat_txt)
-                    self.app._dirty_state_changed()
-                    self.app._update_views()
-                    self.app.show_toast(toast_txt)
-            self.after_idle(finish)
+                    if delay > 0 and step < len(target_inputs) - 1:
+                        time.sleep(delay)
+            finally:
+                self.worker_queue.put(("done", translated_count, skipped_locked))
 
         threading.Thread(target=worker, daemon=True).start()
+        self.after(50, self._poll_worker_queue)
+
+    def _poll_worker_queue(self):
+        if not self.winfo_exists():
+            return
+        done_received = False
+        final_count = 0
+        final_skipped = 0
+        try:
+            while True:
+                msg = self.worker_queue.get_nowait()
+                kind = msg[0]
+                if kind == "progress":
+                    _, step, b_idx, spk, old_tx, new_tx = msg
+                    if self.winfo_exists():
+                        self.progress.config(value=step)
+                        self.lbl_status.config(text=f"Translating Box {b_idx + 1} ({step} / {self.progress['maximum']})...")
+                    # Apply on main UI thread (Rule 15)
+                    doc = self.app.current_doc
+                    if doc and 0 <= b_idx < len(doc.boxes):
+                        self.app.undo_journal.record(
+                            BoxEditDelta(
+                                box_index=b_idx,
+                                old_speaker=spk,
+                                new_speaker=spk,
+                                old_text=old_tx,
+                                new_text=new_tx,
+                                file_path=str(self.app.current_file_path or ""),
+                            )
+                        )
+                        doc.inject_box(b_idx, spk, new_tx)
+                        self.app._modified_boxes.add(b_idx)
+                elif kind == "error":
+                    _, step, b_idx, err_str = msg
+                    self.app.logger.warning("MTL", f"Batch translate failed on box {b_idx}: {err_str}")
+                elif kind == "done":
+                    _, final_count, final_skipped = msg
+                    done_received = True
+                    break
+        except queue.Empty:
+            pass
+
+        if done_received:
+            self._is_running = False
+            try:
+                self.app.undo_journal.end_batch()
+            except Exception:
+                pass
+            if self.app.current_file_path:
+                self.app._mark_document_dirty(self.app.current_file_path)
+            if self.winfo_exists():
+                self.btn_start.config(state="normal")
+                stat_txt = f"Completed: {final_count} boxes translated."
+                toast_txt = f"✓ Batch translated {final_count} boxes"
+                if final_skipped > 0:
+                    stat_txt += f" ({final_skipped} locked boxes preserved)"
+                    toast_txt += f" ({final_skipped} locked boxes preserved)"
+                self.lbl_status.config(text=stat_txt)
+                self.app._dirty_state_changed()
+                self.app._update_views()
+                self.app.show_toast(toast_txt)
+        elif self._is_running:
+            self.after(50, self._poll_worker_queue)
 
 
 def main():

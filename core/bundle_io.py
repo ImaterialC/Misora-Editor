@@ -46,6 +46,45 @@ class BundleIOError(Exception):
     pass
 
 
+def dispose_unity_env(env: Any) -> None:
+    """Explicitly break circular reference cycles and release UnityPy Environment resources (S8b-2)."""
+    if env is None:
+        return
+    try:
+        if hasattr(env, "files") and isinstance(env.files, dict):
+            for f in list(env.files.values()):
+                try:
+                    if hasattr(f, "files") and isinstance(f.files, dict):
+                        for sf in list(f.files.values()):
+                            if hasattr(sf, "objects") and isinstance(sf.objects, dict):
+                                sf.objects.clear()
+                            if hasattr(sf, "reader"):
+                                sf.reader = None
+                            if hasattr(sf, "environment"):
+                                sf.environment = None
+                            if hasattr(sf, "parent"):
+                                sf.parent = None
+                        f.files.clear()
+                    if hasattr(f, "environment"):
+                        f.environment = None
+                    if hasattr(f, "parent"):
+                        f.parent = None
+                except Exception:
+                    pass
+            env.files.clear()
+        if hasattr(env, "assets") and isinstance(env.assets, (list, dict)):
+            if hasattr(env.assets, "clear"):
+                env.assets.clear()
+        if hasattr(env, "cabs") and isinstance(env.cabs, dict):
+            env.cabs.clear()
+        if hasattr(env, "container") and isinstance(env.container, dict):
+            env.container.clear()
+        if hasattr(env, "file"):
+            env.file = None
+    except Exception:
+        pass
+
+
 def _script_attr_of(asset_data: Any) -> Tuple[str, Union[str, bytes]]:
     """Determine the text/script attribute name on a TextAsset."""
     for attr in ("m_Script", "script", "text"):
@@ -155,31 +194,34 @@ def save_bundle_story(
                 # Reopen tmp bytes and verify exact target asset & object count
                 check_tmp_bytes = tmp_path.read_bytes()
                 env_check = get_unitypy().load(check_tmp_bytes)
-                target_in_check = None
+                try:
+                    target_in_check = None
 
-                for o in env_check.objects:
-                    if o.type.name == "TextAsset":
-                        if target_path_id is not None and getattr(o, "path_id", None) == target_path_id:
-                            target_in_check = o
-                            break
-                        elif getattr(o.read(), "m_Name", "") == target_name:
-                            target_in_check = o
-                            break
+                    for o in env_check.objects:
+                        if o.type.name == "TextAsset":
+                            if target_path_id is not None and getattr(o, "path_id", None) == target_path_id:
+                                target_in_check = o
+                                break
+                            elif getattr(o.read(), "m_Name", "") == target_name:
+                                target_in_check = o
+                                break
 
-                if not target_in_check:
-                    raise BundleIOError("Verification failed: Target TextAsset not found in repacked bundle.")
+                    if not target_in_check:
+                        raise BundleIOError("Verification failed: Target TextAsset not found in repacked bundle.")
 
-                check_bytes = extract_raw_story_bytes(target_in_check)
-                if check_bytes != new_data:
-                    raise BundleIOError("Verification failed: Repacked bytes do not match expected binary output.")
+                    check_bytes = extract_raw_story_bytes(target_in_check)
+                    if check_bytes != new_data:
+                        raise BundleIOError("Verification failed: Repacked bytes do not match expected binary output.")
 
-                if len(list(env_check.objects)) != source_obj_count:
-                    raise BundleIOError(
-                        f"Verification failed: Object count mismatch ({len(list(env_check.objects))} != {source_obj_count})."
-                    )
+                    if len(list(env_check.objects)) != source_obj_count:
+                        raise BundleIOError(
+                            f"Verification failed: Object count mismatch ({len(list(env_check.objects))} != {source_obj_count})."
+                        )
 
-                success = True
-                break
+                    success = True
+                    break
+                finally:
+                    dispose_unity_env(env_check)
             except Exception as ex:
                 last_err = str(ex)
 

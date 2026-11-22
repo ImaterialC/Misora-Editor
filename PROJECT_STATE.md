@@ -105,6 +105,190 @@ This test design issue is owned by a future Phase 3 test hygiene slice.
   - `py -3.12 -m unittest discover -s tests -v`: 119 tests run, 118 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips.
 - Handoff note: S3 (`close_file()` abort on dirty cancel, `_on_app_exit()` Save-All loop, atomic writer) is now unblocked.
 
+### S3 Safe Document Close & Atomic Persistence (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- Module-level helper `write_atomic_utf8(path, content, encoding="utf-8")` introduces robust atomic write pattern: same-directory `.tmp` write, 5-attempt bounded exponential backoff on Windows file sharing violations (`PermissionError` / `OSError`), and cleanup in `finally`.
+- `on_save()` atomic persistence: Replaced direct, non-atomic `Path.write_text()` calls across both plain-text scripts and v2 story scripts (`to_v2_text()`) with `write_atomic_utf8()`, resolving data-loss and file corruption risks during unexpected shutdown.
+- Central active widget flush helper `_flush_active_widget() -> bool` extracted and shared between `open_file()`, `close_file()`, and `_on_app_exit()`, ensuring uncommitted keystrokes across dialogue cards, continuous stream, or Box 0 synopsis are reliably committed before dirty evaluation or close.
+- Safe `close_file(file_path) -> bool` contract:
+  - Aborts immediately and returns `False` if user clicks Cancel on unsaved changes prompt (`messagebox.askyesnocancel`).
+  - Aborts and returns `False` if `on_save()` fails during close, preserving document in `open_documents` and preventing memory/data loss.
+  - Returns `True` and cleanly removes document from `open_documents`, prunes `self.undo_journal`, and purges `_saved_state_checkpoints` entry upon successful close or user-confirmed Discard.
+  - Propagates cancellation cleanly to `close_all_files()`, `close_others()`, and `close_all_unmodified()`.
+- Complete multi-document `_on_app_exit()` Save-All loop:
+  - Evaluates all open documents for dirty status after flushing active widget.
+  - Prompts per-dirty-file (`messagebox.askyesnocancel`) allowing granular Save/Discard/Cancel decisions.
+  - Aborts application termination if user chooses Cancel on any document or if `on_save()` fails.
+  - Saves user preferences and destroys app cleanly only when all dirty documents have been successfully resolved or discarded.
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s3_document_close -v`: 16/16 pass (17.3s).
+  - `py -3.12 -m unittest tests.test_s2_dirty_contract -v`: 12/12 pass (17.9s).
+  - `py -3.12 -m unittest tests.test_s1_open_file_safety -v`: 7/7 pass (10.2s).
+  - `py -3.12 -m unittest tests.test_phase2_required -v`: 13/13 pass (31.8s).
+  - `py -3.12 -m unittest discover -s tests -v`: 135 tests run, 134 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips.
+- Handoff note: S4 (View/Model Synchronization & Widget Caret Decoupling) is now unblocked.
+
+### S4 View/Model Synchronization & Widget Caret Decoupling (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **STALE-CARD-REGISTRY (CONFIRMED → RESOLVED)**: `_card_widgets` now pruned in all code paths where the document that produced the cards is unloaded:
+  - New `_clear_card_registry()` helper: iterates `_card_widgets`, destroys any live card frames with `winfo_exists()` guard, then calls `_card_widgets.clear()`. Safe to call with already-destroyed widgets.
+  - `close_file()` empty-state branch (no open documents remain): calls `_clear_card_registry()` before `_update_views()`.
+  - `_update_views()` `not self.current_doc` branch (plain-text switch or empty state): calls `_clear_card_registry()` as first action before resetting any other view state.
+  - `_render_continuous_view()` already called `self._card_widgets.clear()` at render start (inside `try:`) for the bundle→bundle case — left unchanged (correct).
+- **Ribbon stale-widget guard**: New `_get_card_text_widget(box_idx) -> tk.Text` helper performs `winfo_exists()` check on the registered card Text widget before returning it, falling back to `txt_dialogue` on stale or absent entries. Used in `on_text_cut()`, `on_text_copy()`, `on_text_paste()` replacing the unguarded `_card_widgets[idx].get("txt", self.txt_dialogue)` pattern.
+- **Re-entrancy guard verified**: `_render_continuous_view()` already wraps `_suppress_continuous_events = True` in `try/finally` — no code change required; invariant verified by test_06.
+- **Focus / caret safety verified**: `_focus_continuous_box()` already guards missing `target_idx` with `if target_idx in self._card_widgets` — no code change required; invariant verified by test_07/07b.
+- **Suppress-guard verified**: `_on_card_focus_in()` and `_on_card_text_edited()` already guard with `_suppress_continuous_events` — no code change required; invariants verified by test_08/08b.
+- **View toggle caret preservation verified**: `_on_toggle_continuous_view()` preserves `current_box_idx` on both directions — no code change required; verified by test_03/04.
+- New test file: `tests/test_s4_view_model_sync.py` — 14 tests (8 planned + 6 parametric sub-cases).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s4_view_model_sync -v`: 14/14 pass (0.5s).
+  - `py -3.12 -m unittest discover -s tests -v`: 149 tests run, 148 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (194.3s).
+- Handoff note: S5 (Multi-File Replace-All & BulkFileDelta Disk Safety) is complete.
+
+### S5 Multi-File Replace-All & BulkFileDelta Disk Safety (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **BULK-DELTA-NONATOMIC (CONFIRMED → RESOLVED)**:
+  - Replaced raw, non-atomic `fpath.write_text()` in `on_replace_all()` and `fp.write_text()` in `_apply_delta()` (`BulkFileDelta` branch) with shared `write_atomic_utf8()` helper (same-dir `.tmp` -> bounded Windows retry `os.replace()`), eliminating risk of truncated/corrupted files during unexpected termination or sharing violations.
+- **Transaction Rollback**:
+  - Implemented all-or-nothing transactional tracking in `_apply_delta(BulkFileDelta)`: if an error occurs while applying changes to any file in a batch, all previously applied files in that batch are automatically rolled back to their prior state via `write_atomic_utf8()`, alerting the user with an error dialog and re-raising to maintain journal consistency.
+- **In-Memory Cache & Checkpoint Synchronization**:
+  - Both `on_replace_all()` and `_apply_delta(BulkFileDelta)` synchronize `open_documents[fp]["plain_text"]` and `_saved_state_checkpoints` for all open files modified in the batch, preventing subsequent tab switches or saves from overwriting disk modifications with stale cache data.
+  - Enhanced `_evaluate_checkpoints_for_op(op)` to inspect `delta.per_file` for `BulkFileDelta`, accurately clearing dirty state when files are undone back to their checkpoint fingerprint.
+- New test file: `tests/test_s5_bulk_replace_safety.py` — 8 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s5_bulk_replace_safety -v`: 8/8 pass (0.3s).
+  - `py -3.12 -m unittest tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 62/62 pass (71.0s).
+  - `py -3.12 -m unittest discover -s tests -v`: 157 tests run, 156 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (224.1s).
+- Handoff note: S6 (Threading Architecture Decoupling - Rule 15) is complete.
+
+### S6 Threading Architecture Decoupling — Rule 15 (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **SEARCH-RACE (CONFIRMED → RESOLVED)**:
+  - `on_start_search()` captures an independent immutable snapshot of every open in-memory `StoryDocument` on the UI thread before background worker thread delegation. Search iterations run strictly on detached copies, preventing concurrent editing, box additions, or box deletions on the UI thread from causing collection-mutation races.
+- **BatchTranslateDialog Queue Decoupling (Rule 15)**:
+  - Re-architected `BatchTranslateDialog.worker()` to eliminate direct mutations to `StoryDocument` and `MasterUndoJournal`, and eliminated cross-thread Tkinter calls (`self.after_idle`).
+  - Background worker thread only handles translation I/O (`engine.translate`), posting translation result and error tuples through `self.worker_queue = queue.Queue()`.
+  - Main UI thread polls the queue via `_poll_worker_queue()` (`self.after(50, ...)`), applying AST injections (`doc.inject_box`), recording undo deltas (`undo_journal.record`), and updating progress strictly on the main thread.
+  - Safe lifecycle management: `_on_close()` and `_start_batch()` guarantee matching `undo_journal.end_batch()` calls even upon cancellation or window close.
+- New test file: `tests/test_s6_threading_decoupling.py` — 8 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s6_threading_decoupling -v`: 8/8 pass (6.3s).
+  - `py -3.12 -m unittest tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 70/70 pass (67.4s).
+  - `py -3.12 -m unittest discover -s tests -v`: 165 tests run, 164 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (179.4s).
+- Handoff note: S7 (Per-File MasterUndoJournal Revision Rewrite & Speaker Commit Unification) is complete.
+
+### S7 Per-File MasterUndoJournal Revision Rewrite & Speaker Commit Unification (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Per-File MasterUndoJournal Revision Rewrite (F16 / Rule 13 / Rule 16)**:
+  - Re-architected `MasterUndoJournal` with internal `_FileJournalState` encapsulation: independent `undo_stack`, `redo_stack`, `revision`, and `saved_revision` per file path.
+  - Windows path normalization helper `_norm_path` ensures consistent case-insensitive mapping.
+  - `set_active_file()` synchronizes active document context from `open_file()` and `close_file()`.
+  - Calling `on_undo()` or `on_redo()` operates strictly on the active file's isolated journal stack; undoing in File B never switches to File A or clobbers File A's edits.
+  - Document close via `close_file()` calls `prune_file(file_path)` which completely purges that file's journal state, ensuring undo never silently reopens closed files (Rule 16).
+  - Edit menu states and labels (`can_undo()`, `undo_label()`, `can_redo()`, `redo_label()`) dynamically synchronize to the active file.
+  - Full backward-compatibility: zero-argument calls (`pop_undo()`, `can_undo()`, `is_clean()`, `mark_saved()`, `undo_depth`, `redo_depth`) operate seamlessly on the active or default context.
+- **Central Speaker Edit Commit Unification (F20 / Rule 11)**:
+  - Eliminated the critical latent defect in `_commit_widget_edit()` where the speaker branch called `inject_box(self.current_box_idx, new_sp, None)` (which raised `AttributeError: 'NoneType' object has no attribute 'rstrip'` on multi-segment boxes and corrupted binary record args on single-segment boxes).
+  - Introduced central helper `_commit_speaker_edit() -> bool` that resolves current dialogue text from the active view widget (`_card_widgets[idx]["txt"]`, `txt_dialogue`, or `box.clean_text`), always passing valid text to `inject_box`.
+  - Unified `_on_speaker_edited()`, `_commit_widget_edit(self.entry_speaker)`, and `entry_speaker` virtual events (`<<Cut>>`/`<<Paste>>`) to delegate to `_commit_speaker_edit()`.
+  - Added Box 0 protection (aborts immediately when `is_box0_active` is True) and true no-op `<KeyRelease>` guard (`old_sp == new_sp` returns `False` without marking dirty or recording deltas).
+- New test file: `tests/test_s7_undo_speaker_safety.py` — 10 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s7_undo_speaker_safety -v`: 10/10 pass (7.5s).
+  - `py -3.12 -m unittest tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 88/88 pass (90.9s).
+  - `py -3.12 -m unittest discover -s tests -v`: 175 tests run, 174 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (189.6s).
+- Handoff note: S8a (Dialog Architecture & Modal Grab Hardening) is complete.
+
+### S8a Dialog Architecture & Modal Grab Hardening (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Modal Grab Safety Helper (`safe_grab_release`)**:
+  - Implemented module-level `safe_grab_release(dialog)` helper guarded with `dialog and dialog.winfo_exists()` to safely call `dialog.grab_release()` inside a `try...except tk.TclError: pass` block.
+  - Safely handles `None`, destroyed widgets, and active grabs without raising exceptions, preventing Windows Tkinter orphan grab deadlocks.
+- **Audit & Hardening of All Modal Dialogs**:
+  - **`_on_dnd_settings_dialog`**: Added `_safe_close()`, wired `WM_DELETE_WINDOW` protocol, `<Escape>` binding, and grab release in save handler.
+  - **`_prompt_append_speaker_attribute`**: Added `_safe_close()`, wired `WM_DELETE_WINDOW`, `<Escape>`, and grab release on commit.
+  - **`on_insert_ruby`**: Added `_safe_close()`, wired `WM_DELETE_WINDOW`, `<Escape>`, grab release on insert, and aliased `_prompt_insert_ruby = on_insert_ruby`.
+  - **`on_launch_datamine`**: Wired `safe_grab_release(dlg)` in `_cancel()` and `_ok()`, wired `WM_DELETE_WINDOW`, and bound `<Escape>`.
+  - **`on_open_paths_dialog`**: Added `_safe_close()`, wired `WM_DELETE_WINDOW`, `<Escape>`, Cancel button, and grab release in `_save_and_close()`.
+  - **`ScriptPastePreviewDialog`**: Hardened `on_apply()` and `on_cancel()` with `safe_grab_release(self)`, wired `WM_DELETE_WINDOW` and `<Escape>`.
+  - **`MTLSettingsDialog`**:
+    - Replaced 13 unparented Tk variables with explicit `master=self` (`var_engine`, `var_src`, `var_tgt`, `var_deepl_key`, `var_show_key`, `var_deepl_pro`, `var_local_url`, `var_llm_url`, `var_llm_model`, `var_llm_key`, `var_protect`, `var_xuat_cache`, `var_timeout`) fulfilling Rule 3.
+    - Added `_on_cancel()`, wired `WM_DELETE_WINDOW`, `<Escape>`, Cancel button, and grab release in `_on_save()`.
+  - **`AIPromptSettingsDialog`**:
+    - Added explicit `master=self` to `var_include_hdr` and `var_include_spk` (Rule 3).
+    - Added `_on_cancel()`, wired `WM_DELETE_WINDOW`, `<Escape>`, Cancel button, and grab release in `_save_and_close()`.
+  - **`TranslatorAssistantDialog`**:
+    - Added explicit `master=self` to `var_engine` (Rule 3).
+    - Hardened `_on_close()` with `safe_grab_release(self)` and `winfo_exists()` guard; wired `<Escape>` and Close button.
+  - **`BatchTranslateDialog`**:
+    - Added explicit `master=self` to `var_engine`, `var_scope`, and `var_delay` (Rule 3).
+    - Hardened `_on_close()` to cancel background thread, cleanly end undo batch, and call `safe_grab_release(self)` before destruction.
+    - Wired `WM_DELETE_WINDOW` protocol and `<Escape>` binding.
+- New test file: `tests/test_s8a_dialog_grab_safety.py` — 10 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s8a_dialog_grab_safety -v`: 10/10 pass (10.8s).
+  - `py -3.12 -m unittest tests.test_s8a_dialog_grab_safety tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety -v`: 85/85 pass (43.9s).
+  - `py -3.12 -m unittest discover -s tests -v`: 185 tests run, 184 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (164.5s).
+- Handoff note: S8b-1 (Status-Bar & Toast Notification Manager) is complete.
+
+### S8b-1 Status-Bar & Toast Notification Manager (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Status Bar Management (`set_status`, `_reset_status`)**:
+  - Implemented `set_status(message, is_error=False, timeout_ms=None)` with `winfo_exists()` guards, cancelling existing timeout timers before updating text.
+  - Distinctive contrast error styling: `#d94862` (Crimson Alert) for errors vs `fg_muted` for normal status.
+  - Optional auto-reset timer restoring `lbl_status` to `_default_status_text` after `timeout_ms`.
+  - Added `_reset_status()` helper to safely restore default label text and normal styling.
+- **Toast Notification Architecture (`show_toast`, `_display_toast`, `_dismiss_toast`)**:
+  - Maintained 100% backward-compatibility for all existing `show_toast(message, ...)` callers across `misora.py`.
+  - Enabled status-bar synchronization by default (`status_bar=True`), mirroring toast notifications to the persistent status bar.
+  - Sequential FIFO toast queue (`_toast_queue = collections.deque()`) prevents rapid notifications from clobbering each other; accelerates duration if queue backlog > 2.
+  - Coalesces consecutive duplicate toast messages by resetting duration timer rather than bloating queue.
+  - Interactive click-to-dismiss (`<Button-1>`) immediately unmaps active toast and advances queue.
+  - Fixed geometric occlusion: positioned toast at `relx=1.0, rely=1.0, x=-16, y=-52, anchor="se"` floating ~12-16px cleanly above the action bar without obscuring `Save & Patch Bundle` or `Revert Box` buttons.
+- **Callback Exception Surfacing (Rule 28)**:
+  - Updated `report_callback_exception()` to surface both a status bar error (`set_status(f"Error: {val}", is_error=True)`) and a prominent error toast (`show_toast(f"Error: {val}", duration_ms=4000, is_accent=False, is_error=True, status_bar=False)`).
+- **Teardown & Timer Safety**:
+  - `destroy()` and `_on_root_destroy()` cancel `_toast_after_id` and `_status_after_id`, clear `_toast_queue`, destroy `_toast_widget`, and cancel all dangling `after()` jobs, eliminating Tcl teardown error `invalid command name "...hide" ("after" script)`.
+- New test file: `tests/test_s8b1_notification_manager.py` — 10 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s8b1_notification_manager -v`: 10/10 pass (11.5s).
+  - `py -3.12 -m unittest tests.test_s8b1_notification_manager tests.test_s8a_dialog_grab_safety tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 108/108 pass (75.6s).
+  - `py -3.12 -m unittest discover -s tests -v`: 195 tests run, 194 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (168.0s).
+- Handoff note: S8b-2 (Asset & Bundle Memory Leak Guards) is complete.
+
+### S8b-2 Asset & Bundle Memory Leak Guards (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **UnityPy Environment Cycle-Breaking Disposal (`dispose_unity_env`)**:
+  - Identified and resolved the critical multi-layered circular reference cycles in UnityPy (`Environment <-> BundleFile <-> SerializedFile <-> ObjectReader`) that previously prevented Python's reference counting from reclaiming loaded bundle buffers without cyclic GC.
+  - Implemented `dispose_unity_env(env)` in `core/bundle_io.py` (re-exported in `core/__init__.py`), explicitly clearing `env.files`, `env.assets`, `env.cabs`, `env.container`, nullifying `reader` buffers, and unlinking all cross-environment back-references.
+  - Verified with `weakref.ref(env)`: refcount drops to 0 immediately upon disposal, freeing memory buffers without delay.
+- **Search Engine & Replace-All Leak Prevention**:
+  - In `core/search_engine.py:search_file()`: Disposes the loaded `env` immediately after extracting the pure AST `StoryDocument`, preventing project searches across 100+ bundles from retaining megabytes of leaked environments in RAM.
+  - In `misora.py:on_replace_all()`: Wraps bundle modifications in `try...finally: dispose_unity_env(bundle_env)`, ensuring each matched bundle's environment is cleanly released as the replacement loop proceeds across folders.
+  - In `core/bundle_io.py:save_bundle_story()`: Wraps repacked verification check environment (`env_check`) in `try...finally: dispose_unity_env(env_check)`, preventing every save from leaking verification environments.
+- **Document Close & App Teardown Lifecycle Disposal**:
+  - In `misora.py:close_file()`: Retrieves `closed_env = self.open_documents[file_path].get("env")` and calls `dispose_unity_env(closed_env)` before dictionary deletion; clears and disposes `self.current_unity_env = None`.
+  - In `misora.py:destroy()`: Sweeps and disposes all remaining environments in `self.open_documents`, disposes `self.current_unity_env`, and calls `prune_icon_cache(self)`.
+- **Bounded Icon & PhotoImage Cache (`assets/icon.py`)**:
+  - Enforced `MAX_ICON_CACHE = 128` capacity bounding via FIFO eviction in `get_icon()`.
+  - Added `prune_icon_cache(root_widget=None)` helper to evict stale icons belonging to destroyed `tk.Toplevel` dialogs and purge unreferenced Tcl photo images.
+  - In `NguiColorPickerPopup._on_close()`: Resets `self.app._color_picker_win = None` and nullifies canvas photo attributes (`_sv_photo`, `_hue_photo`, `_grad_photo`).
+- New test file: `tests/test_s8b2_memory_guards.py` — 8 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s8b2_memory_guards -v`: 8/8 pass (10.7s).
+  - `py -3.12 -m unittest tests.test_s8b2_memory_guards tests.test_s8b1_notification_manager tests.test_s8a_dialog_grab_safety tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 116/116 pass (86.5s).
+  - `py -3.12 -m unittest discover -s tests -v`: 203 tests run, 202 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (192.1s).
+- Handoff note: S8b-3 (Encoding Detection & Strict Fallback Architecture) is now unblocked.
+
 ### Phase 5 New Deliverables (complete)
 - **`core/ngui_tags.py`** (5,760 bytes): Central single source of truth for NGUI rich-text patterns (bold, italic, underline, strikethrough, size, vertical hyphen gradients `[c0-c1]`, multiline ruby `[rub:...]` with `re.DOTALL`, placeholders `{playername}`, `{0}`..`{n}`). Utilities: `strip_tags()`, `get_rendered_length()`, `measure_line_lengths()`, `normalize_gradient_syntax()`, and `TagMasker`.
 - **`core/security.py`** (3,320 bytes): Windows DPAPI credential encryption (`protect_secret` / `unprotect_secret` with `dpapi:` prefix) and secret redaction (`redact_secret` for logs/UI).
@@ -255,19 +439,19 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **SIZE-RIBBON-NO-COMMIT** | RESOLVED | `misora.py:6374-6394` | Font size insertion routes through central commit and updates dirty state. Covered by `test_37`. | 2 |
 | **CONTINUOUS-RIBBON-TARGET-STALE** | RESOLVED | `misora.py` | Active card resolved dynamically by widget identity, preventing closure desync. | 2 |
 | **UNDO-STORM** | RESOLVED | `misora.py` | Batch undo applies all deltas to model first, then refreshes UI once in `finally`. | 2 |
-| **SEARCH-RACE** | CONFIRMED | `misora.py:7212-7218` | Search worker thread accesses live mutable `StoryDocument` references concurrently with UI edits. Pass immutable snapshots. | 2 |
+| **SEARCH-RACE** | RESOLVED | `misora.py` | UI thread snapshot isolation via `on_start_search()`; covered by `test_s6_threading_decoupling`. | 2 |
 | **CLIP-SHADOW** | RESOLVED | `misora.py` | If system clipboard differs from internal box snapshot text, internal snapshot is discarded. Covered by `test_35`. | 2 |
 | **FOLDER-DROP-EXTRA-IGNORED** | CONFIRMED | `misora.py:2189-2190` | Only the first folder in multi-folder DnD drops is opened; remainder ignored silently. Warn user or process all. | 2 |
 | **DEEPL-TEST-COST** | RESOLVED | `core/mtl_engine.py:299-316` | Connection test queries free `/v2/usage` status endpoint instead of billable `/v2/translate`. Covered by `test_phase5:test_04`. | 5 |
 | **CORE-IMPORT-COUPLING** | RESOLVED | `core/bundle_io.py:23-45`; `tests/test_phase3_performance_config.py:33-53` | `core` decoupled from `UnityPy` at import time via double-checked lazy load under lock; `import core` dropped from 1.03s to 0.14s. | 3 |
 | **CONFIG-RECOVERY-OVERWRITE** | RESOLVED | `misora.py:1456-1473`; `tests/test_phase3_performance_config.py:82-106` | Corrupted config preserved as `.bak_<timestamp>.json` recovery copy before using defaults. | 3 |
-| **STALE-CARD-REGISTRY** | CONFIRMED | `misora.py:6405-6419, 6436` | Switching to plain text returns before clearing `_card_widgets`, leaving destroyed widgets registered. Clean up cards before return. | 2 |
+| **STALE-CARD-REGISTRY** | RESOLVED | `misora.py` | `_card_widgets` cleared in `close_file()` empty-state and `_update_views()` plain-text path via `_clear_card_registry()`; `_get_card_text_widget()` guards ribbon targets with `winfo_exists()`. Covered by `test_s4_view_model_sync`. | 2 |
 | **GRADIENT-COMMA-EMITTER** | RESOLVED | `misora.py:1014, 4608` | Gradient insertion strictly emits hyphen syntax `[c0-c1]`. Comma syntax rejected by NGUI is avoided. | 2 |
 | **SPAN-NFKC-PER-CHAR** | CONFIRMED | `core/search_engine.py:88` | Per-token NFKC fails to compose Japanese dakuten/handakuten combining characters. Align with whole-string normalization. | 2 |
 | **UNDO-COALESCE-CROSS-SOURCE** | CONFIRMED | `core/undo_journal.py:115-130` | Coalescing checks only box and timing, merging ribbon cuts with typing. Add source tracking to deltas. | 2 |
 | **GENERIC-PLACEHOLDER-GAP** | RESOLVED | `core/ngui_tags.py:48-52` | Placeholders `{playername}` and all `{n}` placeholders shielded in translation and highlighted in preview. Covered by `test_phase5:test_01`. | 5 |
 | **LOGGER-SYNC-IO** | RESOLVED | `core/logger.py:27-145`; `tests/test_phase3_performance_config.py:54-81` | Asynchronous background worker queue for file logging disk I/O; clean flush and thread termination. | 3 |
-| **BULK-DELTA-NONATOMIC** | CONFIRMED | `misora.py:8040-8060` | Reverting bulk file undo writes files directly without `.tmp` atomic replacement. Wrap in atomic file replace helper. | 2 |
+| **BULK-DELTA-NONATOMIC** | RESOLVED | `misora.py` | Multi-file text replacement in `on_replace_all()` and undo/redo in `_apply_delta()` use `write_atomic_utf8()` with transaction rollback and `open_documents` cache sync. Covered by `test_s5_bulk_replace_safety`. | 2 |
 | **HARDCODED-PROJECT-PATH** | RESOLVED | `misora_config.json`; `tests/test_misora_ui_integration.py:34-45` | Committed config reset to empty defaults; UI integration tests isolated from root config. | 3 |
 | **PLAINTEXT-SAVE-ROUTING** | RESOLVED | `misora.py` | `on_save()` routes correctly between Plain Text (Page/Continuous) and Story Bundle AST. | 2 |
 
@@ -411,23 +595,55 @@ Tasks:
   - Plain-text cache content synchronization (`open_documents[path]["plain_text"]`).
   - Deterministic per-document saved-state checkpoints (`_saved_state_checkpoints`) with uncached fallback to `undo_journal.is_clean()`.
   - Explicit `on_save() -> bool` return value with outer `try...except`, secondary XUAT sync failure isolation (`_modified_boxes` retained, warning logged, returns `True`).
-- [ ] **S3 — Safe Document Close & Atomic Persistence**:
-  - `close_file()` aborts on Save/Discard/Cancel cancel.
-  - `_on_app_exit()` multi-document Save-All loop with cancellation support.
-  - Raw plain-text save (`F-GPT-04`) and shared `write_atomic_utf8()` helper.
-  - *(Now UNBLOCKED by S2 completion)*.
-- [ ] **S4 — View/Model Synchronization & Widget Caret Decoupling**: Centralize continuous/page view widget event synchronization, remove widget state dependencies.
-- [ ] **S5 — Multi-File Replace-All & BulkFileDelta Disk Safety**: Atomic file replacement and transaction rollbacks for multi-file bulk operations.
-- [ ] **S6 — Threading Architecture Decoupling (Rule 15)**:
-  - Redesign `BatchTranslateDialog.worker()` and search threads to communicate strictly via main-thread queues.
-  - Eliminate pre-existing Rule 15 violation where background threads mutate Tkinter or `UndoJournal` state directly.
-- [ ] **S7 — Per-File MasterUndoJournal Revision Rewrite (F16) & Speaker Commit Unification (F20)**:
-  - True per-file undo revisions with isolated journal stacks.
-  - Central speaker edit commit unification: address latent issue where `_commit_widget_edit()` speaker branch calls `inject_box(..., None)`.
-- [ ] **S8a — Dialog Architecture & Modal Grab Hardening**: Audit all Toplevel dialogs for explicit parent transients, grab releases, and window destruction safety.
-- [ ] **S8b-1 — Status-Bar & Toast Notification Manager**: Unified toast/status queue with safe dismissal and geometry tracking.
-- [ ] **S8b-2 — Asset & Bundle Memory Leak Guards**: Bounded asset caching, explicit UnityPy environment garbage collection, and texture buffer release.
-- [ ] **S8b-3 — Encoding Detection & Strict Fallback Architecture**: Deterministic BOM/encoding detection with strict error handling.
+- [x] **S3 — Safe Document Close & Atomic Persistence (2026-11-22)**:
+  - `close_file()` aborts on Save/Discard/Cancel cancel or save failure; returns explicit `bool`; prunes checkpoints.
+  - `_on_app_exit()` multi-document Save-All loop with cancellation and per-file prompt support.
+  - Raw plain-text and v2 story script saves unified under shared `write_atomic_utf8()` helper.
+  - Central active widget flush helper `_flush_active_widget() -> bool`.
+- [x] **S4 — View/Model Synchronization & Widget Caret Decoupling (2026-11-22)**:
+  - Pruned stale card widgets via `_clear_card_registry()` in `close_file()` empty-state and `_update_views()` plain-text switch (`STALE-CARD-REGISTRY` resolved).
+  - Hardened ribbon targets (`on_text_cut/copy/paste`) via `_get_card_text_widget()` with `winfo_exists()` guard and `txt_dialogue` fallback.
+  - Verified re-entrancy (`try/finally` in `_render_continuous_view`), caret preservation across view toggles, and suppress-guard invariants.
+- [x] **S5 — Multi-File Replace-All & BulkFileDelta Disk Safety (2026-11-22)**:
+  - Atomic file replacement via `write_atomic_utf8()` in `on_replace_all()` and `_apply_delta(BulkFileDelta)` (`BULK-DELTA-NONATOMIC` resolved).
+  - All-or-nothing transaction rollback in `_apply_delta(BulkFileDelta)` if any file fails mid-batch.
+  - In-memory `open_documents` cache & checkpoints synchronization for open files modified in bulk.
+  - Checkpoint evaluation for `BulkFileDelta` paths in `_evaluate_checkpoints_for_op()`.
+- [x] **S6 — Threading Architecture Decoupling (Rule 15) (2026-11-22)**:
+  - UI thread snapshot isolation in `on_start_search()` resolves `SEARCH-RACE`.
+  - Redesigned `BatchTranslateDialog.worker()` to communicate strictly via thread-safe `queue.Queue` with main-thread polling pump `_poll_worker_queue()`.
+  - Eliminated pre-existing Rule 15 violation where background threads mutate Tkinter or `UndoJournal` state directly.
+- [x] **S7 — Per-File MasterUndoJournal Revision Rewrite (F16) & Speaker Commit Unification (F20) (2026-11-22)**:
+  - Isolated per-file undo/redo stacks and independent per-file revision tracking (`_FileJournalState`).
+  - Active document synchronization on file open, switch, and close.
+  - Closed document journal purging via `prune_file()` prevents silent reopen on undo (Rule 16).
+  - Central speaker edit commit unification: `_commit_speaker_edit()` resolves valid text (never `None`), eliminating multi-segment crash risk.
+  - Speaker Box 0 protection and no-op `<KeyRelease>` guards.
+- [x] **S8a — Dialog Architecture & Modal Grab Hardening (2026-11-22)**:
+  - Added robust `safe_grab_release(dialog)` helper handling active grabs, destroyed widgets, and `None` arguments without throwing `TclError`.
+  - Audited and hardened all `tk.Toplevel` modal dialogs (`_on_dnd_settings_dialog`, `_prompt_append_speaker_attribute`, `on_insert_ruby`, `on_launch_datamine`, `on_open_paths_dialog`, `ScriptPastePreviewDialog`, `MTLSettingsDialog`, `AIPromptSettingsDialog`, `TranslatorAssistantDialog`, `BatchTranslateDialog`):
+    - All modal dialogs release grab cleanly via `safe_grab_release()` before `destroy()`.
+    - All modal dialogs register explicit `WM_DELETE_WINDOW` protocol handlers.
+    - All modal dialogs bind `<Escape>` with optional parameter default (`lambda _e=None: ...`) for keyboard dismissal and grab release.
+  - Enforced Tk variable ownership per Rule 3 (`master=self` / `master=dlg`) across all dialogs, validated via AST inspection in test suite.
+  - Hardened `BatchTranslateDialog` window close to abort background worker thread, end undo batch, and release modal grab.
+  - Covered by new test suite `tests/test_s8a_dialog_grab_safety.py` (10/10 PASS).
+- [x] **S8b-1 — Status-Bar & Toast Notification Manager (2026-11-22)**:
+  - Unified status/toast architecture with sequential FIFO queue (`_toast_queue = collections.deque()`).
+  - Safe dismissal (`_dismiss_toast`) and interactive click-to-dismiss (`<Button-1>`).
+  - High-contrast error styling and optional auto-reset timeout in `set_status()`.
+  - Non-occluding geometry (`relx=1.0, rely=1.0, x=-16, y=-52, anchor="se"`), floating above action buttons.
+  - Exception surfacing in `report_callback_exception()` per Rule 28.
+  - Safe timer teardown in `destroy()` eliminating `invalid command name "...hide"` errors.
+  - Covered by new test suite `tests/test_s8b1_notification_manager.py` (10/10 PASS).
+- [x] **S8b-2 — Asset & Bundle Memory Leak Guards (2026-11-22)**:
+  - Cycle-breaking `dispose_unity_env` helper in `core/bundle_io.py` releases circular UnityPy object/buffer cycles.
+  - Search engine and multi-file replace-all immediately dispose loaded bundle environments.
+  - Repacked verification environment in `save_bundle_story` cleanly disposed in `finally`.
+  - Document close and application teardown lifecycle disposals in `close_file()` and `destroy()`.
+  - Bounded icon cache (`MAX_ICON_CACHE = 128`), dead widget icon pruning (`prune_icon_cache`), and color picker buffer cleanup.
+  - Covered by new test suite `tests/test_s8b2_memory_guards.py` (8/8 PASS).
+- [ ] **S8b-3 — Encoding Detection & Strict Fallback Architecture**: Deterministic BOM/encoding detection with strict error handling. *(Now UNBLOCKED by S8b-2 completion)*.
 - [ ] **S8b-4 — Remaining UI Polishing & Responsive Scaling**: Final DPI awareness verification, responsive paned-window constraints, and icon rendering polish.
 
 ---

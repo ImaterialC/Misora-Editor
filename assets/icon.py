@@ -32,7 +32,8 @@ THEME: Dict[str, str] = {
 # Path to the real Misora chibi-head .ico (multi-size: 16/24/32/48/64/128/256 px)
 _ICO_PATH: Path = Path(__file__).resolve().parent / "misora.ico"
 _ICONS_DIR: Path = Path(__file__).resolve().parent / "icons"
-_ICON_CACHE: Dict[Tuple[str, int, int], tk.PhotoImage] = {}
+MAX_ICON_CACHE: int = 128
+_ICON_CACHE: Dict[Tuple[int, str, int, int], tk.PhotoImage] = {}
 
 
 def _create_fallback_icon(size: int = 32) -> tk.PhotoImage:
@@ -148,10 +149,48 @@ def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Wi
         if pil_im.size != size:
             pil_im = pil_im.resize(size, Image.Resampling.LANCZOS)
         tk_im = ImageTk.PhotoImage(pil_im, master=root) if root else ImageTk.PhotoImage(pil_im)
+
+        # Enforce MAX_ICON_CACHE capacity bounding (S8b-2)
+        if len(_ICON_CACHE) >= MAX_ICON_CACHE:
+            while len(_ICON_CACHE) >= MAX_ICON_CACHE:
+                try:
+                    oldest_key = next(iter(_ICON_CACHE))
+                    _ICON_CACHE.pop(oldest_key, None)
+                except (StopIteration, KeyError):
+                    break
+
         _ICON_CACHE[cache_key] = tk_im
         return tk_im
     except Exception:
         return None
+
+
+def prune_icon_cache(root_widget: Optional[tk.Widget] = None) -> int:
+    """Evict cached icons associated with destroyed widgets or a specific widget (S8b-2).
+
+    Returns the number of evicted cache entries.
+    """
+    pruned = 0
+    target_id = id(root_widget) if root_widget is not None else None
+
+    dead_keys = []
+    for key, img in list(_ICON_CACHE.items()):
+        rid, name, w, h = key
+        if target_id is not None and rid == target_id:
+            dead_keys.append(key)
+        else:
+            try:
+                target_tk = getattr(root_widget, "tk", None) if root_widget else getattr(getattr(tk, "_default_root", None), "tk", None)
+                if target_tk and hasattr(img, "_name"):
+                    target_tk.call("image", "type", img._name)
+            except Exception:
+                dead_keys.append(key)
+
+    for k in dead_keys:
+        if _ICON_CACHE.pop(k, None) is not None:
+            pruned += 1
+
+    return pruned
 
 
 def clear_icon_cache() -> None:

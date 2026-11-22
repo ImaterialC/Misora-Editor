@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 
-from .bundle_io import load_bundle_story
+from .bundle_io import load_bundle_story, dispose_unity_env
 from .story_ast import (
     ALL_WS_RE,
     BREAK_RE,
@@ -261,7 +261,8 @@ class ProjectSearchEngine:
         if (ext in (".unity3d", ".asset") or doc is not None) and options.include_bundles:
             try:
                 if doc is None:
-                    doc, _, _, _ = load_bundle_story(file_path)
+                    doc, env_to_free, _, _ = load_bundle_story(file_path)
+                    dispose_unity_env(env_to_free)
 
                 # Check Story Metadata (Box 0: Title, Subtitle, Summary)
                 if doc.has_metadata():

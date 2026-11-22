@@ -2,7 +2,7 @@
 misora.core - Self-contained engine for Misora: Unity3D Revision Tool & Story Editor.
 """
 from .story_ast import StoryDocument, Box, BoxSnapshot, Seg, Record, game_to_xuat, xuat_to_game, norm_search
-from .bundle_io import load_bundle_story, save_bundle_story, BundleIOError
+from .bundle_io import load_bundle_story, save_bundle_story, BundleIOError, dispose_unity_env
 from .search_engine import ProjectSearchEngine, SearchOptions, SearchResult
 from .xunity_sync import XUnitySyncManager, SyncMatch
 from .logger import MisoraLogger, LogEntry, LOG_CATEGORIES, LOG_LEVELS, ALWAYS_ON_CATEGORY
@@ -17,7 +17,7 @@ from .security import protect_secret, unprotect_secret, redact_secret
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
-    "load_bundle_story", "save_bundle_story", "BundleIOError",
+    "load_bundle_story", "save_bundle_story", "BundleIOError", "dispose_unity_env",
     "ProjectSearchEngine", "SearchOptions", "SearchResult",
     "XUnitySyncManager", "SyncMatch",
     "MisoraLogger", "LogEntry", "LOG_CATEGORIES", "LOG_LEVELS", "ALWAYS_ON_CATEGORY",
