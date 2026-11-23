@@ -27,10 +27,6 @@ misora_debug.log
 *.keys.txt
 gcm-diagnose.log
 
-# Game asset binary payloads (do not commit proprietary/binary files)
-*.unity3d
-*.asset
-
 # Backup files
 *.bak
 *.bak*
