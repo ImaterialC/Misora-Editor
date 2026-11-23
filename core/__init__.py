@@ -14,6 +14,10 @@ from .ngui_tags import (
     PLACEHOLDER_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
 )
 from .security import protect_secret, unprotect_secret, redact_secret
+from .text_encoding import (
+    DecodedText, detect_encoding_and_decode, encode_with_metadata,
+    read_text_file_strictly, write_atomic_encoded,
+)
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
@@ -27,4 +31,6 @@ __all__ = [
     "NGUI_TAG_RE", "NGUI_TOKEN_RE", "RUBY_RE", "SIZE_RE", "STYLE_RE", "COLOR_HEX_RE", "GRADIENT_RE",
     "PLACEHOLDER_RE", "normalize_gradient_syntax", "strip_tags", "get_rendered_length", "measure_line_lengths",
     "protect_secret", "unprotect_secret", "redact_secret",
+    "DecodedText", "detect_encoding_and_decode", "encode_with_metadata",
+    "read_text_file_strictly", "write_atomic_encoded",
 ]

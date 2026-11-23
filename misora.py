@@ -59,6 +59,8 @@ try:
         DialogueBlock, MetadataBlock, ParseResult,
         NGUI_TAG_RE, NGUI_TOKEN_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
         protect_secret, unprotect_secret, redact_secret,
+        DecodedText, detect_encoding_and_decode, encode_with_metadata,
+        read_text_file_strictly, write_atomic_encoded,
     )
 except ImportError:
     from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
@@ -74,6 +76,8 @@ except ImportError:
         DialogueBlock, MetadataBlock, ParseResult,
         NGUI_TAG_RE, NGUI_TOKEN_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
         protect_secret, unprotect_secret, redact_secret,
+        DecodedText, detect_encoding_and_decode, encode_with_metadata,
+        read_text_file_strictly, write_atomic_encoded,
     )
 
 CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
@@ -98,7 +102,7 @@ def _get_app_version() -> str:
                         return parts[1].strip().strip('"\'')
     except Exception:
         pass
-    return "1.3.3"
+    return "1.4.0"
 
 __version__ = _get_app_version()
 
@@ -112,6 +116,7 @@ class ToolTip:
         self.delay_ms = delay_ms
         self.tip_window: Optional[tk.Toplevel] = None
         self._after_id: Optional[str] = None
+        setattr(self.widget, "_tooltip", self)
 
         if hasattr(self.widget, "bind"):
             self.widget.bind("<Enter>", self.on_enter, add="+")
@@ -470,6 +475,59 @@ def best_contrast_fg(
     return light_fg if c_light >= c_dark else dark_fg
 
 
+def init_process_dpi_awareness() -> None:
+    """Set process DPI awareness once at application startup before creating Tk root (Rule 23).
+
+    Ensures consistent rendering scale across displays without mutating process DPI
+    awareness dynamically during GUI execution.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        # Try SetProcessDpiAwarenessContext (Windows 10 1703+)
+        # -2 = DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-2))
+    except Exception:
+        try:
+            # Fallback to shcore (Windows 8.1+)
+            # 1 = PROCESS_SYSTEM_DPI_AWARE
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                # Fallback to user32 (Vista+)
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+
+def sanitize_window_geometry(geom_str: str, screen_w: int, screen_h: int) -> str:
+    """Validate and clamp a Tk geometry string to ensure it is within visible screen bounds (S9c)."""
+    if not isinstance(geom_str, str) or not geom_str.strip():
+        return ""
+    m = re.match(r"^(\d+)x(\d+)([+-]\d+)([+-]\d+)$", geom_str.strip())
+    if not m:
+        return geom_str.strip()
+    w, h, x, y = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+
+    # Bound dimensions to screen limits
+    if screen_w > 0:
+        w = max(400, min(w, screen_w))
+    if screen_h > 0:
+        h = max(300, min(h, screen_h))
+
+    # Clamp x coordinate so at least 120px is within screen bounds
+    if screen_w > 0:
+        if x + 120 > screen_w or x < 0:
+            x = max(0, min(x, max(0, screen_w - w)))
+
+    # Clamp y coordinate so title bar (top 50px) is visible
+    if screen_h > 0:
+        if y + 50 > screen_h or y < 0:
+            y = max(0, min(y, max(0, screen_h - h)))
+
+    return f"{w}x{h}+{x}+{y}"
+
+
 class NguiColorPickerPopup(tk.Toplevel):
     """Mini texture-editor style Color Picker & Gradient Builder with Screen Eyedropper."""
 
@@ -487,7 +545,7 @@ class NguiColorPickerPopup(tk.Toplevel):
         super().__init__(parent)
         self.app = parent
         self.theme = parent.theme
-        self.title("NGUI Color & Gradient Picker (v1.3.3)")
+        self.title(f"NGUI Color & Gradient Picker (v{__version__})")
         self.configure(bg=self.theme["bg_panel"])
         self.transient(parent)
 
@@ -955,11 +1013,6 @@ class NguiColorPickerPopup(tk.Toplevel):
             self.lbl_eye_hint.configure(text="Screen eyedropper requires Windows; use map or swatches.")
             return
 
-        try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            pass
-
         self._eyedropper_active = True
         self._waiting_for_release = True
         self.btn_eyedropper.configure(
@@ -1094,35 +1147,15 @@ def safe_grab_release(dialog: Optional[tk.Toplevel]) -> None:
             pass
 
 
-def write_atomic_utf8(path: Union[str, Path], content: str, encoding: str = "utf-8") -> None:
-    """Write text content atomically: same-dir .tmp -> bounded-retry os.replace() (S3).
-
-    Raises on write or replacement failure, ensuring original file is not corrupted.
-    Cleans up temporary file in finally block.
-    """
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.{os.getpid()}_{time.time_ns()}.tmp")
-
-    try:
-        tmp_path.write_text(content, encoding=encoding)
-        # Bounded retry for Windows file sharing violations
-        for attempt in range(5):
-            try:
-                os.replace(tmp_path, path)
-                break
-            except (PermissionError, OSError) as e:
-                if attempt == 4:
-                    raise OSError(
-                        f"Failed to replace '{path.name}' after 5 attempts (Windows sharing violation): {e}"
-                    )
-                time.sleep(0.05 * (2 ** attempt))
-    finally:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except Exception:
-                pass
+def write_atomic_utf8(
+    path: Union[str, Path],
+    content: str,
+    encoding: str = "utf-8",
+    has_bom: bool = False,
+    newline: Optional[str] = None,
+) -> None:
+    """Write text content atomically: delegates to write_atomic_encoded (S3 / S8b-3)."""
+    write_atomic_encoded(path, content, encoding=encoding, has_bom=has_bom, newline=newline)
 
 
 class MisoraApp(tk.Tk):
@@ -1171,6 +1204,7 @@ class MisoraApp(tk.Tk):
         self._datamine_confirm_skip: bool = False
         self._left_dock_tab: str = "search"
         self._left_dock_width: int = 340
+        self._dock_collapsed: bool = False
         self.show_line_numbers: bool = True
         self.show_column_ruler: bool = False
         self.mtl_config: MTLConfig = MTLConfig()
@@ -1314,10 +1348,13 @@ class MisoraApp(tk.Tk):
         # Start periodic poll for background tasks
         self._search_poll_job = self.after(100, self._process_search_queue)
 
-        # Restore saved window geometry and view toggles (Bug #2)
+        # Restore saved window geometry and view toggles (Bug #2 / S9c)
         if hasattr(self, "_saved_geometry") and self._saved_geometry:
             try:
-                self.geometry(self._saved_geometry)
+                sw = self.winfo_screenwidth()
+                sh = self.winfo_screenheight()
+                safe_geom = sanitize_window_geometry(self._saved_geometry, sw, sh)
+                self.geometry(safe_geom)
             except Exception:
                 pass
         if hasattr(self, "_saved_continuous_view") and hasattr(self, "var_continuous_view"):
@@ -2560,6 +2597,15 @@ class MisoraApp(tk.Tk):
 
             # 2. Process dropped folder(s)
             if dirs:
+                if len(dirs) > 1:
+                    extra_count = len(dirs) - 1
+                    extra_names = ", ".join(f"'{d.name}'" for d in dirs[1:4])
+                    if extra_count > 3:
+                        extra_names += f" and {extra_count - 3} more"
+                    warn_msg = f"Multiple folders dropped ({len(dirs)}). Opened first folder '{dirs[0].name}'; remaining {extra_count} folder(s) ignored."
+                    self.lbl_status.config(text=warn_msg)
+                    self.show_toast(f"⚠ Only 1 folder opened. {extra_count} ignored: {extra_names}")
+                    self.logger.warning("Drag & Drop", warn_msg)
                 self._process_opened_folder(dirs[0], source_label="Drag & Drop")
         except Exception as exc:
             self.logger.exception("Error while handling dropped path(s):", exc)
@@ -3370,8 +3416,9 @@ class MisoraApp(tk.Tk):
         self.btn_cancel.pack(side="left", padx=4)
 
         self.ico_close = self.get_icon("close", (12, 12))
-        btn_close_search = ttk.Button(row1, image=self.ico_close, style="Small.TButton", command=self._hide_search_bar, width=3)
-        btn_close_search.pack(side="left", padx=(4, 0))
+        self.btn_close_search = ttk.Button(row1, text="✕", image=self.ico_close, style="Small.TButton", command=self._hide_search_bar, width=3)
+        self.btn_close_search.pack(side="left", padx=(4, 0))
+        create_tooltip(self.btn_close_search, "Close Search Bar (Esc)")
 
         # Row 1.5: Replace row (shown when Ctrl+H / Replace is activated)
         self.row_replace = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
@@ -3544,6 +3591,7 @@ class MisoraApp(tk.Tk):
             width=3,
         )
         self.btn_dock_pin.pack(side="right", padx=(2, 2))
+        self._dock_pin_tooltip = create_tooltip(self.btn_dock_pin, "Collapse Left Panel")
 
         # --- TAB 1: Search Results ---
         self.tab_search_frame = self._tag_role(tk.Frame(self.left_frame, bg=t["bg_panel"]), "panel")
@@ -3563,8 +3611,9 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_results_title.pack(side="left", fill="x", expand=True)
 
-        btn_clear_res = ttk.Button(left_header, text="Clear", style="Small.TButton", command=self.on_clear_search)
-        btn_clear_res.pack(side="right")
+        self.btn_clear_res = ttk.Button(left_header, text="Clear", style="Small.TButton", command=self.on_clear_search)
+        self.btn_clear_res.pack(side="right")
+        create_tooltip(self.btn_clear_res, "Clear Search Results")
 
         self.tree_container = self._tag_role(tk.Frame(self.tab_search_frame, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
         self.tree_container.pack(fill="both", expand=True, padx=4, pady=(0, 6))
@@ -3811,13 +3860,17 @@ class MisoraApp(tk.Tk):
             command=self._on_speaker_dropdown_clicked,
         )
         self.btn_speaker_dropdown.pack(side="left", padx=(2, 2))
+        create_tooltip(self.btn_speaker_dropdown, "Select Speaker from Recent List")
 
         self.ico_pin = self.get_icon("pin", (16, 16))
         self.btn_pin_speaker = tk.Button(
             speaker_ribbon_row,
+            text="📌",
             image=self.ico_pin,
+            fg=t["fg_text"],
             bg=t["bg_panel"],
             activebackground=t["highlight_bg"],
+            activeforeground=t["fg_text"],
             bd=0,
             relief="flat",
             cursor="hand2",
@@ -3884,6 +3937,7 @@ class MisoraApp(tk.Tk):
             command=self.on_open_color_picker,
         )
         self.btn_ribbon_swatch.pack(side="left", padx=(2, 1), pady=1)
+        create_tooltip(self.btn_ribbon_swatch, "Active NGUI Color (Click to open Color Picker)")
 
         self.ico_palette = self.get_icon("palette", (16, 16))
         btn_color = self._tag_role(
@@ -3931,12 +3985,15 @@ class MisoraApp(tk.Tk):
         create_tooltip(btn_grad, "Apply vertical gradient tag [top-bottom]")
 
         self.ico_eyedropper = self.get_icon("eyedropper", (16, 16))
-        btn_eyedropper = self._tag_role(
+        self.btn_eyedropper = self._tag_role(
             tk.Button(
                 ribbon,
+                text="🎨",
                 image=self.ico_eyedropper,
+                fg=btn_fg,
                 bg=btn_bg,
                 activebackground=btn_hover,
+                activeforeground=btn_fg,
                 bd=1,
                 relief="raised",
                 cursor="hand2",
@@ -3944,8 +4001,8 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_btn",
         )
-        btn_eyedropper.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_eyedropper, "Open NGUI Color & Gradient Picker")
+        self.btn_eyedropper.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_eyedropper, "Open NGUI Color & Gradient Picker")
 
         # Text & Box Actions Toolbar (docked in speaker row next to formatting ribbon)
         actions_bar = self._tag_role(
@@ -3956,71 +4013,71 @@ class MisoraApp(tk.Tk):
 
         # Text Actions Group (Select Whole Story, Cut, Copy, Paste)
         self.ico_sel_story = self.get_icon("select_story", (16, 16))
-        btn_sel_story = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_sel_story, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_select_whole_story),
+        self.btn_sel_story = self._tag_role(
+            tk.Button(actions_bar, text="🗎", image=self.ico_sel_story, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_select_whole_story),
             "ribbon_btn"
         )
-        btn_sel_story.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_sel_story, "Select Whole Story Dialogue (Ctrl+Alt+A)")
+        self.btn_sel_story.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_sel_story, "Select Whole Story Dialogue (Ctrl+Alt+A)")
 
         self.ico_cut = self.get_icon("cut", (16, 16))
-        btn_cut = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_cut, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_cut),
+        self.btn_cut = self._tag_role(
+            tk.Button(actions_bar, text="✂", image=self.ico_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_cut),
             "ribbon_btn"
         )
-        btn_cut.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_cut, "Cut Text (Ctrl+X)")
+        self.btn_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_cut, "Cut Text (Ctrl+X)")
 
         self.ico_copy = self.get_icon("copy", (16, 16))
-        btn_copy = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_copy, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_copy),
+        self.btn_copy = self._tag_role(
+            tk.Button(actions_bar, text="📋", image=self.ico_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_copy),
             "ribbon_btn"
         )
-        btn_copy.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_copy, "Copy Text (Ctrl+C)")
+        self.btn_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_copy, "Copy Text (Ctrl+C)")
 
         self.ico_paste = self.get_icon("paste", (16, 16))
-        btn_paste = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_paste, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_text_paste),
+        self.btn_paste = self._tag_role(
+            tk.Button(actions_bar, text="📥", image=self.ico_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_paste),
             "ribbon_btn"
         )
-        btn_paste.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_paste, "Paste Text / Multi-Box Delimiter Split (Ctrl+V)")
+        self.btn_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_paste, "Paste Text / Multi-Box Delimiter Split (Ctrl+V)")
 
         self._tag_role(tk.Label(actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         # Box Actions Group (New Box, Cut Box, Copy Box, Paste Box)
         self.ico_plus = self.get_icon("plus", (16, 16))
-        btn_box_new = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_plus, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
+        self.btn_box_new = self._tag_role(
+            tk.Button(actions_bar, text="➕", image=self.ico_plus, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
             "ribbon_btn"
         )
-        btn_box_new.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_box_new, "New Dialogue Box (Ctrl+N)")
+        self.btn_box_new.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_new, "New Dialogue Box (Ctrl+N)")
 
         self.ico_box_cut = self.get_icon("box_cut", (18, 18))
-        btn_box_cut = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_box_cut, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
+        self.btn_box_cut = self._tag_role(
+            tk.Button(actions_bar, text="✂📦", image=self.ico_box_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
             "ribbon_btn"
         )
-        btn_box_cut.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
+        self.btn_box_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
 
         self.ico_box_copy = self.get_icon("box_copy", (18, 18))
-        btn_box_copy = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_box_copy, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
+        self.btn_box_copy = self._tag_role(
+            tk.Button(actions_bar, text="📋📦", image=self.ico_box_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
             "ribbon_btn"
         )
-        btn_box_copy.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
+        self.btn_box_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
 
         self.ico_box_paste = self.get_icon("box_paste", (18, 18))
-        btn_box_paste = self._tag_role(
-            tk.Button(actions_bar, image=self.ico_box_paste, bg=btn_bg, activebackground=btn_hover, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
+        self.btn_box_paste = self._tag_role(
+            tk.Button(actions_bar, text="📥📦", image=self.ico_box_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
             "ribbon_btn"
         )
-        btn_box_paste.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
+        self.btn_box_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
 
         self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
@@ -4150,8 +4207,10 @@ class MisoraApp(tk.Tk):
                 ribbon,
                 text="↶",
                 image=self.ico_undo,
+                fg=btn_fg,
                 bg=btn_bg,
                 activebackground=btn_hover,
+                activeforeground=btn_fg,
                 bd=1,
                 relief="raised",
                 cursor="hand2",
@@ -4168,8 +4227,10 @@ class MisoraApp(tk.Tk):
                 ribbon,
                 text="↷",
                 image=self.ico_redo,
+                fg=btn_fg,
                 bg=btn_bg,
                 activebackground=btn_hover,
+                activeforeground=btn_fg,
                 bd=1,
                 relief="raised",
                 cursor="hand2",
@@ -5181,14 +5242,15 @@ class MisoraApp(tk.Tk):
         )
         self.btn_tab_glossary.pack(side="left")
 
-        btn_close_drawer = ttk.Button(
+        self.btn_close_drawer = ttk.Button(
             drawer_top,
             text="✕",
             style="Small.TButton",
             command=self._close_side_drawer,
             width=2,
         )
-        btn_close_drawer.pack(side="right", padx=(2, 0))
+        self.btn_close_drawer.pack(side="right", padx=(2, 0))
+        create_tooltip(self.btn_close_drawer, "Close Side Panel")
 
         self.btn_drawer_pin = ttk.Button(
             drawer_top,
@@ -5198,6 +5260,7 @@ class MisoraApp(tk.Tk):
             width=3,
         )
         self.btn_drawer_pin.pack(side="right", padx=(2, 2))
+        create_tooltip(self.btn_drawer_pin, "Pin / Unpin Side Panel")
 
         self.tab_customize_frame = self._tag_role(tk.Frame(self.side_drawer, bg=t["bg_panel"]), "panel")
         self._build_customize_tab(self.tab_customize_frame)
@@ -5655,52 +5718,56 @@ class MisoraApp(tk.Tk):
 
     def _insert_text_wrapper(self, open_tag: str, close_tag: str, default_inner: str = "") -> None:
         """Wrap the current selection (or insert at caret) in the active dialogue editor."""
-        if self.is_box0_active and not self.var_continuous_view.get():
-            target = self.txt_box0_summary
-            try:
-                sel_first = target.index("sel.first")
-                sel_last = target.index("sel.last")
-                selected_txt = target.get(sel_first, sel_last)
-                target.delete(sel_first, sel_last)
-                target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
-            except tk.TclError:
-                target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-            self._on_box0_metadata_edited()
-            target.focus_set()
-            return
-
-        if self.var_continuous_view.get():
-            target = self.txt_continuous
-            box_idx = self._find_continuous_box_at_index("insert")
-            if box_idx is None:
-                self._focus_continuous_box(self.current_box_idx, move_cursor=True)
-            try:
-                sel_first = target.index("sel.first")
-                sel_last = target.index("sel.last")
-                b1 = self._find_continuous_box_at_index(sel_first)
-                b2 = self._find_continuous_box_at_index(sel_last)
-                if b1 is not None and b1 == b2:
+        self._current_edit_source = "format"
+        try:
+            if self.is_box0_active and not self.var_continuous_view.get():
+                target = self.txt_box0_summary
+                try:
+                    sel_first = target.index("sel.first")
+                    sel_last = target.index("sel.last")
                     selected_txt = target.get(sel_first, sel_last)
                     target.delete(sel_first, sel_last)
                     target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
-                else:
+                except tk.TclError:
                     target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-            except tk.TclError:
-                target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-            self._sync_continuous_box_from_widget()
-            target.focus_set()
-        else:
-            target = self.txt_dialogue
-            try:
-                sel_first = target.index("sel.first")
-                sel_last = target.index("sel.last")
-                selected_txt = target.get(sel_first, sel_last)
-                target.delete(sel_first, sel_last)
-                target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
-            except tk.TclError:
-                target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-            self._on_dialogue_edited()
-            target.focus_set()
+                self._on_box0_metadata_edited()
+                target.focus_set()
+                return
+
+            if self.var_continuous_view.get():
+                target = self.txt_continuous
+                box_idx = self._find_continuous_box_at_index("insert")
+                if box_idx is None:
+                    self._focus_continuous_box(self.current_box_idx, move_cursor=True)
+                try:
+                    sel_first = target.index("sel.first")
+                    sel_last = target.index("sel.last")
+                    b1 = self._find_continuous_box_at_index(sel_first)
+                    b2 = self._find_continuous_box_at_index(sel_last)
+                    if b1 is not None and b1 == b2:
+                        selected_txt = target.get(sel_first, sel_last)
+                        target.delete(sel_first, sel_last)
+                        target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
+                    else:
+                        target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
+                except tk.TclError:
+                    target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
+                self._sync_continuous_box_from_widget()
+                target.focus_set()
+            else:
+                target = self.txt_dialogue
+                try:
+                    sel_first = target.index("sel.first")
+                    sel_last = target.index("sel.last")
+                    selected_txt = target.get(sel_first, sel_last)
+                    target.delete(sel_first, sel_last)
+                    target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
+                except tk.TclError:
+                    target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
+                self._on_dialogue_edited()
+                target.focus_set()
+        finally:
+            self._current_edit_source = "keyboard"
 
     def on_insert_ruby(self) -> None:
         """Open a compact modal prompt to wrap base text with [rub:ruby]base[/rub]."""
@@ -6484,7 +6551,8 @@ class MisoraApp(tk.Tk):
                 return
         else:
             try:
-                content = file_path.read_text(encoding="utf-8")
+                decoded = read_text_file_strictly(file_path)
+                content = decoded.text
                 if content.startswith("#!priconne-story"):
                     doc = StoryDocument.from_v2_text(content)
                     staged = {
@@ -6504,6 +6572,9 @@ class MisoraApp(tk.Tk):
                             "dirty": False,
                             "plain_text": "",
                             "boxes_count": len(doc.boxes),
+                            "encoding": decoded.encoding,
+                            "has_bom": decoded.has_bom,
+                            "newline": decoded.newline,
                         },
                     }
                 else:
@@ -6524,6 +6595,9 @@ class MisoraApp(tk.Tk):
                             "dirty": False,
                             "plain_text": content,
                             "boxes_count": 0,
+                            "encoding": decoded.encoding,
+                            "has_bom": decoded.has_bom,
+                            "newline": decoded.newline,
                         },
                     }
             except Exception as e:
@@ -6817,6 +6891,7 @@ class MisoraApp(tk.Tk):
                                 old_text=old_tx,
                                 new_text=new_tx,
                                 file_path=str(self.current_file_path or ""),
+                                source=getattr(self, "_current_edit_source", "keyboard"),
                             ),
                             label=f"Edit box #{b_idx + 1}"
                         )
@@ -6847,6 +6922,7 @@ class MisoraApp(tk.Tk):
                     old_text=old_tx,
                     new_text=new_tx,
                     file_path=str(self.current_file_path or ""),
+                    source=getattr(self, "_current_edit_source", "keyboard"),
                 ),
                 label=f"Edit box #{box_idx + 1}"
             )
@@ -7075,10 +7151,13 @@ class MisoraApp(tk.Tk):
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
             target = self._get_card_text_widget(self.current_box_idx)
+        self._current_edit_source = "cut"
         try:
             target.event_generate("<<Cut>>")
         except Exception:
             pass
+        finally:
+            self._current_edit_source = "keyboard"
 
     def on_text_copy(self) -> None:
         """Copy text in active editor to clipboard."""
@@ -7189,8 +7268,9 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
             elif hasattr(delta, "per_file"):
-                for fpath_str, _, _ in delta.per_file:
+                for item in delta.per_file:
                     try:
+                        fpath_str = item[0]
                         touched.add(Path(fpath_str).resolve())
                     except Exception:
                         pass
@@ -8223,6 +8303,7 @@ class MisoraApp(tk.Tk):
                     old_text=old_tx,
                     new_text=new_tx,
                     file_path=str(self.current_file_path or ""),
+                    source=getattr(self, "_current_edit_source", "keyboard"),
                 ),
                 label=f"Edit box #{idx + 1}"
             )
@@ -8414,7 +8495,11 @@ class MisoraApp(tk.Tk):
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
                 content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
-                write_atomic_utf8(self.current_file_path, content)
+                doc_entry = self.open_documents.get(cur_p, {})
+                enc = doc_entry.get("encoding", "utf-8")
+                has_bom = bool(doc_entry.get("has_bom", False))
+                nl = doc_entry.get("newline", None)
+                write_atomic_utf8(self.current_file_path, content, encoding=enc, has_bom=has_bom, newline=nl)
                 self._plain_text_content = content
                 if cur_p in self.open_documents:
                     self.open_documents[cur_p]["dirty"] = False
@@ -8466,7 +8551,11 @@ class MisoraApp(tk.Tk):
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
                 v2_text = self.current_doc.to_v2_text()
-                write_atomic_utf8(self.current_file_path, v2_text)
+                doc_entry = self.open_documents.get(cur_p, {})
+                enc = doc_entry.get("encoding", "utf-8")
+                has_bom = bool(doc_entry.get("has_bom", False))
+                nl = doc_entry.get("newline", None)
+                write_atomic_utf8(self.current_file_path, v2_text, encoding=enc, has_bom=has_bom, newline=nl)
                 if cur_p in self.open_documents:
                     self.open_documents[cur_p]["dirty"] = False
                 self.is_dirty = False
@@ -9132,6 +9221,7 @@ class MisoraApp(tk.Tk):
                             new_text=new_tx,
                             file_path=str(self.current_file_path),
                             box_uid=box.uid,
+                            source="replace",
                         ),
                         label=f"Replace in box #{self.current_box_idx + 1}"
                     )
@@ -9207,6 +9297,7 @@ class MisoraApp(tk.Tk):
                                 new_text=new_tx,
                                 file_path=str(self.current_file_path),
                                 box_uid=box.uid,
+                                source="replace",
                             )
                         )
                         self.current_doc.inject_box(idx, None, new_tx)
@@ -9288,14 +9379,23 @@ class MisoraApp(tk.Tk):
             for cf in candidate_files:
                 try:
                     if cf.suffix.lower() in (".unity3d", ".asset"):
-                        raw = cf.read_bytes()
-                        c = raw.count(find_text.encode("utf-8", "ignore"))
-                        if c > 0:
-                            matching_files[cf] = c
-                            total_matches += c
+                        # Decode structured story TextAsset rather than scanning raw compressed bytes (S9b)
+                        bundle_env = None
+                        try:
+                            b_doc, bundle_env, _, _ = load_bundle_story(cf)
+                            c = 0
+                            for box in b_doc.boxes:
+                                if find_text in box.clean_text:
+                                    c += box.clean_text.count(find_text)
+                            if c > 0:
+                                matching_files[cf] = c
+                                total_matches += c
+                        finally:
+                            if bundle_env is not None:
+                                dispose_unity_env(bundle_env)
                     else:
-                        txt = cf.read_text(encoding="utf-8", errors="ignore")
-                        c = txt.count(find_text)
+                        decoded = read_text_file_strictly(cf)
+                        c = decoded.text.count(find_text)
                         if c > 0:
                             matching_files[cf] = c
                             total_matches += c
@@ -9323,7 +9423,7 @@ class MisoraApp(tk.Tk):
                 return
 
             replaced_files_count = 0
-            per_file_deltas: List[Tuple[str, str, str]] = []
+            per_file_deltas: List[Any] = []
 
             for fpath in matching_files:
                 try:
@@ -9338,26 +9438,54 @@ class MisoraApp(tk.Tk):
                                     doc.inject_box(idx, None, new_box_tx)
                                     modified = True
                             if modified:
-                                save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=self._get_backup_dir())
+                                bak_dir = self._get_backup_dir()
+                                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                                orig_bak_path = bak_dir / f"{fpath.stem}.orig_{ts}{fpath.suffix}"
+                                shutil.copy2(fpath, orig_bak_path)
+
+                                save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=bak_dir)
+
+                                mod_bak_path = bak_dir / f"{fpath.stem}.mod_{ts}{fpath.suffix}"
+                                shutil.copy2(fpath, mod_bak_path)
+
+                                per_file_deltas.append((str(fpath), str(orig_bak_path), str(mod_bak_path), True))
                                 replaced_files_count += 1
+                                # S9b: Synchronize in-memory open_documents cache & checkpoint
+                                f_res = fpath.resolve()
+                                if f_res in self.open_documents:
+                                    self._record_saved_checkpoint(f_res, doc)
+                                    self._mark_document_dirty(f_res)
                         finally:
                             if bundle_env is not None:
                                 dispose_unity_env(bundle_env)
                     else:
-                        old_txt = fpath.read_text(encoding="utf-8", errors="replace")
+                        decoded = read_text_file_strictly(fpath)
+                        old_txt = decoded.text
                         if find_text in old_txt:
                             new_txt = old_txt.replace(find_text, replace_text)
                             bak_dir = self._get_backup_dir()
                             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                             bak_path = bak_dir / f"{fpath.stem}.bak_{ts}{fpath.suffix}"
                             shutil.copy2(fpath, bak_path)
-                            write_atomic_utf8(fpath, new_txt, encoding="utf-8")
+                            if decoded.has_bom or (decoded.newline and decoded.newline != "\n"):
+                                write_atomic_utf8(
+                                    fpath,
+                                    new_txt,
+                                    encoding=decoded.encoding,
+                                    has_bom=decoded.has_bom,
+                                    newline=decoded.newline,
+                                )
+                            else:
+                                write_atomic_utf8(fpath, new_txt, encoding=decoded.encoding)
                             per_file_deltas.append((str(fpath), old_txt, new_txt))
                             replaced_files_count += 1
                             # S5: Synchronize in-memory open_documents cache & checkpoint
                             f_res = fpath.resolve()
                             if f_res in self.open_documents:
                                 self.open_documents[f_res]["plain_text"] = new_txt
+                                self.open_documents[f_res]["encoding"] = decoded.encoding
+                                self.open_documents[f_res]["has_bom"] = decoded.has_bom
+                                self.open_documents[f_res]["newline"] = decoded.newline
                                 self._record_saved_checkpoint(f_res, None, plain_text=new_txt)
                                 self._mark_document_dirty(f_res)
                 except Exception as ex:
@@ -9416,6 +9544,37 @@ class MisoraApp(tk.Tk):
         self._sync_edit_menu_states()
         self.lbl_status.config(text=f"Redid: {op.label}")
         self.logger.info("Edit", f"Redid operation: {op.label}")
+
+    @staticmethod
+    def _restore_bundle_atomic(src_bak_path: Union[str, Path], dst_path: Path) -> None:
+        """Atomically restore a binary bundle file from a backup snapshot (S9b)."""
+        src_p = Path(src_bak_path)
+        if not src_p.is_file():
+            raise FileNotFoundError(f"Bundle backup file not found: {src_p}")
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = dst_path.with_name(f"{dst_path.name}.{os.getpid()}_{time.time_ns()}.tmp")
+        shutil.copy2(src_p, tmp_path)
+        retries = 5
+        for attempt in range(retries):
+            try:
+                os.replace(tmp_path, dst_path)
+                break
+            except PermissionError:
+                if attempt == retries - 1:
+                    if tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except Exception:
+                            pass
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+            except Exception:
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                raise
 
     def _apply_delta(self, delta: Any, reverse: bool = False, refresh_ui: bool = True) -> None:
         """Apply a recorded delta forwards or backwards, preserving cursor position."""
@@ -9488,29 +9647,91 @@ class MisoraApp(tk.Tk):
             if refresh_ui:
                 self._update_views()
         elif isinstance(delta, BulkFileDelta):
-            applied_files: List[Tuple[Path, str]] = []
+            applied_files: List[Tuple[Path, bool, Any, Optional[str], bool, Optional[str]]] = []
             try:
-                for fpath_str, old_tx, new_tx in delta.per_file:
+                for item in delta.per_file:
+                    is_bundle = len(item) >= 4 and bool(item[3])
+                    fpath_str = item[0]
                     fp = Path(fpath_str).resolve()
-                    text_to_set = old_tx if reverse else new_tx
-                    prev_text = new_tx if reverse else old_tx
-                    write_atomic_utf8(fp, text_to_set, encoding="utf-8")
-                    applied_files.append((fp, prev_text))
+                    if is_bundle:
+                        orig_bak_str = item[1]
+                        mod_bak_str = item[2]
+                        src_bak = orig_bak_str if reverse else mod_bak_str
+                        prev_bak = mod_bak_str if reverse else orig_bak_str
+                        self._restore_bundle_atomic(src_bak, fp)
+                        applied_files.append((fp, True, prev_bak, None, False, None))
 
-                    # S5: Synchronize in-memory cache and checkpoints if open
-                    if fp in self.open_documents:
-                        self.open_documents[fp]["plain_text"] = text_to_set
-                        self._record_saved_checkpoint(fp, None, plain_text=text_to_set)
-                        self._mark_document_dirty(fp)
+                        # S9b: Synchronize in-memory cache and checkpoints if open
+                        if fp in self.open_documents:
+                            try:
+                                b_doc, b_env, b_obj, _ = load_bundle_story(fp)
+                                old_env = self.open_documents[fp].get("bundle_env")
+                                if old_env is not None and old_env is not b_env:
+                                    dispose_unity_env(old_env)
+                                self.open_documents[fp]["doc"] = b_doc
+                                self.open_documents[fp]["bundle_env"] = b_env
+                                self.open_documents[fp]["target_object"] = b_obj
+                                self._record_saved_checkpoint(fp, b_doc)
+                            except Exception:
+                                pass
+                            self._mark_document_dirty(fp)
+                    else:
+                        old_tx = item[1]
+                        new_tx = item[2]
+                        text_to_set = old_tx if reverse else new_tx
+                        prev_text = new_tx if reverse else old_tx
+                        doc_entry = self.open_documents.get(fp, {})
+                        enc = doc_entry.get("encoding")
+                        has_bom = doc_entry.get("has_bom")
+                        nl = doc_entry.get("newline")
+                        if enc is None and fp.is_file():
+                            try:
+                                det = read_text_file_strictly(fp)
+                                enc = det.encoding
+                                has_bom = det.has_bom if has_bom is None else has_bom
+                                nl = det.newline if nl is None else nl
+                            except Exception:
+                                enc = "utf-8"
+                        enc = enc or "utf-8"
+                        has_bom = bool(has_bom) if has_bom is not None else False
+                        if has_bom or (nl and nl != "\n"):
+                            write_atomic_utf8(fp, text_to_set, encoding=enc, has_bom=has_bom, newline=nl)
+                        else:
+                            write_atomic_utf8(fp, text_to_set, encoding=enc)
+                        applied_files.append((fp, False, prev_text, enc, has_bom, nl))
+
+                        # S5: Synchronize in-memory cache and checkpoints if open
+                        if fp in self.open_documents:
+                            self.open_documents[fp]["plain_text"] = text_to_set
+                            self._record_saved_checkpoint(fp, None, plain_text=text_to_set)
+                            self._mark_document_dirty(fp)
             except Exception as ex:
                 self.logger.error("File I/O", f"Failed applying bulk delta: {ex}")
-                # S5: Rollback applied files in reverse order to ensure all-or-nothing transaction safety
-                for rolled_fp, prev_tx in reversed(applied_files):
+                # S5/S9b: Rollback applied files in reverse order to ensure all-or-nothing transaction safety
+                for rolled_fp, is_bdl, prev_val, r_enc, r_bom, r_nl in reversed(applied_files):
                     try:
-                        write_atomic_utf8(rolled_fp, prev_tx, encoding="utf-8")
-                        if rolled_fp in self.open_documents:
-                            self.open_documents[rolled_fp]["plain_text"] = prev_tx
-                            self._record_saved_checkpoint(rolled_fp, None, plain_text=prev_tx)
+                        if is_bdl:
+                            self._restore_bundle_atomic(prev_val, rolled_fp)
+                            if rolled_fp in self.open_documents:
+                                try:
+                                    rb_doc, rb_env, rb_obj, _ = load_bundle_story(rolled_fp)
+                                    old_env = self.open_documents[rolled_fp].get("bundle_env")
+                                    if old_env is not None and old_env is not rb_env:
+                                        dispose_unity_env(old_env)
+                                    self.open_documents[rolled_fp]["doc"] = rb_doc
+                                    self.open_documents[rolled_fp]["bundle_env"] = rb_env
+                                    self.open_documents[rolled_fp]["target_object"] = rb_obj
+                                    self._record_saved_checkpoint(rolled_fp, rb_doc)
+                                except Exception:
+                                    pass
+                        else:
+                            if r_bom or (r_nl and r_nl != "\n"):
+                                write_atomic_utf8(rolled_fp, prev_val, encoding=r_enc, has_bom=r_bom, newline=r_nl)
+                            else:
+                                write_atomic_utf8(rolled_fp, prev_val, encoding=r_enc)
+                            if rolled_fp in self.open_documents:
+                                self.open_documents[rolled_fp]["plain_text"] = prev_val
+                                self._record_saved_checkpoint(rolled_fp, None, plain_text=prev_val)
                     except Exception as rb_ex:
                         self.logger.critical("File I/O", f"Rollback failed for '{rolled_fp}': {rb_ex}")
                 messagebox.showerror(
@@ -9569,12 +9790,28 @@ class MisoraApp(tk.Tk):
 
     def _toggle_dock_collapse(self) -> None:
         """Toggle left dock between collapsed and expanded width."""
-        current_w = self.left_frame.winfo_width()
-        if current_w > 50:
-            self._left_dock_width = current_w
-            self.h_paned.sash_place(0, 20, 0)
+        if getattr(self, "_dock_collapsed", False):
+            # Expand dock
+            self._dock_collapsed = False
+            target_w = getattr(self, "_left_dock_width", 340) or 340
+            self.h_paned.paneconfigure(self.left_frame, minsize=160)
+            self.h_paned.sash_place(0, target_w, 0)
+            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
+                self.btn_dock_pin.configure(text="📌")
+            if hasattr(self, "_dock_pin_tooltip"):
+                self._dock_pin_tooltip.text = "Collapse Left Panel"
         else:
-            self.h_paned.sash_place(0, self._left_dock_width or 340, 0)
+            # Collapse dock
+            current_w = self.left_frame.winfo_width()
+            if current_w >= 100:
+                self._left_dock_width = current_w
+            self._dock_collapsed = True
+            self.h_paned.paneconfigure(self.left_frame, minsize=0)
+            self.h_paned.sash_place(0, 36, 0)
+            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
+                self.btn_dock_pin.configure(text="◀")
+            if hasattr(self, "_dock_pin_tooltip"):
+                self._dock_pin_tooltip.text = "Expand Left Panel"
 
     def _refresh_opened_files_list(self) -> None:
         """Re-render the list of cached opened files in the Opened Files dock tab."""
@@ -10295,6 +10532,8 @@ class MisoraApp(tk.Tk):
                         old_text=old_b.clean_text,
                         new_text=result,
                         file_path=str(self.current_file_path) if self.current_file_path else "",
+                        box_uid=old_b.uid,
+                        source="mtl",
                     )
                 )
                 self.current_doc.inject_box(b_idx, old_b.speaker, result)
@@ -10497,6 +10736,7 @@ class MisoraApp(tk.Tk):
                         new_text=new_blk.text,
                         file_path=str(self.current_file_path or ""),
                         box_uid=old_box.uid,
+                        source="paste_script",
                     )
                 )
 
@@ -10567,14 +10807,12 @@ class MisoraApp(tk.Tk):
             return
 
         try:
-            content = target_file.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            try:
-                content = target_file.read_text(encoding="cp932")
-            except Exception as exc:
-                self.logger.exception("Failed to decode import file:", exc)
-                messagebox.showerror("Import Failed", f"Could not decode script file:\n{exc}", parent=self)
-                return
+            decoded = read_text_file_strictly(target_file)
+            content = decoded.text
+        except UnicodeDecodeError as exc:
+            self.logger.exception("Failed to decode import file:", exc)
+            messagebox.showerror("Import Failed", f"Could not decode script file:\n{exc}", parent=self)
+            return
         except Exception as exc:
             self.logger.exception("Failed to read import file:", exc)
             messagebox.showerror("Import Failed", f"Could not read script file:\n{exc}", parent=self)
@@ -10652,6 +10890,8 @@ class MisoraApp(tk.Tk):
                         old_text=box.clean_text,
                         new_text="",
                         file_path=str(self.current_file_path) if self.current_file_path else "",
+                        box_uid=box.uid,
+                        source="clear",
                     )
                 )
                 self.current_doc.inject_box(i, box.speaker, "")
@@ -11614,6 +11854,8 @@ class TranslatorAssistantDialog(tk.Toplevel):
                 old_text=old_box.clean_text,
                 new_text=new_text,
                 file_path=str(self.app.current_file_path) if self.app.current_file_path else "",
+                box_uid=old_box.uid,
+                source="mtl",
             )
         )
         doc.inject_box(b_idx, old_box.speaker, new_text)
@@ -11837,6 +12079,8 @@ class BatchTranslateDialog(tk.Toplevel):
                                 old_text=old_tx,
                                 new_text=new_tx,
                                 file_path=str(self.app.current_file_path or ""),
+                                box_uid=doc.boxes[b_idx].uid,
+                                source="mtl",
                             )
                         )
                         doc.inject_box(b_idx, spk, new_tx)
@@ -11882,6 +12126,8 @@ def main():
     running as a Toplevel of the root application window to avoid
     multi-root Tkinter event loop conflicts and variable orphaning.
     """
+    init_process_dpi_awareness()
+
     initial_file = None
     show_splash = True
     for arg in sys.argv[1:]:

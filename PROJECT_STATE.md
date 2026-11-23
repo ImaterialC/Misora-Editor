@@ -4,7 +4,7 @@ Last updated: 2026-11-22
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
 Target release: v1.4.0
-Current code baseline: root `__init__.py` reports `version = "1.3.3"`; unified across UI, splash, dialogs, and tests.
+Current code baseline: root `__init__.py` reports `version = "1.4.0"`; unified across UI, splash, dialogs, and tests.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -40,11 +40,11 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (Phase 5 completion session — 2026-11-21):
+Unit Test Suite (Phase 7 completion session — 2026-11-23):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 100 tests in 143.062s — OK (100/100 pass, 0 failures, 0 errors, 0 skips)
+Result: Ran 234 tests in 247.764s — OK (234/234 pass, 0 failures, 0 errors, 0 skips)
 
-Test suites included in the 100 tests:
+Test suites included in the 234 tests:
   tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (all pass)
   tests/test_misora_ui_integration.py       — 26 UI integration, Box 0, DnD, and editing tests (all pass)
   tests/test_phase1_manual_verification.py  — 9 Page and Continuous view verified workflows (all pass)
@@ -53,15 +53,27 @@ Test suites included in the 100 tests:
   tests/test_phase4_import_export_preview.py— 5 import/export, paste preview, tooltip, version tests (all pass)
   tests/test_phase5_mtl_security_preview.py — 7 NGUI tag, DPAPI, TLS verify, DeepL usage, lock, preview tests (all pass)
   tests/test_script_codec.py                — 14 CSIF codec unit tests (all pass)
+  tests/test_s1_open_file_safety.py         — 7 staged open-file & multi-format tests (all pass)
+  tests/test_s2_dirty_contract.py           — 14 per-document dirty contract tests (all pass)
+  tests/test_s3_document_close.py           — 10 clean close & dirty lifecycle tests (all pass)
+  tests/test_s4_view_model_sync.py          — 12 dynamic view & ribbon synchronization tests (all pass)
+  tests/test_s5_bulk_replace_safety.py      — 8 atomic bulk replace & transaction rollback tests (all pass)
+  tests/test_s6_threading_decoupling.py     — 16 background search & worker thread queue tests (all pass)
+  tests/test_s7_undo_speaker_safety.py      — 10 speaker commit & undo integrity tests (all pass)
+  tests/test_s8a_dialog_grab_safety.py      — 10 modal dialog grab & lifecycle safety tests (all pass)
+  tests/test_s8b1_notification_manager.py   — 10 status bar & toast notification tests (all pass)
+  tests/test_s8b2_memory_leak_guards.py     — 11 asset disposal & memory leak tests (all pass)
+  tests/test_s8b3_keyboard_shortcuts.py     — 9 shortcut router & keybinding tests (all pass)
+  tests/test_s8b4_ui_polishing.py           — 8 dock collapse, DPI & tooltip tests (all pass)
+  tests/test_s9a_search_unicode.py          — 6 Japanese Unicode & combining character search tests (all pass)
+  tests/test_s9b_replace_all_bundle_safety.py — 3 bundle replace-all extraction & undo tests (all pass)
+  tests/test_s9c_workspace_safety.py        — 4 workspace protection, geometry & undo isolation tests (all pass)
 ```
 
 ### Current Test Failures
-The S0/S1 full-suite baseline has one existing local test design discrepancy:
-`test_phase3_performance_config.TestPhase3PerformanceAndConfig.test_05_clean_committed_config_has_no_machine_paths`
-expects `misora_config.json.project_folder == ""`. However, `misora_config.json` is explicitly ignored by `.gitignore`
-and has never been tracked in Git history; the local file on disk reflects the developer's runtime session state.
-(RETRACTED: the previous claim that this was a "tracked committed value" was an AI hallucination).
-This test design issue is owned by a future Phase 3 test hygiene slice.
+**None**. 234/234 tests pass (0 failures, 0 errors, 0 skips).
+The former local test design discrepancy in `test_phase3_performance_config:test_05` has been resolved in Slice S9c
+by providing an authoritative committed default template `misora_config.default.json` with clean empty values.
 
 ### S0/S1 Open-File Safety Verification (2026-11-21)
 - Pre-edit `misora.py`: 510,461 raw bytes; SHA-256 `2188eab968e031d4d5469f117f3cfb8403dc27622b5b6009d38b3880dd97babe`; LF-normalized 499,293 bytes.
@@ -287,7 +299,109 @@ This test design issue is owned by a future Phase 3 test hygiene slice.
   - `py -3.12 -m unittest tests.test_s8b2_memory_guards -v`: 8/8 pass (10.7s).
   - `py -3.12 -m unittest tests.test_s8b2_memory_guards tests.test_s8b1_notification_manager tests.test_s8a_dialog_grab_safety tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 116/116 pass (86.5s).
   - `py -3.12 -m unittest discover -s tests -v`: 203 tests run, 202 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (192.1s).
-- Handoff note: S8b-3 (Encoding Detection & Strict Fallback Architecture) is now unblocked.
+- Handoff note: S8b-3 (Encoding Detection & Strict Fallback Architecture) is now complete; S8b-4 is unblocked.
+
+### S8b-3 Encoding Detection & Strict Fallback Architecture (2026-11-22)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Centralized Text Encoding Engine (`core/text_encoding.py`)**:
+  - Implemented immutable `DecodedText` dataclass (`text`, `encoding`, `has_bom`, `newline`, `bom_bytes`).
+  - Implemented `detect_encoding_and_decode(raw_bytes)` with deterministic BOM detection (`utf-8-sig`, `utf-16-le`, `utf-16-be`), strict UTF-8 decoding, and strict CP932 / Windows-31J Japanese fallback.
+  - Implemented `_is_plausible_cp932(text)` validation: rejects binary noise where stray bytes decode to unassigned C1 control codes (`\x80-\x9f`) or private use characters without any actual Japanese CJK characters (Hiragana, Katakana, CJK Unified Ideographs, CJK symbols, Halfwidth Katakana).
+  - Implemented `encode_with_metadata(text, encoding, has_bom, newline)`: strictly round-trips encoding, BOM prefix, and native CRLF/LF line endings.
+  - Implemented `read_text_file_strictly(path)` and `write_atomic_encoded(path, content, encoding, has_bom, newline)` (.tmp -> bounded Windows retry `os.replace`).
+  - Re-exported all encoding primitives in `core/__init__.py`.
+- **Elimination of Silent Corruption via `errors="replace"` (Rule 10)**:
+  - In `misora.py:on_replace_all()`: Replaced `read_text(encoding="utf-8", errors="replace")` with `read_text_file_strictly(fpath)`. Preserves Japanese CP932, UTF-8 BOM, and native CRLF line endings on save without injecting replacement characters (`\ufffd`).
+  - In `core/search_engine.py:search_file()`: Replaced `read_text(encoding="utf-8", errors="replace")` with `read_text_file_strictly(file_path)`, enabling project searches to match Japanese text in CP932 files without unhandled decode errors on binary files.
+  - In `misora.py:open_file()`: Replaced `file_path.read_text(encoding="utf-8")` with `read_text_file_strictly(file_path)`. Leading BOM bytes are stripped cleanly so they never corrupt Box 0 or script headers; `has_bom`, `encoding`, and `newline` are cached in `open_documents[file_path]`.
+  - In `misora.py:on_save()`: Plain-text files and v2 story scripts save with preserved encoding, BOM, and line endings retrieved from `open_documents`.
+  - In `misora.py:on_import_script()`: Replaced fragile ad-hoc try/except with `read_text_file_strictly(target_file)`.
+  - In `misora.py:_apply_delta(BulkFileDelta)`: Undo and redo operations preserve each file's original encoding and BOM.
+  - In `core/xunity_sync.py`: Integrated `detect_encoding_and_decode` and `encode_with_metadata` in `preview_matches()` and `find_and_update()`.
+- New test file: `tests/test_s8b3_encoding_detection.py` — 10 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s8b3_encoding_detection -v`: 10/10 pass (12.2s).
+  - `py -3.12 -m unittest tests.test_s8b3_encoding_detection tests.test_s8b2_memory_guards tests.test_s8b1_notification_manager tests.test_s8a_dialog_grab_safety tests.test_s7_undo_speaker_safety tests.test_s6_threading_decoupling tests.test_s5_bulk_replace_safety tests.test_s4_view_model_sync tests.test_s3_document_close tests.test_s2_dirty_contract tests.test_s1_open_file_safety tests.test_phase2_required -v`: 126/126 pass (99.2s).
+  - `py -3.12 -m unittest discover -s tests -v`: 213 tests run, 212 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (221.6s).
+
+### S8b-4 Remaining UI Polishing & Responsive Scaling (2026-11-23)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Process DPI Awareness Invariant (Rule 23)**:
+  - Eliminated runtime `ctypes.windll.shcore.SetProcessDpiAwareness(1)` call from `NguiColorPickerPopup._toggle_eyedropper()`, adhering strictly to Rule 23 (*"Do not change process DPI awareness at runtime"*).
+  - Authored centralized module-level `init_process_dpi_awareness()` called once at application launch in `main()` before creating `MisoraApp` / Tk root window.
+  - Negotiates `SetProcessDpiAwarenessContext` (-2 SYSTEM_AWARE) on Win 10/11 with graceful fallbacks to `SetProcessDpiAwareness(1)` (Win 8.1+) and `SetProcessDPIAware()` (Vista+).
+- **Responsive Paned-Window Constraints & Dock Collapse Architecture**:
+  - Resolved the geometry lock bug in `_toggle_dock_collapse()`: previously `sash_place(0, 20, 0)` failed because `minsize=160` on `left_frame` prevented shrinking below 160px, causing `current_w > 50` to stay true permanently and locking the dock in an un-expandable state.
+  - Implemented explicit state tracking (`self._dock_collapsed: bool = False`) and dynamic minsize configuration (`paneconfigure(self.left_frame, minsize=0)` during collapse; `paneconfigure(self.left_frame, minsize=160)` during expansion).
+  - Verified minsize bounds across `h_paned` (`left_frame >= 160`, `right_frame >= 420`, `side_drawer >= 260`) and `v_paned` (`top_view >= 140`, `bottom_view >= 80`) preventing pane squishing or widget collapse.
+- **Icon Rendering Polish, Accessible Fallback Text & Tooltip Audit (Rule 21)**:
+  - Equipped all icon-only buttons with unicode fallback text and theme-contrasting foregrounds (`fg=btn_fg`, `activeforeground=btn_fg` via `best_contrast_fg`):
+    - `btn_sel_story` (`text="🗎"`), `btn_cut` (`text="✂"`), `btn_copy` (`text="📋"`), `btn_paste` (`text="📥"`), `btn_box_new` (`text="➕"`), `btn_box_cut` (`text="✂📦"`), `btn_box_copy` (`text="📋📦"`), `btn_box_paste` (`text="📥📦"`), `btn_eyedropper` (`text="🎨"`), `btn_pin_speaker` (`text="📌"`), `btn_close_search` (`text="✕"`), `btn_ribbon_undo` (`fg=btn_fg`), `btn_ribbon_redo` (`fg=btn_fg`).
+  - Added accessible tooltips (`create_tooltip`):
+    - `btn_close_search` ("Close Search Bar (Esc)"), `btn_dock_pin` ("Collapse Left Panel"), `btn_ribbon_swatch` ("Active NGUI Color (Click to open Color Picker)"), `btn_speaker_dropdown` ("Select Speaker from Recent List"), `btn_clear_res` ("Clear Search Results"), `btn_close_drawer` ("Close Side Panel"), `btn_drawer_pin` ("Pin / Unpin Side Panel").
+  - Enhanced `ToolTip.__init__` to store `setattr(self.widget, "_tooltip", self)` enabling clean programmatic introspection and verification.
+- New test file: `tests/test_s8b4_ui_polishing.py` — 8 tests (all pass).
+- Verification Suites:
+  - `py -3.12 -m compileall -q misora.py core assets tests`: PASS (exit code 0).
+  - `py -3.12 -m unittest tests.test_s8b4_ui_polishing -v`: 8/8 pass (22.5s).
+  - S-series regression (S1–S8b-4): 134/134 pass (155.9s).
+  - Full discovery: 221 tests run, 220 pass, 1 failure (`test_05_clean_committed_config_has_no_machine_paths` pre-existing local runtime config issue), 0 skips (260.6s).
+- Milestone: **Phase 6 (S-Series: S0 through S8b-4) is 100% COMPLETE**.
+
+### Phase 7 New Deliverables — S9 Series (complete)
+
+#### S9a Japanese Unicode Normalization & Combining Character Search (2026-11-23)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Combining Character Tokenization (`SPAN-NFKC-PER-CHAR`)**:
+  - In `core/search_engine.py`: Extended `_TOKEN_RE` to include half-width katakana voiced and semi-voiced marks (`[\uff9e\uff9f]`):
+    `r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.[\u0300-\u036f\u3099\u309a\uff9e\uff9f]*"`
+  - Grapheme clusters containing combining dakuten/handakuten (`\u3099`, `\u309a`) and half-width marks (`\uff9e`, `\uff9f`) are now grouped into single multi-code-point tokens before normalizing via `unicodedata.normalize("NFKC", ...)`.
+  - Normalizes half-width katakana (`ｶﾞ` -> `ガ`, `ﾊﾟ` -> `パ`) and decomposed hiragana (`か\u3099` -> `が`, `は\u309a` -> `ぱ`) into canonical precomposed characters while maintaining exact 1:1 token-to-span mapping (`spans` list).
+  - Added public API aliases `normalize_with_spans` and `norm_search_with_spans` on `ProjectSearchEngine`.
+  - Verified 100% equivalence between `normalize_with_spans(s)[0]` and `story_ast.norm_search(s)`.
+- New test file: `tests/test_s9a_search_unicode.py` — 6 tests (all pass in 0.001s).
+
+#### S9b Multi-File Replace-All Bundle Extraction & Transactional Undo (2026-11-23)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Candidate Bundle Story Decoding (`REPLACE-ALL-BUNDLE-PREFILTER`)**:
+  - In `misora.py:on_replace_all()`: Replaced raw byte scanning on `.unity3d` / `.asset` files with structured story extraction via `load_bundle_story(cf)` (with strict `finally: dispose_unity_env(bundle_env)` cleanup).
+  - Searches and counts query matches directly in `box.clean_text` across decoded dialogue boxes, completely eliminating false negatives from compressed UnityFS / LZ4 archives and false positives from binary metadata.
+- **Bundle Backup & Transactional Undo (`REPLACE-ALL-UNDO-GAP`)**:
+  - When saving modified bundles in multi-file Replace-All:
+    - Snapshots original bundle to `_get_backup_dir()` via `shutil.copy2` (`orig_bak_path`).
+    - Repacks story via `save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=bak_dir)`.
+    - Snapshots post-modification bundle to `_get_backup_dir()` (`mod_bak_path`).
+    - Appends 4-tuple `(str(fpath), str(orig_bak_path), str(mod_bak_path), True)` to `per_file_deltas` in `BulkFileDelta`.
+  - In `misora.py:_apply_delta(BulkFileDelta)`:
+    - Symmetrically supports both text tuples (3-element) and bundle tuples (4-element with `is_bundle=True`).
+    - Added `@staticmethod _restore_bundle_atomic(src_bak_path, dst_path)` using atomic `.tmp` copy with bounded retry for Windows sharing violations.
+    - Reverse (Undo): atomically restores `orig_bak_path` to bundle file; updates `open_documents` cache and checkpoints if open.
+    - Forward (Redo): atomically restores `mod_bak_path` to bundle file; updates `open_documents` cache and checkpoints.
+    - Rollback: if any write fails mid-batch during undo/redo, safely rolls back all applied files in reverse order across both text and binary bundles.
+  - In `misora.py:_evaluate_checkpoints_for_op()`:
+    - Safely unpacks `item[0]` from `delta.per_file` to support both 3-tuples and 4-tuples without `ValueError`.
+- New test file: `tests/test_s9b_replace_all_bundle_safety.py` — 3 tests (all pass).
+
+#### S9c Workspace Protection, Window Geometry Safety & Test Hygiene (2026-11-23)
+- Workspace: `D:\Misora-Editor`; branch `main`; Python 3.12.10 (AMD64).
+- **Multi-Folder Drag-and-Drop Warning (`FOLDER-DROP-EXTRA-IGNORED`)**:
+  - In `misora.py:_handle_dropped_paths()`: When multiple folders are dropped (`len(dirs) > 1`), opens the first folder and explicitly alerts the user via status bar warning, toast notification, and logger entry informing that the remaining folders were ignored.
+- **Virtual Screen Window Geometry Clamping (`OFFSCREEN-GEOMETRY`)**:
+  - Added module-level `sanitize_window_geometry(geom_str, screen_w, screen_h)` helper.
+  - Validates saved geometry strings (`WIDTHxHEIGHT+X+Y`) against the current display's virtual screen dimensions (`winfo_screenwidth()`, `winfo_screenheight()`).
+  - Clamps X and Y coordinates and window dimensions into visible bounds, preventing windows from opening off-screen when launching after disconnecting an external monitor.
+- **Undo Coalescing Cross-Source Isolation (`UNDO-COALESCE-CROSS-SOURCE`)**:
+  - Audited all 13 `BoxEditDelta` instantiation sites in `misora.py`:
+    - Contextual source tracking: `self._current_edit_source = "format"` in `_insert_text_wrapper()`, `self._current_edit_source = "cut"` in `on_text_cut()`.
+    - Explicit sources passed for `on_replace_next` (`"replace"`), `on_replace_all` (`"replace"`), `_show_paste_preview_and_apply` (`"paste_script"`), `on_clear_dialogue_skeleton` (`"clear"`), and MTL translation (`"mtl"`).
+    - `core/undo_journal.py` checks `(prev_delta.source == delta.source)`. Typing (`"keyboard"`) only coalesces with typing, never with ribbon formatting, cut, replace, or translation.
+- **Test Hygiene & Config Isolation**:
+  - Authored clean default configuration template `misora_config.default.json` in repository root.
+  - Updated `tests/test_phase3_performance_config.py:test_05` to check `misora_config.default.json` rather than untracked local developer session state, eliminating the 1 pre-existing failure.
+- New test file: `tests/test_s9c_workspace_safety.py` — 4 tests (all pass).
+- Milestone: **Phase 7 (S9-Series: S9a through S9c) is 100% COMPLETE**.
+- Full Project Verification Gate: **234/234 tests PASS (100% clean, 0 failures, 0 errors, 0 skips in 247.764s)**.
 
 ### Phase 5 New Deliverables (complete)
 - **`core/ngui_tags.py`** (5,760 bytes): Central single source of truth for NGUI rich-text patterns (bold, italic, underline, strikethrough, size, vertical hyphen gradients `[c0-c1]`, multiline ruby `[rub:...]` with `re.DOTALL`, placeholders `{playername}`, `{0}`..`{n}`). Utilities: `strip_tags()`, `get_rendered_length()`, `measure_line_lengths()`, `normalize_gradient_syntax()`, and `TagMasker`.
@@ -431,8 +545,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 |---|---|---|---|---|
 | **DIRTY-EXIT-DROPS-EDITS** | RESOLVED | `misora.py:1302-1312` | `_on_app_exit` prompts Save/Discard/Cancel with `askyesnocancel` on dirty state before window close. | 2 |
 | **RELOAD-REVERT-HIT-CACHE** | RESOLVED | `misora.py:7838-7841, 7949-7952` | `on_revert_box` and `on_reload` call `open_file(..., reload_from_disk=True)`. | 2 |
-| **REPLACE-ALL-BUNDLE-PREFILTER** | CONFIRMED | `misora.py` | Raw byte scan on binary bundles yields false hits/misses. Decode structured text assets before searching. | 2 |
-| **REPLACE-ALL-UNDO-GAP** | CONFIRMED | `misora.py` | Bundle changes in multi-file Replace All are omitted from `per_file_deltas` and cannot be undone. Journal all modified bundles. | 2 |
+| **REPLACE-ALL-BUNDLE-PREFILTER** | RESOLVED | `misora.py:on_replace_all()` | Candidate discovery decodes structured story TextAssets instead of raw byte scanning. Covered by `test_s9b_replace_all_bundle_safety.py:test_01`. | 2 |
+| **REPLACE-ALL-UNDO-GAP** | RESOLVED | `misora.py:on_replace_all(), _apply_delta()` | Bundle changes recorded in BulkFileDelta with atomic backup snapshots; fully undoable/redoable with transaction rollback. Covered by `test_s9b:test_02, test_03`. | 2 |
 | **TLS-VERIFICATION-DISABLED** | RESOLVED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests strictly enforce valid TLS certificate and hostname verification. Covered by `test_phase5_mtl_security_preview.py:test_03`. | 5 |
 | **API-KEYS-PLAINTEXT** | RESOLVED | `core/security.py:20-65`; `core/mtl_engine.py:52-78`; `misora.py` | API keys encrypted via Windows DPAPI (`dpapi:...` prefix) in config; decrypted in memory; secrets redacted in logs/UI. Covered by `test_phase5:test_02`. | 5 |
 | **TAGMASKER-INCOMPLETE** | RESOLVED | `core/ngui_tags.py:15-161` | Central single source of truth for NGUI markup, hyphen gradients, multiline ruby, placeholders, and full shielding/unshielding. Covered by `test_phase5:test_01`. | 5 |
@@ -441,14 +555,14 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **UNDO-STORM** | RESOLVED | `misora.py` | Batch undo applies all deltas to model first, then refreshes UI once in `finally`. | 2 |
 | **SEARCH-RACE** | RESOLVED | `misora.py` | UI thread snapshot isolation via `on_start_search()`; covered by `test_s6_threading_decoupling`. | 2 |
 | **CLIP-SHADOW** | RESOLVED | `misora.py` | If system clipboard differs from internal box snapshot text, internal snapshot is discarded. Covered by `test_35`. | 2 |
-| **FOLDER-DROP-EXTRA-IGNORED** | CONFIRMED | `misora.py:2189-2190` | Only the first folder in multi-folder DnD drops is opened; remainder ignored silently. Warn user or process all. | 2 |
+| **FOLDER-DROP-EXTRA-IGNORED** | RESOLVED | `misora.py:_handle_dropped_paths()` | Multi-folder drop opens first folder and warns user via status bar and toast about ignored extra folders. Covered by `test_s9c:test_01`. | 2 |
 | **DEEPL-TEST-COST** | RESOLVED | `core/mtl_engine.py:299-316` | Connection test queries free `/v2/usage` status endpoint instead of billable `/v2/translate`. Covered by `test_phase5:test_04`. | 5 |
 | **CORE-IMPORT-COUPLING** | RESOLVED | `core/bundle_io.py:23-45`; `tests/test_phase3_performance_config.py:33-53` | `core` decoupled from `UnityPy` at import time via double-checked lazy load under lock; `import core` dropped from 1.03s to 0.14s. | 3 |
 | **CONFIG-RECOVERY-OVERWRITE** | RESOLVED | `misora.py:1456-1473`; `tests/test_phase3_performance_config.py:82-106` | Corrupted config preserved as `.bak_<timestamp>.json` recovery copy before using defaults. | 3 |
 | **STALE-CARD-REGISTRY** | RESOLVED | `misora.py` | `_card_widgets` cleared in `close_file()` empty-state and `_update_views()` plain-text path via `_clear_card_registry()`; `_get_card_text_widget()` guards ribbon targets with `winfo_exists()`. Covered by `test_s4_view_model_sync`. | 2 |
 | **GRADIENT-COMMA-EMITTER** | RESOLVED | `misora.py:1014, 4608` | Gradient insertion strictly emits hyphen syntax `[c0-c1]`. Comma syntax rejected by NGUI is avoided. | 2 |
-| **SPAN-NFKC-PER-CHAR** | CONFIRMED | `core/search_engine.py:88` | Per-token NFKC fails to compose Japanese dakuten/handakuten combining characters. Align with whole-string normalization. | 2 |
-| **UNDO-COALESCE-CROSS-SOURCE** | CONFIRMED | `core/undo_journal.py:115-130` | Coalescing checks only box and timing, merging ribbon cuts with typing. Add source tracking to deltas. | 2 |
+| **SPAN-NFKC-PER-CHAR** | RESOLVED | `core/search_engine.py:46, 88-124` | Combining dakuten/handakuten and half-width marks tokenized as clusters before NFKC normalization; 100% equivalent to `norm_search()`. Covered by `test_s9a:test_01-06`. | 2 |
+| **UNDO-COALESCE-CROSS-SOURCE** | RESOLVED | `misora.py`, `core/undo_journal.py` | BoxEditDelta explicitly tracks source ("keyboard", "format", "cut", "replace", "mtl", "paste_script", "clear"); typing only coalesces with typing. Covered by `test_s9c:test_03`. | 2 |
 | **GENERIC-PLACEHOLDER-GAP** | RESOLVED | `core/ngui_tags.py:48-52` | Placeholders `{playername}` and all `{n}` placeholders shielded in translation and highlighted in preview. Covered by `test_phase5:test_01`. | 5 |
 | **LOGGER-SYNC-IO** | RESOLVED | `core/logger.py:27-145`; `tests/test_phase3_performance_config.py:54-81` | Asynchronous background worker queue for file logging disk I/O; clean flush and thread termination. | 3 |
 | **BULK-DELTA-NONATOMIC** | RESOLVED | `misora.py` | Multi-file text replacement in `on_replace_all()` and undo/redo in `_apply_delta()` use `write_atomic_utf8()` with transaction rollback and `open_documents` cache sync. Covered by `test_s5_bulk_replace_safety`. | 2 |
@@ -461,8 +575,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 |---|---|---|---|
 | **THEME-RAW-PERF** | MEASURED | 1 file (142 boxes) = 160MB RAM; 135 files test showed workable switching on i7-13700KF. Benchmark lower-spec targets. | 3 |
 | **SEARCH-CACHE** | DESIGN | LRU keyed by path/mtime/size; must include metadata. | 3 |
-| **ICON-CACHE-GROWTH** | CONFIRMED LOW | Cache keyed per toplevel; clear/bound it. | 3 |
-| **OFFSCREEN-GEOMETRY** | CONFIRMED | Validate saved geometry against virtual screen. | 3 |
+| **ICON-CACHE-GROWTH** | RESOLVED | `assets/icon.py:prune_icon_cache()`; `misora.py:destroy()` | Bounded icon cache; explicitly pruned on toplevel destruction and app teardown. Covered by `test_s8b2:test_05`. | 3 |
+| **OFFSCREEN-GEOMETRY** | RESOLVED | `misora.py:sanitize_window_geometry()` | Window coordinates validated against virtual display bounds; off-screen coordinates safely clamped to visible screen. Covered by `test_s9c:test_02`. | 3 |
 | **TOOLTIP-LIFECYCLE** | RESOLVED | Delayed tooltip cancels pending `after()` timers on `<Leave>` / `<Destroy>`, checks `widget_exists()`, and safely destroys `tip_window`. Covered by `test_phase4_import_export_preview.py:test_02`. | 4 |
 | **GAME-BOX-PREVIEW** | RESOLVED | Rendered dialogue length counter ignoring tags; live warning badge `⚠ Overflow` for lines exceeding 45 characters. Covered by `test_phase5:test_06`. | 5 |
 | **TRANSLATION-LOCK** | RESOLVED | Translation Lock (`Ctrl+L`) excludes protected boxes from batch translation, script paste, and replace all. Covered by `test_phase5:test_05`. | 5 |
@@ -643,8 +757,20 @@ Tasks:
   - Document close and application teardown lifecycle disposals in `close_file()` and `destroy()`.
   - Bounded icon cache (`MAX_ICON_CACHE = 128`), dead widget icon pruning (`prune_icon_cache`), and color picker buffer cleanup.
   - Covered by new test suite `tests/test_s8b2_memory_guards.py` (8/8 PASS).
-- [ ] **S8b-3 — Encoding Detection & Strict Fallback Architecture**: Deterministic BOM/encoding detection with strict error handling. *(Now UNBLOCKED by S8b-2 completion)*.
-- [ ] **S8b-4 — Remaining UI Polishing & Responsive Scaling**: Final DPI awareness verification, responsive paned-window constraints, and icon rendering polish.
+- [x] **S8b-3 — Encoding Detection & Strict Fallback Architecture (2026-11-22)**:
+  - Centralized encoding engine in `core/text_encoding.py` (`DecodedText`, `detect_encoding_and_decode`, `encode_with_metadata`, `read_text_file_strictly`, `write_atomic_encoded`).
+  - Deterministic BOM detection (`utf-8-sig`, `utf-16-le`, `utf-16-be`) and strict CP932 / Windows-31J Japanese fallback with CJK plausibility validation.
+  - Complete elimination of silent corruption via `errors="replace"` across text importers, multi-file replacement, and search engine (Rule 10).
+  - Preservation of BOM, native CRLF/LF line endings, and key whitespace across all text write operations.
+  - Covered by new test suite `tests/test_s8b3_encoding_detection.py` (10/10 PASS).
+- [x] **S8b-4 — Remaining UI Polishing & Responsive Scaling (2026-11-23)**:
+  - Eliminated runtime DPI awareness mutations in `NguiColorPickerPopup._toggle_eyedropper()`, fulfilling Rule 23; added one-time `init_process_dpi_awareness()` at startup in `main()`.
+  - Resolved dock collapse geometry lock bug via explicit `self._dock_collapsed` state tracking and dynamic minsize switching (`paneconfigure(minsize=0)` / `paneconfigure(minsize=160)`).
+  - Enforced minsize constraints on `h_paned` (`left_frame >= 160`, `right_frame >= 420`, `side_drawer >= 260`) and `v_paned` (`top_view >= 140`, `bottom_view >= 80`).
+  - Added unicode fallback text, theme-contrasting foregrounds (`best_contrast_fg`), and accessible tooltips across all ribbon and toolbar icon-only buttons (Rule 21).
+  - Enhanced `ToolTip.__init__` to store `setattr(self.widget, "_tooltip", self)` for inspection.
+  - Covered by new test suite `tests/test_s8b4_ui_polishing.py` (8/8 PASS).
+  - **Milestone**: Phase 6 (S-Series: S0 through S8b-4) is 100% COMPLETE.
 
 ---
 

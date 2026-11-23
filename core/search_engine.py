@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 
 from .bundle_io import load_bundle_story, dispose_unity_env
+from .text_encoding import read_text_file_strictly
 from .story_ast import (
     ALL_WS_RE,
     BREAK_RE,
@@ -25,7 +26,7 @@ from .story_ast import (
 )
 
 _TOKEN_RE = re.compile(
-    r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.[\u0300-\u036f\u3099\u309a]*",
+    r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.[\u0300-\u036f\u3099\u309a\uff9e\uff9f]*",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -110,6 +111,10 @@ class ProjectSearchEngine:
                 i += 1
 
         return "".join(collapsed_chars), collapsed_spans
+
+    # Public aliases
+    norm_search_with_spans = _norm_search_with_spans
+    normalize_with_spans = _norm_search_with_spans
 
     @staticmethod
     def _build_highlighted_snippet(
@@ -344,7 +349,8 @@ class ProjectSearchEngine:
         # 2. Search in plain text files
         elif ext in (".txt", ".json", ".csv", ".tsv") and options.include_text:
             try:
-                lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                decoded = read_text_file_strictly(file_path)
+                lines = decoded.text.splitlines()
                 for line_idx, line in enumerate(lines, 1):
                     matches = matcher(line)
                     for start, end, _match_text in matches:

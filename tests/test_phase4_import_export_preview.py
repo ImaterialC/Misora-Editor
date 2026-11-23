@@ -79,7 +79,7 @@ class TestPhase4ImportExportPreview(unittest.TestCase):
 
     def test_01_version_unification(self):
         """Single source of truth for version in root __init__.__version__ (Rule 21)."""
-        expected_version = "1.3.3"
+        expected_version = "1.4.0"
 
         root_init_path = SCRIPT_DIR / "__init__.py"
         self.assertTrue(root_init_path.is_file())

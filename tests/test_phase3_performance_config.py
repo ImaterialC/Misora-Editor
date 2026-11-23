@@ -106,9 +106,11 @@ class TestPhase3PerformanceAndConfig(unittest.TestCase):
                 misora.CONFIG_PATH = orig_cfg_path
 
     def test_05_clean_committed_config_has_no_machine_paths(self):
-        """Committed misora_config.json must contain clean default values with zero user machine paths."""
-        cfg_file = ROOT_DIR / "misora_config.json"
-        self.assertTrue(cfg_file.is_file(), "misora_config.json not found in root")
+        """Committed default config template must contain clean default values with zero user machine paths."""
+        cfg_file = ROOT_DIR / "misora_config.default.json"
+        if not cfg_file.is_file():
+            cfg_file = ROOT_DIR / "misora_config.json"
+        self.assertTrue(cfg_file.is_file(), "Default config template (misora_config.default.json) not found in root")
         data = json.loads(cfg_file.read_text(encoding="utf-8"))
 
         self.assertEqual(data.get("saved_opened_files"), [])

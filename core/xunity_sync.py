@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .story_ast import norm_search
+from .text_encoding import detect_encoding_and_decode, encode_with_metadata
 
 
 @dataclass
@@ -110,14 +111,12 @@ class XUnitySyncManager:
 
                 try:
                     raw_bytes = tf.read_bytes()
-                    has_bom = raw_bytes.startswith(b"\xef\xbb\xbf")
-                    content_bytes = raw_bytes[3:] if has_bom else raw_bytes
-                    # Strict decode: skip file if invalid UTF-8
-                    text = content_bytes.decode("utf-8")
+                    decoded = detect_encoding_and_decode(raw_bytes)
+                    text = decoded.text
                 except Exception:
                     continue
 
-                newline = "\r\n" if "\r\n" in text else "\n"
+                newline = decoded.newline or ("\r\n" if "\r\n" in text else "\n")
                 lines = text.split(newline)
 
                 for idx, line in enumerate(lines, 1):
@@ -169,15 +168,13 @@ class XUnitySyncManager:
 
                 try:
                     raw_bytes = tf.read_bytes()
-                    has_bom = raw_bytes.startswith(b"\xef\xbb\xbf")
-                    content_bytes = raw_bytes[3:] if has_bom else raw_bytes
-                    # Strict UTF-8 decode
-                    text = content_bytes.decode("utf-8")
+                    decoded = detect_encoding_and_decode(raw_bytes)
+                    text = decoded.text
                 except Exception:
                     continue
 
                 # Preserve native line endings
-                newline = "\r\n" if "\r\n" in text else "\n"
+                newline = decoded.newline or ("\r\n" if "\r\n" in text else "\n")
                 lines = text.split(newline)
                 file_modified = False
                 new_lines = []
@@ -212,9 +209,14 @@ class XUnitySyncManager:
                             bak_path = tf.with_suffix(f".bak_{ts}")
                         shutil.copy2(tf, bak_path)
 
-                    # Reassemble with preserved BOM and native line endings
+                    # Reassemble with preserved BOM, encoding, and native line endings
                     updated_text = newline.join(new_lines)
-                    out_bytes = (b"\xef\xbb\xbf" if has_bom else b"") + updated_text.encode("utf-8")
+                    out_bytes = encode_with_metadata(
+                        updated_text,
+                        encoding=decoded.encoding,
+                        has_bom=decoded.has_bom,
+                        newline=decoded.newline,
+                    )
 
                     # Atomic write via same-directory tmp file
                     tmp_file = tf.with_name(f"{tf.name}.{os.getpid()}.tmp")

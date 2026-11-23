@@ -33,7 +33,7 @@ def _load_app_version() -> str:
                         return parts[1].strip().strip('"\'')
     except Exception:
         pass
-    return "1.3.3"
+    return "1.4.0"
 
 _VERSION = _load_app_version()
 
