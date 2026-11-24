@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S12 — Logger Flush Barrier/Teardown, DPAPI Fail-Closed, Reload Env Disposal, Deferred Startup & Splash Safety
+- **Session Scope:** BUG-32, BUG-33, BUG-34, BUG-35, BUG-36 (Track 1 · Group F2 (DEP-9 part 1 — Split from Ribbon per Grok R2)).
+- **BUG-32 (`core/logger.py`, `misora.py`):**
+  - Replaced `queue.empty()` polling in `MisoraLogger.flush()` with a true completion barrier using `_file_queue.all_tasks_done` / `unfinished_tasks` and `time.monotonic()` deadline wait, ensuring `clear_log_file()` never races an in-flight background disk write.
+  - Placed `_file_queue.task_done()` inside a `finally:` block around `_write_entry_to_file(entry)` in `_file_writer_loop()` so disk I/O exceptions cannot deadlock `flush()`.
+  - In `MisoraApp.destroy()`, `_on_app_exit()`, and `_on_root_destroy()`, swept all pending Tk `after` jobs via `tk.call("after", "info")` first, executed `super().destroy()`, and invoked `self.logger.close()` last inside safe `try/except` blocks to cleanly terminate background writer threads.
+- **BUG-33 (`core/security.py`, `core/mtl_engine.py`, `misora.py` — P1):**
+  - Defined `DPAPISecurityError(RuntimeError)` in `core/security.py`.
+  - Updated `protect_secret()` to fail closed on Windows DPAPI `CryptProtectData` failure by raising `DPAPISecurityError` instead of silently returning unencrypted plaintext, while preserving non-Windows fallback and already-protected `dpapi:...` blobs.
+  - Propagated `DPAPISecurityError` across all secret fields in `MTLConfig.to_dict(secure=True)`.
+  - In `MisoraApp._save_user_prefs()`, serialized the full config payload in memory before opening files, caught `DPAPISecurityError` to abort saving, surfaced a clear error toast, and prevented existing `misora_config.json` from being truncated or corrupted with plaintext credentials.
+  - In `unprotect_secret()`, emitted `RuntimeWarning` and preserved the `dpapi:...` ciphertext on `CryptUnprotectData` failure instead of returning `""`, preventing credential loss upon reload.
+- **BUG-34 (`misora.py:open_file()`):**
+  - During `reload_from_disk=True`, explicitly disposed prior `open_documents[file_path]['env']` via `dispose_unity_env()` and called `prior_entry.clear()` before overwriting the cache entry, breaking circular reference cycles and enabling immediate garbage collection.
+- **BUG-35 (`misora.py:MisoraApp.__init__()` — DEP-9 / AGENTS.md §22):**
+  - Removed synchronous `open_file(initial_path)` and session restore loops from pre-deiconify splash initialization; revealed main window immediately via `self.deiconify()`.
+  - Deferred initial path and session files restoration to the Tk idle loop via `self.after_idle(_deferred_restore)`, guarded by `self.winfo_exists()`, preserving file-vs-folder detection and accommodating both `str` and `Path` entries.
+- **BUG-36 (`assets/splash.py`):**
+  - Implemented safe case-insensitive splash sorting function `_splash_sort_key()` using `Path(name).stem` and numeric suffix detection (`stem[7:].isdigit()`), preventing import-time `ValueError` crashes from non-numeric filenames or uppercase extensions like `Splash_2.JPG`.
+- **Test Suite:** Added `tests/test_p3_s12_lifecycle_security.py` with 5 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 304 tests across 34 modules (264 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `assets/splash.py`, `core/logger.py`, `core/security.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s12_lifecycle_security.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/script_codec.py`, `core/search_engine.py`, ribbon/shortcuts/tooltips.
+
 ### S11 — Main-Thread Queue-Only Async MTL, Stale-Result Identity Guard & Safe Batch Cancel
 - **Session Scope:** BUG-14, BUG-27 (Track 1 · Group F1 (DEP-6 — Split from XUAT per Grok R1)).
 - **BUG-27 (`core/mtl_engine.py`, `misora.py` — DEP-6):**

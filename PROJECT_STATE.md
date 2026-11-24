@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S11 Verification Baseline — 2026-11-24):
+Unit Test Suite (S12 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 297 tests across 33 modules (257 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 304 tests across 34 modules (264 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 297 tests (exact disk discovery):
+Test suites included in the 304 tests (exact disk discovery):
+  tests/test_p3_s12_lifecycle_security.py   — 7 S12 logger flush barrier, DPAPI fail-closed, reload env disposal, deferred startup & splash safety tests (all pass)
   tests/test_p3_s11_mtl_threading.py        — 9 S11 main-thread queue-only async MTL, stale-result identity guard & safe batch cancel tests (all pass)
   tests/test_p3_s10_xuat_integrity.py       — 4 S10 immutable box.uid XUAT JP keys, save conflict preview gate & atomic XUAT dictionary writes tests (all pass)
   tests/test_p3_s09_replace_all_backups.py  — 9 S09 multi-file replace-all cache keys, shared matcher, closed-file undo & collision-resistant backups tests (all pass)
@@ -92,6 +93,30 @@ Test suites included in the 297 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S12 Logger Flush Barrier/Teardown, DPAPI Fail-Closed, Reload Env Disposal, Deferred Startup & Splash Safety (2026-11-24)
+- **Session Scope:** BUG-32, BUG-33, BUG-34, BUG-35, BUG-36 (Track 1 · Group F2 / DEP-9 part 1 — Split from Ribbon per Grok R2).
+- **BUG-32 (`core/logger.py`, `misora.py`):**
+  - Replaced `queue.empty()` polling in `MisoraLogger.flush()` with `_file_queue.all_tasks_done` / `unfinished_tasks` completion barrier and `time.monotonic()` deadline wait, ensuring `clear_log_file()` never races an in-flight background disk write.
+  - Placed `_file_queue.task_done()` inside a `finally:` block around `_write_entry_to_file(entry)` in `_file_writer_loop()` so disk I/O errors cannot deadlock `flush()`.
+  - In `MisoraApp.destroy()`, `_on_app_exit()`, and `_on_root_destroy()`, swept all pending Tk `after` jobs via `tk.call("after", "info")` first, executed `super().destroy()`, and invoked `self.logger.close()` last inside safe `try/except` blocks to cleanly terminate background writer threads.
+- **BUG-33 (`core/security.py`, `core/mtl_engine.py`, `misora.py` — P1):**
+  - Defined `DPAPISecurityError(RuntimeError)` in `core/security.py`.
+  - Updated `protect_secret()` to fail closed on Windows DPAPI `CryptProtectData` failure by raising `DPAPISecurityError` instead of silently returning unencrypted plaintext, while preserving non-Windows fallback and already-protected `dpapi:...` blobs.
+  - Propagated `DPAPISecurityError` across all secret fields in `MTLConfig.to_dict(secure=True)`.
+  - In `MisoraApp._save_user_prefs()`, serialized the full config payload in memory before opening files, caught `DPAPISecurityError` to abort saving, surfaced a clear error toast, and prevented existing `misora_config.json` from being truncated or corrupted with plaintext credentials.
+  - In `unprotect_secret()`, emitted `RuntimeWarning` and preserved the `dpapi:...` ciphertext on `CryptUnprotectData` failure instead of returning `""`, preventing credential loss upon reload.
+- **BUG-34 (`misora.py:open_file()`):**
+  - During `reload_from_disk=True`, explicitly disposed prior `open_documents[file_path]['env']` via `dispose_unity_env()` and called `prior_entry.clear()` before overwriting the cache entry, breaking circular reference cycles and enabling immediate garbage collection.
+- **BUG-35 (`misora.py:MisoraApp.__init__()` — DEP-9 / AGENTS.md §22):**
+  - Removed synchronous `open_file(initial_path)` and session restore loops from pre-deiconify splash initialization; revealed main window immediately via `self.deiconify()`.
+  - Deferred initial path and session files restoration to the Tk idle loop via `self.after_idle(_deferred_restore)`, guarded by `self.winfo_exists()`, preserving file-vs-folder detection and accommodating both `str` and `Path` entries.
+- **BUG-36 (`assets/splash.py`):**
+  - Implemented safe case-insensitive splash sorting function `_splash_sort_key()` using `Path(name).stem` and numeric suffix detection (`stem[7:].isdigit()`), preventing import-time `ValueError` crashes from non-numeric filenames or uppercase extensions like `Splash_2.JPG`.
+- **New Test Suite:** Added `tests/test_p3_s12_lifecycle_security.py` with 5 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 304 tests across 34 modules (264 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `assets/splash.py`, `core/logger.py`, `core/security.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s12_lifecycle_security.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/script_codec.py`, `core/search_engine.py`, ribbon/shortcuts/tooltips.
 
 ### S11 Main-Thread Queue-Only Async MTL, Stale-Result Identity Guard & Safe Batch Cancel (2026-11-24)
 - **Session Scope:** BUG-14, BUG-27 (Track 1 · Group F1 / DEP-6 — Split from XUAT per Grok R1).
@@ -767,7 +792,7 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **REPLACE-ALL-BUNDLE-PREFILTER** | RESOLVED | `misora.py:on_replace_all()` | Candidate discovery decodes structured story TextAssets instead of raw byte scanning. Covered by `test_s9b_replace_all_bundle_safety.py:test_01`. | 2 |
 | **REPLACE-ALL-UNDO-GAP** | RESOLVED | `misora.py:on_replace_all(), _apply_delta()` | Bundle changes recorded in BulkFileDelta with atomic backup snapshots; fully undoable/redoable with transaction rollback. Covered by `test_s9b:test_02, test_03`. | 2 |
 | **TLS-VERIFICATION-DISABLED** | RESOLVED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests strictly enforce valid TLS certificate and hostname verification. Covered by `test_phase5_mtl_security_preview.py:test_03`. | 5 |
-| **API-KEYS-PLAINTEXT** | REOPENED (2026-11-24: BUG-33) | `core/security.py:20-65`; `core/mtl_engine.py:52-78`; `misora.py` | Historically encrypted keys via Windows DPAPI (`dpapi:...` prefix) in config (test_phase5:test_02). Reopened for comprehensive secrets redaction and plain text leakage audit under BUG-33. | 5 |
+| **API-KEYS-PLAINTEXT** | RESOLVED (2026-11-24: S12 / BUG-33) | `core/security.py`, `core/mtl_engine.py`, `misora.py` | DPAPISecurityError fail-closed encryption, non-truncating in-memory serialization before save, ciphertext preservation and RuntimeWarning on decryption failure. Covered by `test_p3_s12:test_02`. | 5 |
 | **TAGMASKER-INCOMPLETE** | RESOLVED | `core/ngui_tags.py:15-161` | Central single source of truth for NGUI markup, hyphen gradients, multiline ruby, placeholders, and full shielding/unshielding. Covered by `test_phase5:test_01`. | 5 |
 | **SIZE-RIBBON-NO-COMMIT** | REOPENED (2026-11-24: BUG-28) | `misora.py:6374-6394` | Historically routed font size insertion to central commit (test_37). Reopened for Continuous View ribbon commit target desync under BUG-28. | 2 |
 | **CONTINUOUS-RIBBON-TARGET-STALE** | REOPENED (2026-11-24: BUG-28) | `misora.py` | Historically resolved active card dynamically. Reopened for Continuous View ribbon formatting desync under BUG-28. | 2 |
@@ -811,6 +836,10 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **XUAT-ATOMIC-WRITES** | RESOLVED (2026-11-24: S10 / BUG-26) | `core/xunity_sync.py:find_and_update()` | `write_atomic_encoded()` replaces PID temp file and bare `os.replace`; unique timestamped temp name, bounded Windows retry, UTF-8 BOM, encoding and CRLF/LF preservation. Covered by `test_p3_s10_xuat_integrity:test_probe_2`. | 1 |
 | **BATCH-CANCEL-UNDO-LEAK** | RESOLVED (2026-11-24: S11 / BUG-14) | `misora.py:BatchTranslateDialog` | Track `_batch_open`; safe cancel waits for worker `('done', ...)` before single `end_batch()` on UI thread; prevents unbalanced undo journal batches. Covered by `test_p3_s11_mtl_threading:test_probe_2`. | 1 |
 | **ASYNC-MTL-QUEUE-STALE-GUARD** | RESOLVED (2026-11-24: S11 / BUG-27) | `core/mtl_engine.py`, `misora.py` | Zero `after_idle` from worker threads; main-thread queue delivery across all 4 async paths; 5-stage identity guard (active doc, box_uid re-resolution, src_hash, lock, seq). Covered by `test_p3_s11_mtl_threading:test_probe_1a-1d`. | 1 |
+| **LOGGER-FLUSH-BARRIER-TEARDOWN** | RESOLVED (2026-11-24: S12 / BUG-32) | `core/logger.py`, `misora.py` | Completion barrier via `unfinished_tasks`/`all_tasks_done` with monotonic deadline wait prevents clear_log_file race; teardown closes logger and sweeps after jobs via `tk.call('after', 'info')`. Covered by `test_p3_s12:test_01`. | 3 |
+| **RELOAD-ENV-DISPOSAL** | RESOLVED (2026-11-24: S12 / BUG-34) | `misora.py:open_file()` | Disposes prior `open_documents[path]['env']` via `dispose_unity_env()` and clears entry before cache overwrite on reload_from_disk; breaks circular cycles. Covered by `test_p3_s12:test_03`. | 2 |
+| **DEFERRED-STARTUP-RESTORE** | RESOLVED (2026-11-24: S12 / BUG-35) | `misora.py:MisoraApp.__init__()` | Deiconify executes before session restore; restore deferred to idle loop via `after_idle(_deferred_restore)` with `winfo_exists()` guard. Covered by `test_p3_s12:test_04`. | 3 |
+| **SPLASH-SORT-SAFETY** | RESOLVED (2026-11-24: S12 / BUG-36) | `assets/splash.py` | `_splash_sort_key` extracts numeric stem case-insensitively; non-numeric splash files and uppercase extensions handled safely without import-time `ValueError`. Covered by `test_p3_s12:test_05`. | 4 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 

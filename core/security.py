@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import base64
 import sys
+import warnings
 from typing import Optional
+
+class DPAPISecurityError(RuntimeError):
+    """Raised when Windows DPAPI cryptographic operations fail (BUG-33 / Rule 17)."""
+    pass
 
 # Windows Data Protection API (DPAPI) via ctypes
 if sys.platform == "win32":
@@ -28,10 +33,13 @@ else:
 def protect_secret(plaintext: str) -> str:
     """
     Encrypt a secret string using Windows DPAPI (CryptProtectData).
-    Returns 'dpapi:<base64>' or the plaintext if encryption is unavailable.
+    Returns 'dpapi:<base64>' or the plaintext if encryption is unavailable on non-Windows.
+    Fails closed with DPAPISecurityError on Windows DPAPI encryption failure (BUG-33 / Rule 17).
     """
     if not plaintext or not isinstance(plaintext, str):
         return ""
+    if plaintext.startswith("dpapi:"):
+        return plaintext
     if sys.platform != "win32" or ctypes is None:
         return plaintext
 
@@ -44,7 +52,7 @@ def protect_secret(plaintext: str) -> str:
         out_blob = _DATA_BLOB()
 
         # CryptProtectData(pDataIn, szDataDescr, pOptionalEntropy, pvReserved, pPromptStruct, dwFlags, pDataOut)
-        if ctypes.windll.crypt32.CryptProtectData(
+        ok = ctypes.windll.crypt32.CryptProtectData(
             ctypes.byref(in_blob),
             "Misora Secret",
             None,
@@ -52,19 +60,28 @@ def protect_secret(plaintext: str) -> str:
             None,
             0,
             ctypes.byref(out_blob),
-        ):
+        )
+        if ok:
             encrypted = ctypes.string_at(out_blob.pbData, out_blob.cbData)
             ctypes.windll.kernel32.LocalFree(out_blob.pbData)
             return "dpapi:" + base64.b64encode(encrypted).decode("ascii")
-    except Exception:
-        pass
-    return plaintext
+        raise DPAPISecurityError(
+            "Windows DPAPI encryption failed (CryptProtectData returned 0). "
+            "Refusing to store secret in plaintext."
+        )
+    except DPAPISecurityError:
+        raise
+    except Exception as exc:
+        raise DPAPISecurityError(
+            f"Windows DPAPI encryption failed: {exc}. Refusing to store secret in plaintext."
+        ) from exc
 
 
 def unprotect_secret(ciphertext: str) -> str:
     """
     Decrypt a DPAPI-encrypted secret string ('dpapi:<base64>').
-    Returns the decrypted plaintext, or the original string if not encrypted.
+    Returns the decrypted plaintext, or the original string if not encrypted (legacy config).
+    On decryption failure, emits RuntimeWarning and preserves ciphertext to prevent key wiping (BUG-33).
     """
     if not ciphertext or not isinstance(ciphertext, str):
         return ""
@@ -82,7 +99,7 @@ def unprotect_secret(ciphertext: str) -> str:
         )
         out_blob = _DATA_BLOB()
 
-        if ctypes.windll.crypt32.CryptUnprotectData(
+        ok = ctypes.windll.crypt32.CryptUnprotectData(
             ctypes.byref(in_blob),
             None,
             None,
@@ -90,13 +107,25 @@ def unprotect_secret(ciphertext: str) -> str:
             None,
             0,
             ctypes.byref(out_blob),
-        ):
+        )
+        if ok:
             decrypted = ctypes.string_at(out_blob.pbData, out_blob.cbData)
             ctypes.windll.kernel32.LocalFree(out_blob.pbData)
             return decrypted.decode("utf-8")
+        warnings.warn(
+            "Failed to decrypt DPAPI-protected secret (CryptUnprotectData returned 0); "
+            "preserving encrypted value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return ciphertext
     except Exception:
-        pass
-    return ""
+        warnings.warn(
+            "Failed to decrypt DPAPI-protected secret; preserving encrypted value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return ciphertext
 
 
 def redact_secret(secret: str) -> str:

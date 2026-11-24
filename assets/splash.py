@@ -37,10 +37,18 @@ def _load_app_version() -> str:
 
 _VERSION = _load_app_version()
 
+def _splash_sort_key(name: str) -> tuple[int, int | str]:
+    """Sort key for splash images extracting numeric suffix case-insensitively (BUG-36)."""
+    stem = Path(name).stem
+    if stem.lower().startswith("splash_") and stem[7:].isdigit():
+        return (0, int(stem[7:]))
+    return (1, name.lower())
+
+
 # Auto-discover all Splash_N.jpg files — add new splash images by dropping Splash_N.jpg here
 SPLASH_IMAGES = sorted(
     [p.name for p in SPLASH_DIR.glob("Splash_*.jpg")],
-    key=lambda n: int(n.replace("Splash_", "").replace(".jpg", "")),
+    key=_splash_sort_key,
 )
 SPLASH_W = 600
 SPLASH_H = 400

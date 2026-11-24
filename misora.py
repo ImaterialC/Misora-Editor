@@ -80,6 +80,11 @@ except ImportError:
         read_text_file_strictly, write_atomic_encoded,
     )
 
+try:
+    from misora.core.security import DPAPISecurityError
+except ImportError:
+    from core.security import DPAPISecurityError
+
 CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
 DEBUG_LOG_PATH = SCRIPT_DIR / "misora_debug.log"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -1474,37 +1479,48 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "_saved_sync_xuat") and hasattr(self, "var_sync_xuat"):
             self.var_sync_xuat.set(self._saved_sync_xuat)
 
-        # Restore previous session files during splash so startup never freezes
-        if initial_path and os.path.exists(initial_path):
-            _rpt(0.92, f"Opening {Path(initial_path).name}…")
-            try:
-                self.open_file(initial_path)
-            except Exception:
-                pass
-        elif restore_session and hasattr(self, "_saved_opened_files") and self._saved_opened_files:
-            tot = len(self._saved_opened_files)
-            for idx, fp in enumerate(self._saved_opened_files):
-                if fp.exists():
-                    prog = 0.85 + (0.13 * ((idx + 1) / max(1, tot)))
-                    _rpt(prog, f"Restoring ({idx + 1}/{tot}): {fp.name}…")
-                    try:
-                        self.open_file(fp)
-                    except Exception:
-                        pass
-            if hasattr(self, "_saved_active_file") and self._saved_active_file and self._saved_active_file.exists():
-                try:
-                    self.open_file(self._saved_active_file)
-                except Exception:
-                    pass
-
         _rpt(1.00, "Ready!")
         self.logger.info("UI / Theme / Config", f"Misora initialized. Config path: {CONFIG_PATH}")
 
         if splash:
             splash.close()
 
-        # Reveal the main window (was hidden during splash)
+        # Reveal the main window instantly (DEP-9 / AGENTS.md §22)
         self.deiconify()
+
+        # Defer session file restoration to idle loop so startup never hangs (BUG-35)
+        def _deferred_restore() -> None:
+            if not self.winfo_exists():
+                return
+            if initial_path and os.path.exists(initial_path):
+                init_p = Path(initial_path)
+                if init_p.is_dir():
+                    try:
+                        self._process_opened_folder(init_p, source_label="Initial Path")
+                    except Exception as exc:
+                        self.logger.error("File I/O", f"Failed opening initial folder '{initial_path}': {exc}")
+                else:
+                    try:
+                        self.open_file(init_p)
+                    except Exception as exc:
+                        self.logger.error("File I/O", f"Failed opening initial file '{initial_path}': {exc}")
+            elif restore_session and hasattr(self, "_saved_opened_files") and self._saved_opened_files:
+                for fp in self._saved_opened_files:
+                    fp_exists = Path(fp).exists() if isinstance(fp, (str, Path)) else False
+                    if fp_exists:
+                        try:
+                            self.open_file(fp)
+                        except Exception as exc:
+                            self.logger.error("File I/O", f"Failed restoring session file '{fp}': {exc}")
+                if hasattr(self, "_saved_active_file") and self._saved_active_file:
+                    act_exists = Path(self._saved_active_file).exists() if isinstance(self._saved_active_file, (str, Path)) else False
+                    if act_exists:
+                        try:
+                            self.open_file(self._saved_active_file)
+                        except Exception as exc:
+                            self.logger.error("File I/O", f"Failed activating session file '{self._saved_active_file}': {exc}")
+
+        self.after_idle(_deferred_restore)
 
     def get_icon(self, name: str, size: Tuple[int, int] = (18, 18)) -> Optional[tk.PhotoImage]:
         """Retrieve an illustrated icon PhotoImage bound to this MisoraApp Tk instance."""
@@ -1586,6 +1602,16 @@ class MisoraApp(tk.Tk):
                 if not self._save_document_entry(p):
                     return
 
+        # Sweep pending after jobs first (BUG-32)
+        try:
+            for job_id in self.tk.call("after", "info"):
+                try:
+                    self.after_cancel(job_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         self.logger.info("UI / Theme / Config", "Saving configuration on exit...")
         self._save_user_prefs(silent=True)
         self._cleanup_drag_and_drop()
@@ -1594,6 +1620,14 @@ class MisoraApp(tk.Tk):
     def _on_root_destroy(self, event: tk.Event) -> None:
         if event.widget is self:
             self._destroyed = True
+            try:
+                for job_id in self.tk.call("after", "info"):
+                    try:
+                        self.after_cancel(job_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             if hasattr(self, "_search_poll_job") and self._search_poll_job:
                 try:
                     self.after_cancel(self._search_poll_job)
@@ -1622,6 +1656,16 @@ class MisoraApp(tk.Tk):
 
     def destroy(self) -> None:
         self._destroyed = True
+        # Sweep all pending Tk after jobs first (BUG-32)
+        try:
+            for job_id in self.tk.call("after", "info"):
+                try:
+                    self.after_cancel(job_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         if hasattr(self, "_search_poll_job") and self._search_poll_job:
             try:
                 self.after_cancel(self._search_poll_job)
@@ -1679,7 +1723,15 @@ class MisoraApp(tk.Tk):
             pass
 
         self._cleanup_drag_and_drop()
-        super().destroy()
+        try:
+            super().destroy()
+        finally:
+            # Terminate background logger last inside safe try/except (BUG-32)
+            if hasattr(self, "logger") and self.logger:
+                try:
+                    self.logger.close()
+                except Exception:
+                    pass
 
     # -------------------------------------------------------------------------
     # Persistent Preferences & Contrast-Safe Theme Helpers (#2 & #13)
@@ -1841,12 +1893,22 @@ class MisoraApp(tk.Tk):
                 "continuous_view": bool(self.var_continuous_view.get()) if hasattr(self, "var_continuous_view") else False,
                 "sync_xuat": bool(self.var_sync_xuat.get()) if hasattr(self, "var_sync_xuat") else True,
             }
+            # In-memory serialization before file write ensures DPAPISecurityError never truncates config (BUG-33)
+            encoded_payload = json.dumps(payload, indent=2, ensure_ascii=False)
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = CONFIG_PATH.with_suffix(".json.tmp")
-            tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp_path.write_text(encoded_payload, encoding="utf-8")
             os.replace(tmp_path, CONFIG_PATH)
             if not silent:
                 self.logger.debug("UI / Theme / Config", f"Saved config to {CONFIG_PATH}")
+        except DPAPISecurityError as sec_err:
+            self.logger.error("UI / Theme / Config", f"DPAPI security failure: {sec_err}. Preferences save aborted to prevent secret leakage.")
+            if not silent:
+                try:
+                    self.show_toast("Security Error: Failed to encrypt credentials. Save aborted.", is_error=True)
+                except Exception:
+                    pass
+            return
         except Exception as e:
             self.logger.error("UI / Theme / Config", f"Failed to save config '{CONFIG_PATH}': {e}")
 
@@ -6899,6 +6961,13 @@ class MisoraApp(tk.Tk):
             entry = staged["entry"]
             self.is_dirty = bool(entry.get("dirty", False))
         else:
+            # Dispose prior UnityPy environment and clear prior entry on reload (BUG-34)
+            if reload_from_disk and file_path in self.open_documents:
+                prior_entry = self.open_documents.get(file_path)
+                if isinstance(prior_entry, dict):
+                    if prior_entry.get("env"):
+                        dispose_unity_env(prior_entry["env"])
+                    prior_entry.clear()
             self.open_documents[file_path] = staged["cache"]
             # Record a fresh saved-state checkpoint for newly loaded documents
             self._record_saved_checkpoint(file_path, staged.get("doc"), staged.get("plain_text", ""))

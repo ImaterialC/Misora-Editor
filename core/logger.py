@@ -89,16 +89,26 @@ class MisoraLogger:
                 if entry is None:
                     self._file_queue.task_done()
                     break
-                self._write_entry_to_file(entry)
-                self._file_queue.task_done()
+                try:
+                    self._write_entry_to_file(entry)
+                finally:
+                    self._file_queue.task_done()
             except Exception:
                 pass
 
     def flush(self, timeout: float = 1.0) -> None:
-        """Wait for queued log entries to be written to disk."""
-        deadline = time.time() + timeout
-        while not self._file_queue.empty() and time.time() < deadline:
-            time.sleep(0.01)
+        """Wait for queued log entries to be fully written to disk (BUG-32 barrier)."""
+        deadline = time.monotonic() + timeout
+        try:
+            with self._file_queue.all_tasks_done:
+                while self._file_queue.unfinished_tasks:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._file_queue.all_tasks_done.wait(timeout=min(remaining, 0.05))
+        except Exception:
+            while self._file_queue.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.005)
 
     def close(self) -> None:
         """Stop background log writer thread cleanly."""
