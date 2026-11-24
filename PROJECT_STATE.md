@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S07 Verification Baseline — 2026-11-24):
+Unit Test Suite (S08 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 269 tests across 29 modules (229 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 275 tests across 30 modules (235 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 269 tests (exact disk discovery):
+Test suites included in the 275 tests (exact disk discovery):
+  tests/test_p3_s08_search_roots_focus.py   — 6 S08 search match-case/errors/snapshots/spans, bounded project roots & search focus/gutter/no-op keyrelease tests (all pass)
   tests/test_p3_s07_undo_locks_raw.py       — 6 S07 caret paste dirty/lock, mutate-before-undo, non-contiguous cut undo, lock enforcement & read-only raw tests (all pass)
   tests/test_p3_s06_doc_state_save.py       — 5 S06 per-document state/locks, plain-text preview save, LF writes & 0-box save tests (all pass)
   tests/test_p3_s05_treeview_csif.py        — 4 S05 Treeview dark-theme contrast, atomic sparse CSIF/metadata, and backslash parity tests (all pass)
@@ -88,6 +89,31 @@ Test suites included in the 269 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S08 Search Match-Case/Errors/Snapshots/Spans, Bounded Project Roots & Search Focus/Gutter/No-Op KeyRelease (2026-11-24)
+- **Session Scope:** BUG-21, BUG-22, BUG-23, BUG-30 (Track 1 · Group D1 / DEP-7 part 1).
+- **BUG-21 (`core/story_ast.py:norm_search()`, `core/search_engine.py:_norm_search_with_spans()`, `_compile_matcher()`):**
+  - Added `match_case: bool = False` to `story_ast.norm_search()` and `ProjectSearchEngine._norm_search_with_spans()`, applying `.casefold()` strictly when `not match_case` while preserving 100% full-width/half-width NFKC normalization and combining character equivalence (`ｶﾞ` -> `ガ`, `か + ゙` -> `が`).
+  - Wired `options.match_case` into whitespace-insensitive regex construction in `_compile_matcher()`, allowing case-sensitive search to match exact casing (e.g. `Hero` / `Ｈｅｒｏ`) while rejecting mismatched casing (e.g. `hero` / `ｈｅｒｏ`).
+- **BUG-22 (`core/search_engine.py`, `misora.py`):**
+  - Replaced silent bundle/text decode exceptions in `search_file()` with structured `on_error: Optional[Callable[[Path, str], None]] = None` callback; hooked `os.walk(..., onerror=...)` in `search_directory()`.
+  - Added structured `skipped_entries: List[Tuple[Path, str]]` surfaced directly in the Search results pane, header summary (`Found X occurrences in Y files (Z skipped)`), and status bar, clearly distinguishing 0 matches vs matches vs partially skipped files.
+  - Resolved `Grok-E02`: in `on_start_search()`, failed AST snapshots are added to `skip_paths` and `initial_skipped` and never fall back to live mutable `orig_doc` (or stale disk content). Snapshotted open plain-text buffers and normalized cache keys via `Path.resolve()`.
+  - Added monotonic `self._search_seq` generation guard in `_process_search_queue()`, discarding stale worker messages from cancelled/superseded searches, and prevented re-entrant `<Return>` triggers while search is active.
+  - Implemented `_build_raw_to_clean_map()` in `core/search_engine.py` (`QW-E06`), replacing fabricated spans `(0, len(clean_text))` on raw fallback matches with accurate clean character spans.
+- **BUG-23 (`misora.py` — `GEM-N01`):**
+  - Added `_set_project_folder()` to replace (never append indefinitely) project search roots whenever `project_folder` changes, completely clearing roots of previous projects.
+  - Implemented bounded root resolution: `_resolve_project_search_roots()` returns whichever of `[Text, RedirectedResources]` exist under `BepInEx/Translation/en/` or `Translation/en/` (or strictly bounded `[proj_dir]`), preventing scans of `BepInEx/plugins/` or `BepInEx/config/`.
+  - Implemented `_resolve_xuat_text_root()` targeting strictly `BepInEx\Translation\en\Text`.
+  - Removed auto-injection of unrelated local `input` and `output` folders into project search roots.
+- **BUG-30 (`misora.py`):**
+  - Removed erroneous `self.txt_continuous.focus_set()` in `_select_result_index()` after `_focus_continuous_box()` on bundle Continuous View jumps, properly transferring focus to the active card's dialogue text widget (`card["txt_dialogue"].focus_set()`) while preserving plain-text focus behavior.
+  - Called `self._update_gutter_clean()` inside `_on_dialogue_edited()` so Page View line numbers immediately update when newlines are entered, pasted, or deleted.
+  - Updated `_on_card_text_edited()` and `_on_box0_metadata_edited()` to return `bool` indicating whether text actually changed, and updated `_commit_widget_edit()` to skip `_dirty_state_changed()` and AST injection on no-op arrow/navigation keystrokes.
+- **New Test Suite:** Added `tests/test_p3_s08_search_roots_focus.py` with 4 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 275 tests across 30 modules (235 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/search_engine.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s08_search_roots_focus.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/xunity_sync.py`, `core/mtl_engine.py`, `core/script_codec.py`, `misora.py:on_replace_all`/`_apply_delta`.
 
 ### S07 Caret Paste Dirty/Lock, Mutate-Before-Undo, Non-Contiguous Cut Undo, Lock Enforcement & Read-Only Raw View (2026-11-24)
 - **Session Scope:** BUG-10, BUG-13, BUG-15, BUG-16, BUG-37 (Track 1 · Group C2 / post-DEP-4).
@@ -710,6 +736,15 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **TREEVIEW-DARK-THEME-CONTRAST** | RESOLVED (2026-11-24: S05 / BUG-31) | `misora.py:_apply_styles()` | Configured Treeview and Treeview.Heading contrast styles across all presets (WCAG ratio >= 4.5). Covered by `test_p3_s05_treeview_csif:test_probe_1`. | 2 |
 | **SPARSE-CSIF-ATOMIC-TRANSACTION** | RESOLVED (2026-11-24: S05 / BUG-07) | `core/script_codec.py`, `misora.py` | `apply_metadata` flag; pre-validation; atomic rollback; UID resolution; discrete sparse mapping in preview and undo deltas. Covered by `test_p3_s05_treeview_csif:test_probe_2`. | 2 |
 | **CSIF-BACKSLASH-PARITY-LOSS** | RESOLVED (2026-11-24: S05 / BUG-08) | `core/script_codec.py` | Lossless `serialize -> parse` round-trip across `^\\*@@` escaping and `^\\+@@` unescaping. Covered by `test_p3_s05_treeview_csif:test_probe_3`. | 2 |
+| **CARET-PASTE-DIRTY-LOCK** | RESOLVED (2026-11-24: S07 / BUG-10) | `misora.py:_on_card_paste_caret()` | Preserves locked boxes across `\n\n\n` caret paste; marks document dirty before `_dirty_state_changed()`. Covered by `test_p3_s07:test_probe_1`. | 2 |
+| **MUTATE-BEFORE-UNDO** | RESOLVED (2026-11-24: S07 / BUG-13) | `misora.py` | AST `inject_box()` executes before `BoxEditDelta` recording; segment-aware undo and exception logging per AGENTS.md §28. Covered by `test_p3_s07:test_probe_2`. | 2 |
+| **NON-CONTIGUOUS-CUT-UNDO** | RESOLVED (2026-11-24: S07 / BUG-15) | `core/undo_journal.py`, `misora.py` | `BoxStructuralDelta.indices` records exact sorted indices; undo/redo preserves lossless ordering. Covered by `test_p3_s07:test_probe_3`. | 2 |
+| **LOCK-ENFORCEMENT-MODEL** | RESOLVED (2026-11-24: S07 / BUG-16) | `misora.py` | Enforces translation lock in `on_clear_dialogue_skeleton()` and `TranslatorAssistantDialog`; preserves authorial whitespace. Covered by `test_p3_s07:test_probe_4`. | 2 |
+| **RAW-VIEW-READONLY** | RESOLVED (2026-11-24: S07 / BUG-37) | `misora.py:txt_raw` | `self.txt_raw` initialized disabled and wrapped with safe normal/disabled lifecycle until FEAT-11. Covered by `test_p3_s07:test_probe_5`. | 2 |
+| **SEARCH-MATCH-CASE-WHITESPACE** | RESOLVED (2026-11-24: S08 / BUG-21) | `core/story_ast.py`, `core/search_engine.py` | `match_case: bool = False` in `norm_search()` and `_norm_search_with_spans()`; whitespace-insensitive matching respects casing. Covered by `test_p3_s08:test_probe_1`. | 2 |
+| **SEARCH-ERRORS-SNAPSHOT-ISOLATION** | RESOLVED (2026-11-24: S08 / BUG-22) | `core/search_engine.py`, `misora.py` | Structured `on_error` and `skipped_entries`; `Grok-E02` snapshot failure isolation (never live doc); monotonic `_search_seq` guard; accurate raw spans (`QW-E06`). Covered by `test_p3_s08:test_probe_2`. | 2 |
+| **PROJECT-ROOTS-BOUNDED-REPLACEMENT** | RESOLVED (2026-11-24: S08 / BUG-23) | `misora.py` | Bounded root resolution to `[Text, RedirectedResources]` (never `plugins/`/`config/`); clean project replacement (`GEM-N01`); no auto-injected `input`/`output`. Covered by `test_p3_s08:test_probe_3`. | 2 |
+| **SEARCH-FOCUS-GUTTER-NOOP-KEYS** | RESOLVED (2026-11-24: S08 / BUG-30) | `misora.py` | Continuous search jump focuses active card dialogue widget; gutter updates on dialogue edit; no-op navigation keys skip dirty marking. Covered by `test_p3_s08:test_probe_4`. | 2 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 

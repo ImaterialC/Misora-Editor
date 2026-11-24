@@ -127,7 +127,7 @@ def xuat_to_game(s: str, br: str = "\n") -> str:
     return BREAK_RE.sub(br, s)
 
 
-def norm_search(s: str) -> str:
+def norm_search(s: str, match_case: bool = False) -> str:
     """
     Produce a completely whitespace-collapsed and placeholder-normalized string
     for matching XUnity's IgnoreWhitespaceInDialogue behavior.
@@ -136,7 +136,8 @@ def norm_search(s: str) -> str:
         return ""
     s = game_to_xuat(s)
     s = unicodedata.normalize("NFKC", s).translate(DASH_MAP)
-    return re.sub(r"-{2,}", "-", ALL_WS_RE.sub("", s)).casefold()
+    collapsed = re.sub(r"-{2,}", "-", ALL_WS_RE.sub("", s))
+    return collapsed if match_case else collapsed.casefold()
 
 
 def escape_arg(s: str) -> str:

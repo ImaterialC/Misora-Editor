@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S08 — Search Match-Case/Errors/Snapshots/Spans, Bounded Project Roots & Search Focus/Gutter/No-Op KeyRelease
+- **Session Scope:** BUG-21, BUG-22, BUG-23, BUG-30 (Track 1 · Group D1 (DEP-7 part 1)).
+- **BUG-21 (`core/story_ast.py:norm_search()`, `core/search_engine.py:_norm_search_with_spans()`, `_compile_matcher()`):**
+  - Added `match_case: bool = False` to `story_ast.norm_search()` and `ProjectSearchEngine._norm_search_with_spans()`, applying `.casefold()` strictly when `not match_case` while preserving 100% full-width/half-width NFKC normalization and combining character equivalence (`ｶﾞ` -> `ガ`, `か + ゙` -> `が`).
+  - Wired `options.match_case` into whitespace-insensitive regex construction in `_compile_matcher()`, allowing case-sensitive search to match exact casing (e.g. `Hero` / `Ｈｅｒｏ`) while rejecting mismatched casing (e.g. `hero` / `ｈｅｒｏ`).
+- **BUG-22 (`core/search_engine.py`, `misora.py`):**
+  - Replaced silent bundle/text decode exceptions in `search_file()` with structured `on_error: Optional[Callable[[Path, str], None]] = None` callback; hooked `os.walk(..., onerror=...)` in `search_directory()`.
+  - Added structured `skipped_entries: List[Tuple[Path, str]]` surfaced directly in the Search results pane, header summary (`Found X occurrences in Y files (Z skipped)`), and status bar, clearly distinguishing 0 matches vs matches vs partially skipped files.
+  - Resolved `Grok-E02`: in `on_start_search()`, failed AST snapshots are added to `skip_paths` and `initial_skipped` and never fall back to live mutable `orig_doc` (or stale disk content). Snapshotted open plain-text buffers and normalized cache keys via `Path.resolve()`.
+  - Added monotonic `self._search_seq` generation guard in `_process_search_queue()`, discarding stale worker messages from cancelled/superseded searches, and prevented re-entrant `<Return>` triggers while search is active.
+  - Implemented `_build_raw_to_clean_map()` in `core/search_engine.py` (`QW-E06`), replacing fabricated spans `(0, len(clean_text))` on raw fallback matches with accurate clean character spans.
+- **BUG-23 (`misora.py` — `GEM-N01`):**
+  - Added `_set_project_folder()` to replace (never append indefinitely) project search roots whenever `project_folder` changes, completely clearing roots of previous projects.
+  - Implemented bounded root resolution: `_resolve_project_search_roots()` returns whichever of `[Text, RedirectedResources]` exist under `BepInEx/Translation/en/` or `Translation/en/` (or strictly bounded `[proj_dir]`), preventing scans of `BepInEx/plugins/` or `BepInEx/config/`.
+  - Implemented `_resolve_xuat_text_root()` targeting strictly `BepInEx\Translation\en\Text`.
+  - Removed auto-injection of unrelated local `input` and `output` folders into project search roots.
+- **BUG-30 (`misora.py`):**
+  - Removed erroneous `self.txt_continuous.focus_set()` in `_select_result_index()` after `_focus_continuous_box()` on bundle Continuous View jumps, properly transferring focus to the active card's dialogue text widget (`card["txt_dialogue"].focus_set()`) while preserving plain-text focus behavior.
+  - Called `self._update_gutter_clean()` inside `_on_dialogue_edited()` so Page View line numbers immediately update when newlines are entered, pasted, or deleted.
+  - Updated `_on_card_text_edited()` and `_on_box0_metadata_edited()` to return `bool` indicating whether text actually changed, and updated `_commit_widget_edit()` to skip `_dirty_state_changed()` and AST injection on no-op arrow/navigation keystrokes.
+- **Test Suite:** Added `tests/test_p3_s08_search_roots_focus.py` with 4 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 275 tests across 30 modules (235 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/search_engine.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s08_search_roots_focus.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/xunity_sync.py`, `core/mtl_engine.py`, `core/script_codec.py`, `misora.py:on_replace_all`/`_apply_delta`.
+
 ### S07 — Caret Paste Dirty/Lock, Mutate-Before-Undo, Non-Contiguous Cut Undo, Lock Enforcement & Read-Only Raw View
 - **Session Scope:** BUG-10, BUG-13, BUG-15, BUG-16, BUG-37 (Track 1 · Group C2 (post-DEP-4)).
 - **BUG-10 (`misora.py:_on_card_paste_caret()`):**

@@ -63,7 +63,7 @@ class ProjectSearchEngine:
     """
 
     @staticmethod
-    def _norm_search_with_spans(text: str) -> Tuple[str, List[Tuple[int, int]]]:
+    def _norm_search_with_spans(text: str, match_case: bool = False) -> Tuple[str, List[Tuple[int, int]]]:
         """
         Normalize text identically to story_ast.norm_search() while preserving
         a 1-to-1 mapping from each normalized character back to its (start, end)
@@ -86,7 +86,9 @@ class ProjectSearchEngine:
             else:
                 expanded = tok
 
-            norm_tok = unicodedata.normalize("NFKC", expanded).translate(DASH_MAP).casefold()
+            norm_tok = unicodedata.normalize("NFKC", expanded).translate(DASH_MAP)
+            if not match_case:
+                norm_tok = norm_tok.casefold()
             norm_tok = ALL_WS_RE.sub("", norm_tok)
             for ch in norm_tok:
                 raw_chars.append(ch)
@@ -193,12 +195,12 @@ class ProjectSearchEngine:
             return regex_matcher
 
         if options.ignore_whitespace:
-            norm_q = norm_search(q)
+            norm_q = norm_search(q, match_case=options.match_case)
             if not norm_q:
                 return lambda _text: []
 
             def whitespace_matcher(text: str):
-                norm_t, spans = cls._norm_search_with_spans(text)
+                norm_t, spans = cls._norm_search_with_spans(text, match_case=options.match_case)
                 if not norm_t or norm_q not in norm_t:
                     return []
                 matches: List[Tuple[int, int, str]] = []
@@ -247,13 +249,44 @@ class ProjectSearchEngine:
 
         return exact_matcher
 
+    @staticmethod
+    def _build_raw_to_clean_map(raw_text: str) -> List[int]:
+        """
+        Map character offsets in raw box.text to corresponding offsets in box.clean_text
+        (game_to_xuat(raw_text)), accounting for {0} -> {playername} and break conversions.
+        """
+        if not raw_text:
+            return [0]
+        mapping = [0] * (len(raw_text) + 1)
+        raw_idx = 0
+        clean_idx = 0
+        for m in re.finditer(r"\{(?:player_?name|0)\}|\\n|\r\n|[\r\n\v\f\x85\u2028\u2029]|.", raw_text, re.DOTALL):
+            tok = m.group(0)
+            s, e = m.start(), m.end()
+            while raw_idx < s:
+                mapping[raw_idx] = clean_idx
+                raw_idx += 1
+            if PLAYER_PLACEHOLDER_RE.fullmatch(tok):
+                clean_len = len("{playername}")
+            elif tok == "\\n" or BREAK_RE.fullmatch(tok):
+                clean_len = 1
+            else:
+                clean_len = len(tok)
+            for _ in range(s, e):
+                mapping[raw_idx] = clean_idx
+                raw_idx += 1
+            clean_idx += clean_len
+        mapping[len(raw_text)] = clean_idx
+        return mapping
+
     def search_file(
         self,
         file_path: Union[str, Path],
         options: SearchOptions,
-        doc: Optional[StoryDocument] = None,
+        doc: Optional[Union[StoryDocument, str]] = None,
+        on_error: Optional[Callable[[Path, str], None]] = None,
     ) -> List[SearchResult]:
-        """Search inside a single file (.unity3d bundle or plain text), optionally using in-memory StoryDocument."""
+        """Search inside a single file (.unity3d bundle or plain text), optionally using in-memory StoryDocument or text."""
         file_path = Path(file_path)
         if not file_path.is_file() and doc is None:
             return []
@@ -263,15 +296,16 @@ class ProjectSearchEngine:
         ext = file_path.suffix.lower()
 
         # 1. Search in Unity3D bundle
-        if (ext in (".unity3d", ".asset") or doc is not None) and options.include_bundles:
+        if (ext in (".unity3d", ".asset") or (doc is not None and isinstance(doc, StoryDocument))) and options.include_bundles:
             try:
-                if doc is None:
-                    doc, env_to_free, _, _ = load_bundle_story(file_path)
+                story_doc = doc if isinstance(doc, StoryDocument) else None
+                if story_doc is None:
+                    story_doc, env_to_free, _, _ = load_bundle_story(file_path)
                     dispose_unity_env(env_to_free)
 
                 # Check Story Metadata (Box 0: Title, Subtitle, Summary)
-                if doc.has_metadata():
-                    meta = doc.get_metadata()
+                if story_doc.has_metadata():
+                    meta = story_doc.get_metadata()
                     for f_name, f_val in (
                         ("Title", meta.get("title", "")),
                         ("Subtitle", meta.get("subtitle", "")),
@@ -296,16 +330,21 @@ class ProjectSearchEngine:
                                 match_in_speaker=False,
                             ))
 
-                for box_idx, box in enumerate(doc.boxes):
+                for box_idx, box in enumerate(story_doc.boxes):
                     # Check dialogue text matches
                     diag_matches = matcher(box.clean_text)
                     if not diag_matches and box.text != box.clean_text:
                         raw_matches = matcher(box.text)
                         if raw_matches:
-                            diag_matches = [
-                                (0, len(box.clean_text), box.clean_text)
-                                for _ in raw_matches
-                            ]
+                            # Map raw spans accurately to clean_text rather than fabricating full box (QW-E06)
+                            diag_matches = []
+                            raw_map = self._build_raw_to_clean_map(box.text)
+                            for r_s, r_e, _ in raw_matches:
+                                c_s = raw_map[min(r_s, len(raw_map) - 1)]
+                                c_e = raw_map[min(r_e, len(raw_map) - 1)]
+                                if c_e <= c_s:
+                                    c_e = min(len(box.clean_text), c_s + max(1, r_e - r_s))
+                                diag_matches.append((c_s, c_e, box.clean_text[c_s:c_e]))
 
                     for start, end, _match_text in diag_matches:
                         snippet, hs, he = self._build_highlighted_snippet(box.clean_text, start, end)
@@ -343,14 +382,18 @@ class ProjectSearchEngine:
                                 snippet_end=he,
                                 match_in_speaker=True,
                             ))
-            except Exception:
-                pass
+            except Exception as e:
+                if on_error:
+                    on_error(file_path, f"Bundle load error: {e}")
 
         # 2. Search in plain text files
         elif ext in (".txt", ".json", ".csv", ".tsv") and options.include_text:
             try:
-                decoded = read_text_file_strictly(file_path)
-                lines = decoded.text.splitlines()
+                if isinstance(doc, str):
+                    lines = doc.splitlines()
+                else:
+                    decoded = read_text_file_strictly(file_path)
+                    lines = decoded.text.splitlines()
                 for line_idx, line in enumerate(lines, 1):
                     matches = matcher(line)
                     for start, end, _match_text in matches:
@@ -369,8 +412,9 @@ class ProjectSearchEngine:
                             snippet_end=he,
                             match_in_speaker=False,
                         ))
-            except Exception:
-                pass
+            except Exception as e:
+                if on_error:
+                    on_error(file_path, f"Text read error: {e}")
 
         return results
 
@@ -382,10 +426,12 @@ class ProjectSearchEngine:
         on_progress: Optional[Callable[[int, int, str], None]] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
         in_memory_docs: Optional[Dict[Path, Any]] = None,
+        on_error: Optional[Callable[[Path, str], None]] = None,
+        skip_paths: Optional[set] = None,
     ) -> List[SearchResult]:
         """
         Search recursively through all candidate files in a directory.
-        Provides live progress callbacks and cancellation checks.
+        Provides live progress callbacks, error reporting, and cancellation checks.
         """
         directory = Path(directory)
         if not directory.is_dir():
@@ -398,7 +444,11 @@ class ProjectSearchEngine:
         if options.include_text:
             exts.extend([".txt", ".json"])
 
-        for root, _, files in os.walk(directory):
+        def _on_walk_error(err: OSError):
+            if on_error:
+                on_error(Path(err.filename or directory), f"Filesystem walk error: {err}")
+
+        for root, _, files in os.walk(directory, onerror=_on_walk_error):
             for f in files:
                 ext = Path(f).suffix.lower()
                 if ext in exts:
@@ -412,10 +462,15 @@ class ProjectSearchEngine:
         for idx, fp in enumerate(all_files, 1):
             if should_cancel and should_cancel():
                 break
+            resolved_fp = fp.resolve()
+            if skip_paths and (fp in skip_paths or resolved_fp in skip_paths):
+                continue
             if on_progress:
                 on_progress(idx, total_files, fp.name)
-            mem_doc = in_memory_docs.get(fp) if in_memory_docs else None
-            res = self.search_file(fp, options, doc=mem_doc)
+            mem_doc = None
+            if in_memory_docs:
+                mem_doc = in_memory_docs.get(fp) or in_memory_docs.get(resolved_fp)
+            res = self.search_file(fp, options, doc=mem_doc, on_error=on_error)
             all_results.extend(res)
 
         return all_results

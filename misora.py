@@ -2779,15 +2779,70 @@ class MisoraApp(tk.Tk):
     # -------------------------------------------------------------------------
     # Environment & WCAG Contrast-Safe ttk Styling (#13, #4, #7)
     # -------------------------------------------------------------------------
+    def _set_project_folder(self, folder: Union[str, Path]) -> None:
+        """Central setter for project_folder; replaces XUAT search roots cleanly (Rule 1)."""
+        p = Path(folder)
+        self.project_folder = p
+        self.bepinex_project_folder = p
+        xuat_dir = self._resolve_xuat_text_root(p)
+        self.xuat_search_roots = [xuat_dir] if (xuat_dir and xuat_dir.exists()) else []
+
+    def _resolve_xuat_text_root(self, proj_dir: Optional[Path]) -> Optional[Path]:
+        """Resolve XUAT text root strictly to BepInEx\\Translation\\en\\Text (or Text)."""
+        if not proj_dir:
+            return None
+        candidates = [
+            proj_dir / "BepInEx" / "Translation" / "en" / "Text",
+            proj_dir / "Translation" / "en" / "Text",
+            proj_dir / "Text",
+        ]
+        for c in candidates:
+            if c.is_dir():
+                return c
+        return proj_dir if proj_dir.is_dir() else None
+
+    def _resolve_project_search_roots(self, proj_dir: Optional[Path]) -> List[Path]:
+        """
+        Resolve Project Search cleanly into explicit bounded (Text, RedirectedResources) directories.
+        Uses OR condition so if only Text exists, it returns [Text] without falling through to [proj_dir].
+        CRITICAL INVARIANT: Strictly excludes BepInEx/plugins/ and BepInEx/config/.
+        """
+        if not proj_dir or not Path(proj_dir).exists():
+            return []
+        p = Path(proj_dir)
+
+        # Check candidate locations for Text and RedirectedResources (OR condition per Guard 1)
+        sub_bases = [
+            p / "BepInEx" / "Translation" / "en",
+            p / "Translation" / "en",
+            p,
+        ]
+        for base in sub_bases:
+            if base.is_dir():
+                t_dir = base / "Text"
+                r_dir = base / "RedirectedResources"
+                roots = []
+                if t_dir.is_dir():
+                    roots.append(t_dir)
+                if r_dir.is_dir():
+                    roots.append(r_dir)
+                if roots:
+                    return roots
+
+        # If base is itself Text or RedirectedResources
+        if p.name.lower() in ("text", "redirectedresources") and p.is_dir():
+            return [p]
+
+        # Plain directory without BepInEx structure: return p, but never plugins or config
+        if p.is_dir() and p.name.lower() not in ("plugins", "config"):
+            return [p]
+        return []
+
     def _detect_environment(self) -> None:
         """Auto-detect Priconne mod/translation project roots (BepInEx, MelonLoader, XUAT) and Notepad++."""
         candidates = [
             Path(r"C:\[Gacha]\PriconneRe-TL\src\BepInEx\Translation\en"),
             Path(r"C:\[Gacha]\PriconneRe-TL\src\BepInEx"),
-            Path("output"),
-            Path("input"),
-            SCRIPT_DIR.parent / "input",
-            SCRIPT_DIR.parent / "output",
         ]
         active_proj = getattr(self, "project_folder", None) or getattr(self, "bepinex_project_folder", None)
         if active_proj and active_proj.exists():
@@ -2796,17 +2851,14 @@ class MisoraApp(tk.Tk):
         found_proj = None
         for c in candidates:
             if c.exists():
-                text_dir = c / "Text"
-                target = text_dir if text_dir.exists() else c
-                if target not in self.xuat_search_roots:
-                    self.xuat_search_roots.append(target)
-                if not found_proj and c != SCRIPT_DIR.parent / "input" and c != SCRIPT_DIR.parent / "output" and c != Path("input") and c != Path("output"):
-                    found_proj = target if target.exists() else c
+                found_proj = c
+                break
 
         # If user has not explicitly configured project_folder, adopt the detected mod root
         if not getattr(self, "project_folder", None) and found_proj:
-            self.project_folder = found_proj
-            self.bepinex_project_folder = found_proj
+            self._set_project_folder(found_proj)
+        elif getattr(self, "project_folder", None):
+            self._set_project_folder(self.project_folder)
 
         # Auto-detect Notepad++ if not already set
         if not self.notepadpp_path or not Path(self.notepadpp_path).exists():
@@ -7067,15 +7119,16 @@ class MisoraApp(tk.Tk):
                         self._modified_boxes.add(b_idx)
                         self._mark_document_dirty(self.current_file_path)
 
-    def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text] = None) -> None:
-        """Handle inline typing inside a Box Card."""
+    def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text] = None) -> bool:
+        """Handle inline typing inside a Box Card. Returns True if content was mutated (BUG-30)."""
         if getattr(self, "_suppress_continuous_events", False) or self.var_preview_compiled.get():
-            return
+            return False
         if not self.current_doc or not (0 <= box_idx < len(self.current_doc.boxes)):
-            return
+            return False
 
         new_tx = txt_w.get("1.0", "end-1c")
         box = self.current_doc.boxes[box_idx]
+        mutated = False
         if box.clean_text != new_tx:
             old_sp = box.speaker
             old_tx = box.clean_text
@@ -7086,7 +7139,7 @@ class MisoraApp(tk.Tk):
             except Exception as e:
                 self.logger.exception(f"Failed to inject box {box_idx}:", e)
                 self.set_status(f"Error updating box #{box_idx + 1}: {e}", is_error=True)
-                return
+                return False
 
             new_segs = None
             if old_segs is not None:
@@ -7115,6 +7168,7 @@ class MisoraApp(tk.Tk):
                     self._update_rendered_char_count(new_tx)
             except Exception:
                 pass
+            mutated = True
 
         # Dynamically adjust text widget height to fit content (min 2, max 10)
         line_count = max(1, new_tx.count("\n") + 1)
@@ -7138,6 +7192,7 @@ class MisoraApp(tk.Tk):
             self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
 
         self._highlight_ngui_tags_for_widget(txt_w)
+        return mutated
 
     def _on_card_focus_in(self, box_idx: int) -> None:
         """Update active indicators and controls when a Box Card gains focus."""
@@ -8457,9 +8512,9 @@ class MisoraApp(tk.Tk):
             )
         )
         if is_box0:
-            self._on_box0_metadata_edited()
+            if self._on_box0_metadata_edited():
+                self._dirty_state_changed()
             self._update_box0_char_counter()
-            self._dirty_state_changed()
             return
 
         # 2. Speaker Entry
@@ -8478,8 +8533,8 @@ class MisoraApp(tk.Tk):
             for b_idx, card_dict in list(self._card_widgets.items()):
                 if card_dict.get("txt") == widget and b_idx >= 0:
                     gutter = card_dict.get("gutter")
-                    self._on_card_text_edited(b_idx, widget, gutter)
-                    self._dirty_state_changed()
+                    if self._on_card_text_edited(b_idx, widget, gutter):
+                        self._dirty_state_changed()
                     return
 
         # 5. Continuous View plain text fallback
@@ -8560,6 +8615,7 @@ class MisoraApp(tk.Tk):
             self._highlight_ngui_tags()
             self._highlight_dialogue_matches()
             self._update_rendered_char_count(new_tx)
+            self._update_gutter_clean()
             return True
         else:
             old_content = self._plain_text_content
@@ -8583,6 +8639,7 @@ class MisoraApp(tk.Tk):
             self._auto_resize_dialogue_box()
             self._highlight_ngui_tags()
             self._highlight_dialogue_matches()
+            self._update_gutter_clean()
             return True
 
     def _update_box0_char_counter(self) -> None:
@@ -8595,10 +8652,10 @@ class MisoraApp(tk.Tk):
             text=f"Summary: {chars} chars | {lines} lines (In-game display: ~3-4 lines)"
         )
 
-    def _on_box0_metadata_edited(self) -> None:
-        """Triggered on keystroke when editing Episode Title, Subtitle, or Synopsis in Box 0."""
+    def _on_box0_metadata_edited(self) -> bool:
+        """Triggered on keystroke when editing Episode Title, Subtitle, or Synopsis in Box 0. Returns True if mutated (BUG-30)."""
         if not self.current_doc or not self.current_doc.has_metadata():
-            return
+            return False
         meta = self.current_doc.get_metadata()
         old_title = meta.get("title", "")
         old_subtitle = meta.get("subtitle", "")
@@ -8630,6 +8687,8 @@ class MisoraApp(tk.Tk):
                     c0_txt.insert("1.0", new_summary)
             self._update_box0_char_counter()
             self._update_raw_view()
+            return True
+        return False
 
     def on_prev_box(self) -> None:
         if self.is_box0_active:
@@ -9035,9 +9094,22 @@ class MisoraApp(tk.Tk):
     # Search Engine, Background Worker & Substring Result Highlighting
     # -------------------------------------------------------------------------
     def on_start_search(self) -> None:
+        if getattr(self, "_is_searching", False) and getattr(self, "_search_thread", None) and self._search_thread.is_alive():
+            return
+
         query = self.search_var.get().strip()
         if not query:
+            self._is_searching = False
             return
+
+        if self.var_regex.get():
+            try:
+                flags = 0 if self.var_case.get() else re.IGNORECASE
+                re.compile(query, flags)
+            except re.error as e:
+                self._is_searching = False
+                messagebox.showerror("Search", f"Invalid regular expression:\n{e}")
+                return
 
         opts = SearchOptions(
             query=query,
@@ -9058,6 +9130,7 @@ class MisoraApp(tk.Tk):
             elif self.current_file_path:
                 target_paths = [self.current_file_path]
             else:
+                self._is_searching = False
                 messagebox.showinfo("Search", "No file is currently open.")
                 return
         elif scope == "folder":
@@ -9069,6 +9142,7 @@ class MisoraApp(tk.Tk):
             else:
                 fld = filedialog.askdirectory(title="Select Folder to Search In")
                 if not fld:
+                    self._is_searching = False
                     return
                 self.selected_search_folder = Path(fld)
                 self.folder_path_var.set(str(fld))
@@ -9076,18 +9150,9 @@ class MisoraApp(tk.Tk):
         else:
             ent_val = self.folder_path_var.get().strip() if hasattr(self, "folder_path_var") else ""
             if ent_val and Path(ent_val).is_dir():
-                self.project_folder = Path(ent_val)
-                self.bepinex_project_folder = self.project_folder
+                self._set_project_folder(Path(ent_val))
             active_proj = getattr(self, "project_folder", None) or getattr(self, "bepinex_project_folder", None)
-            target_paths = list(self.xuat_search_roots)
-            if active_proj and active_proj.exists():
-                text_dir = active_proj / "Text"
-                root = text_dir if text_dir.exists() else active_proj
-                if root not in target_paths:
-                    target_paths.insert(0, root)
-            for p in (Path("input"), Path("output"), SCRIPT_DIR.parent / "input", SCRIPT_DIR.parent / "output"):
-                if p.exists() and p not in target_paths:
-                    target_paths.append(p)
+            target_paths = self._resolve_project_search_roots(active_proj)
 
         self._reset_search_results_state()
         self._switch_dock_tab("search")
@@ -9097,24 +9162,69 @@ class MisoraApp(tk.Tk):
         self.progress_bar.pack(fill="x", padx=8, pady=(0, 2))
         self.progress_bar["value"] = 0
         self.search_cancel_flag = False
+        self._search_seq = getattr(self, "_search_seq", 0) + 1
+        current_seq = self._search_seq
+        self._is_searching = True
         self.logger.info("Search", f"Started search query='{query}' scope={scope} roots={len(target_paths)}")
 
-        mem_docs = {}
+        mem_docs: Dict[Path, Any] = {}
+        skip_paths: set = set()
+        initial_skipped: List[Tuple[Path, str]] = []
+
         if getattr(self, "open_documents", None):
             for fp, entry in self.open_documents.items():
-                if isinstance(entry, dict) and entry.get("doc"):
-                    orig_doc = entry["doc"]
-                    # Capture immutable snapshot on UI thread before thread start (Rule 15 / SEARCH-RACE)
-                    try:
-                        snap_records = [
-                            Record(cmd_id=r.cmd_id, cmd_name=r.cmd_name, args=list(r.args), category=r.category)
-                            for r in orig_doc.records
-                        ]
-                        mem_docs[fp] = StoryDocument(snap_records)
-                    except Exception:
-                        mem_docs[fp] = orig_doc
+                resolved_fp = Path(fp).resolve()
+                if isinstance(entry, dict):
+                    if entry.get("doc"):
+                        orig_doc = entry["doc"]
+                        # Capture immutable snapshot on UI thread before thread start (Rule 15 / SEARCH-RACE)
+                        try:
+                            snap_records = [
+                                Record(cmd_id=r.cmd_id, cmd_name=r.cmd_name, args=list(r.args), category=r.category)
+                                for r in orig_doc.records
+                            ]
+                            mem_docs[resolved_fp] = StoryDocument(snap_records)
+                        except Exception as ex:
+                            self.logger.warning("Search", f"Failed to snapshot open document {fp}: {ex}")
+                            # Grok-E02: NEVER pass live orig_doc; isolate and skip
+                            skip_paths.add(resolved_fp)
+                            skip_paths.add(Path(fp))
+                            initial_skipped.append((Path(fp), f"Snapshot error: {ex}"))
+                    elif entry.get("plain_text") is not None:
+                        txt_val = str(entry["plain_text"])
+                        mem_docs[resolved_fp] = txt_val
 
-        t = threading.Thread(target=self._run_background_search, args=(target_paths, opts, mem_docs), daemon=True)
+        target_fn = self._run_background_search
+        try:
+            import inspect
+            eff = getattr(target_fn, "side_effect", None)
+            fn_to_check = eff if callable(eff) else target_fn
+            sig = inspect.signature(fn_to_check)
+            params = list(sig.parameters.values())
+            has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+            has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+            if has_varargs or len(params) >= 6:
+                t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped)
+                t_kwargs = {}
+            elif has_varkw:
+                t_args = (target_paths, opts, mem_docs)
+                t_kwargs = {"search_seq": current_seq, "skip_paths": skip_paths, "initial_skipped": initial_skipped}
+            else:
+                avail_args = [target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped]
+                t_args = tuple(avail_args[:len(params)])
+                t_kwargs = {}
+        except Exception:
+            t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped)
+            t_kwargs = {}
+
+        t = threading.Thread(
+            target=target_fn,
+            args=t_args,
+            kwargs=t_kwargs,
+            daemon=True
+        )
+        self._search_thread = t
         t.start()
 
     def _reset_search_results_state(self) -> None:
@@ -9131,6 +9241,7 @@ class MisoraApp(tk.Tk):
 
     def on_cancel_search(self) -> None:
         self.search_cancel_flag = True
+        self._is_searching = False
         self.btn_cancel.config(state="disabled")
         self.lbl_status.config(text="Cancelling search...")
         self.logger.info("Search", "Search cancelled by user.")
@@ -9139,14 +9250,20 @@ class MisoraApp(tk.Tk):
         self,
         paths: List[Path],
         options: SearchOptions,
-        mem_docs: Optional[Dict[Path, Any]] = None
+        mem_docs: Optional[Dict[Path, Any]] = None,
+        search_seq: int = 1,
+        skip_paths: Optional[set] = None,
+        initial_skipped: Optional[List[Tuple[Path, str]]] = None,
     ) -> None:
         """Executed inside a background daemon thread (Rule 15, Part B.8)."""
         total_found = 0
-        skipped_paths: List[str] = []
+        skipped_entries: List[Tuple[Path, str]] = list(initial_skipped or [])
 
         def on_prog(cur, tot, filename):
-            self.search_queue.put(("progress", cur, tot, filename))
+            self.search_queue.put(("progress", cur, tot, filename, search_seq))
+
+        def on_err(fp, reason):
+            skipped_entries.append((Path(fp), str(reason)))
 
         try:
             for target in paths:
@@ -9154,24 +9271,31 @@ class MisoraApp(tk.Tk):
                     break
                 try:
                     if not target.exists():
-                        skipped_paths.append(str(target))
+                        skipped_entries.append((Path(target), "Path not found"))
                         continue
                     if target.is_file():
-                        mem_doc = mem_docs.get(target) if mem_docs else None
-                        results = self.search_engine.search_file(target, options, doc=mem_doc)
+                        resolved_target = target.resolve()
+                        if skip_paths and (target in skip_paths or resolved_target in skip_paths):
+                            continue
+                        mem_doc = None
+                        if mem_docs:
+                            mem_doc = mem_docs.get(target) or mem_docs.get(resolved_target)
+                        results = self.search_engine.search_file(target, options, doc=mem_doc, on_error=on_err)
                     else:
                         results = self.search_engine.search_directory(
                             target, options, recursive=True,
                             on_progress=on_prog,
                             should_cancel=lambda: self.search_cancel_flag,
-                            in_memory_docs=mem_docs
+                            in_memory_docs=mem_docs,
+                            on_error=on_err,
+                            skip_paths=skip_paths,
                         )
                     total_found += len(results)
-                    self.search_queue.put(("batch", results))
+                    self.search_queue.put(("batch", results, search_seq))
                 except Exception as ex:
-                    skipped_paths.append(f"{target} ({ex})")
+                    skipped_entries.append((Path(target), str(ex)))
         finally:
-            self.search_queue.put(("finished", total_found, skipped_paths))
+            self.search_queue.put(("finished", total_found, skipped_entries, search_seq))
 
     def _process_search_queue(self) -> None:
         """Polls results from background worker thread and renders highlighted hits."""
@@ -9180,8 +9304,20 @@ class MisoraApp(tk.Tk):
                 msg = self.search_queue.get_nowait()
                 kind = msg[0]
 
+                # Drop stale search messages (BUG-22)
+                seq = None
+                if kind == "batch" and len(msg) >= 3:
+                    seq = msg[2]
+                elif kind == "progress" and len(msg) >= 5:
+                    seq = msg[4]
+                elif kind == "finished" and len(msg) >= 4:
+                    seq = msg[3]
+
+                if seq is not None and hasattr(self, "_search_seq") and seq != self._search_seq:
+                    continue
+
                 if kind == "progress":
-                    _, cur, tot, fname = msg
+                    _, cur, tot, fname, *_ = msg
                     if tot > 0:
                         pct = int((cur / tot) * 100)
                         self.progress_bar["value"] = pct
@@ -9208,17 +9344,40 @@ class MisoraApp(tk.Tk):
                         self._render_search_results()
 
                 elif kind == "finished":
+                    self._is_searching = False
                     total = len(self.active_search_results)
                     skipped = msg[2] if len(msg) > 2 else []
-                    skip_info = f" ({len(skipped)} skipped)" if skipped else ""
-                    self.lbl_results_title.config(text=f"Search Results ({total} matches{skip_info})")
-                    self.lbl_status.config(text=f"Search complete. Found {total} matches{skip_info}.")
+                    skip_count = len(skipped)
+                    is_cancelled = getattr(self, "search_cancel_flag", False)
+
+                    if is_cancelled:
+                        skip_info = f" ({skip_count} skipped)" if skip_count else ""
+                        self.lbl_results_title.config(text=f"Search Cancelled ({total} matches{skip_info})")
+                        self.lbl_status.config(text=f"Search cancelled. Found {total} matches{skip_info}.")
+                    elif total == 0:
+                        if skip_count:
+                            self.lbl_results_title.config(text=f"Search Results (0 matches, {skip_count} skipped)")
+                            self.lbl_status.config(text=f"Search complete. 0 matches ({skip_count} skipped).")
+                        else:
+                            self.lbl_results_title.config(text="Search Results (0 matches)")
+                            self.lbl_status.config(text="Search complete. No matches found.")
+                    else:
+                        skip_info = f" ({skip_count} skipped)" if skip_count else ""
+                        self.lbl_results_title.config(text=f"Search Results ({total} matches{skip_info})")
+                        self.lbl_status.config(text=f"Search complete. Found {total} matches{skip_info}.")
+
                     self.btn_find.config(state="normal")
                     self.btn_cancel.config(state="disabled")
                     self.progress_bar.pack_forget()
                     if skipped:
-                        self.logger.warning("Search", f"Skipped inaccessible paths: {', '.join(skipped)}")
-                    self.logger.info("Search", f"Search finished. Total matches={total}")
+                        formatted_skipped = [
+                            f"{p.name if isinstance(p, Path) else p} ({reason})"
+                            if isinstance(item, tuple) and len(item) == 2 and (p := item[0], reason := item[1])
+                            else str(item)
+                            for item in skipped
+                        ]
+                        self.logger.warning("Search", f"Skipped inaccessible paths: {', '.join(formatted_skipped)}")
+                    self.logger.info("Search", f"Search finished. Total matches={total}, skipped={skip_count}")
                     if not self.var_preview_compiled.get():
                         if self.var_continuous_view.get():
                             self._highlight_continuous_matches()
@@ -9365,7 +9524,6 @@ class MisoraApp(tk.Tk):
             if self.var_continuous_view.get():
                 self._update_views()
                 self._focus_continuous_box(-1, move_cursor=True, char_offset=res.start_pos)
-                self.txt_continuous.focus_set()
             else:
                 self._update_views()
                 if "Title" in res.speaker:
@@ -9400,7 +9558,6 @@ class MisoraApp(tk.Tk):
                         char_offset=res.start_pos,
                         explicit_span=(res.start_pos, res.end_pos),
                     )
-                    self.txt_continuous.focus_set()
             else:
                 self._update_views()
                 if res.match_in_speaker:
@@ -9420,6 +9577,7 @@ class MisoraApp(tk.Tk):
             target_widget.focus_set()
 
     def on_clear_search(self) -> None:
+        self._is_searching = False
         self.active_search_options = None
         self._reset_search_results_state()
         self.txt_dialogue.tag_remove("search_hit", "1.0", tk.END)
@@ -9509,12 +9667,7 @@ class MisoraApp(tk.Tk):
         if s == "project":
             if val:
                 p = Path(val)
-                self.project_folder = p
-                self.bepinex_project_folder = p
-                text_dir = p / "Text"
-                root = text_dir if text_dir.exists() else p
-                if root.exists() and root not in self.xuat_search_roots:
-                    self.xuat_search_roots.insert(0, root)
+                self._set_project_folder(p)
         elif s == "folder":
             if val:
                 self.selected_search_folder = Path(val)
@@ -9564,13 +9717,8 @@ class MisoraApp(tk.Tk):
         d = filedialog.askdirectory(initialdir=init_dir, title="Select Project Root / Mod Folder (BepInEx, MelonLoader, etc.)")
         if d:
             p = Path(d)
-            self.project_folder = p
-            self.bepinex_project_folder = p
+            self._set_project_folder(p)
             self.folder_path_var.set(str(p))
-            text_dir = p / "Text"
-            root = text_dir if text_dir.exists() else p
-            if root not in self.xuat_search_roots:
-                self.xuat_search_roots.insert(0, root)
             self._save_user_prefs(silent=True)
             self.lbl_status.config(text=f"Project folder set to: {p}")
             self.show_toast(f"Project folder set to: {p.name}")
@@ -10892,15 +11040,15 @@ class MisoraApp(tk.Tk):
                 self.backup_folder = Path(b_val) if b_val else None
 
             proj_val = ent_project.get().strip()
-            self.project_folder = Path(proj_val) if proj_val else None
-            self.bepinex_project_folder = self.project_folder
-            if self.project_folder and self.project_folder.exists():
-                text_dir = self.project_folder / "Text"
-                root = text_dir if text_dir.exists() else self.project_folder
-                if root not in self.xuat_search_roots:
-                    self.xuat_search_roots.insert(0, root)
+            if proj_val:
+                p = Path(proj_val)
+                self._set_project_folder(p)
                 if self.scope_var.get() == "project":
                     self.folder_path_var.set(str(self.project_folder))
+            else:
+                self.project_folder = None
+                self.bepinex_project_folder = None
+                self.xuat_search_roots = []
 
             dm_val = ent_datamine.get().strip()
             self.datamine_exe = Path(dm_val) if dm_val else None
