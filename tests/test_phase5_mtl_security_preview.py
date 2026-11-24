@@ -265,16 +265,14 @@ class TestPhase5MTLSecurityPreview(unittest.TestCase):
         ov_info = measure_line_lengths(overflow_text)
         self.assertGreater(ov_info[0][1], 45)
 
-        # Test live character label update in UI
-        self.app._update_rendered_char_count(overflow_text)
-        lbl_text = self.app.lbl_char_count.cget("text")
-        self.assertIn("⚠ Overflow", lbl_text)
-        self.assertEqual(self.app.lbl_char_count.cget("fg"), self.app.theme["misora_pink"])
+        # Test pixel-calibrated overflow metrics (S17 / BUG-40, FEAT-09)
+        ov_metrics = self.app._measure_dialogue_metrics(overflow_text)
+        self.assertTrue(ov_metrics["has_width_overflow"])
+        self.assertIsNotNone(ov_metrics["lines"][0]["overflow_raw_start"])
 
-        self.app._update_rendered_char_count(normal_text)
-        lbl_normal = self.app.lbl_char_count.cget("text")
-        self.assertNotIn("⚠ Overflow", lbl_normal)
-        self.assertEqual(self.app.lbl_char_count.cget("fg"), self.app.theme["fg_muted"])
+        norm_metrics = self.app._measure_dialogue_metrics(normal_text)
+        self.assertFalse(norm_metrics["has_width_overflow"])
+        self.assertIsNone(norm_metrics["lines"][0]["overflow_raw_start"])
 
     def test_07_find_replace_buttons_alignment_and_icons(self):
         """Find & Replace action buttons alignment, identical column widths, and illustrated icons."""

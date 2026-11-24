@@ -24,7 +24,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 try:
@@ -57,7 +57,7 @@ try:
         MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT,
         serialize, parse, sniff_format, apply_to_document, sanitize_speaker,
         DialogueBlock, MetadataBlock, ParseResult,
-        NGUI_TAG_RE, NGUI_TOKEN_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
+        NGUI_TAG_RE, NGUI_TOKEN_RE, RUBY_RE, PLACEHOLDER_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
         protect_secret, unprotect_secret, redact_secret,
         DecodedText, detect_encoding_and_decode, encode_with_metadata,
         read_text_file_strictly, write_atomic_encoded,
@@ -78,7 +78,7 @@ except ImportError:
         MTLConfig, MTLEngine, TagMasker, translate_async, MTL_ENGINES, DEFAULT_LLM_PROMPT,
         serialize, parse, sniff_format, apply_to_document, sanitize_speaker,
         DialogueBlock, MetadataBlock, ParseResult,
-        NGUI_TAG_RE, NGUI_TOKEN_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
+        NGUI_TAG_RE, NGUI_TOKEN_RE, RUBY_RE, PLACEHOLDER_RE, normalize_gradient_syntax, strip_tags, get_rendered_length, measure_line_lengths,
         protect_secret, unprotect_secret, redact_secret,
         DecodedText, detect_encoding_and_decode, encode_with_metadata,
         read_text_file_strictly, write_atomic_encoded,
@@ -2279,12 +2279,13 @@ class MisoraApp(tk.Tk):
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
         if hasattr(self, "gutter_clean"):
             self.gutter_clean.configure(bg=gutter_bg, fg=gutter_fg)
+            self._apply_gutter_overflow_tag(self.gutter_clean)
         if hasattr(self, "gutter_cont"):
             self.gutter_cont.configure(bg=gutter_bg, fg=gutter_fg)
         if hasattr(self, "ruler_clean"):
-            self.ruler_clean.configure(bg=gutter_bg, fg=gutter_fg)
+            self.ruler_clean.configure(bg=gutter_bg)
         if hasattr(self, "ruler_cont"):
-            self.ruler_cont.configure(bg=gutter_bg, fg=gutter_fg)
+            self.ruler_cont.configure(bg=gutter_bg)
 
         self.txt_dialogue.configure(
             font=(d_fam, d_sz),
@@ -2298,6 +2299,8 @@ class MisoraApp(tk.Tk):
             relief="solid",
         )
         self._configure_editor_rich_tags(self.txt_dialogue, d_fam, d_sz)
+        self._apply_overflow_highlights(self.txt_dialogue)
+        self._redraw_pixel_rulers()
 
         self.txt_continuous.configure(
             font=(d_fam, d_sz),
@@ -2577,6 +2580,18 @@ class MisoraApp(tk.Tk):
             background=t["highlight_bg"],
             font=(d_fam, d_sz, "bold"),
         )
+        ov_bg = "#4a1c24" if not self._is_light_theme() else "#ffd6dc"
+        ov_fg = best_contrast_fg(
+            ov_bg,
+            "#ff8fa3" if not self._is_light_theme() else "#9b111e",
+            "#ffffff" if not self._is_light_theme() else "#1a1a1a",
+        )
+        widget.tag_configure(
+            "line_overflow",
+            background=ov_bg,
+            foreground=ov_fg,
+            underline=True,
+        )
         widget.tag_configure(
             "search_hit",
             background=t["highlight_bg"],
@@ -2586,6 +2601,7 @@ class MisoraApp(tk.Tk):
         for tag_name in list(widget.tag_names()):
             if tag_name.startswith("cstyle_"):
                 widget.tag_delete(tag_name)
+        widget.tag_raise("line_overflow")
         widget.tag_raise("ngui_tag")
         widget.tag_raise("search_hit")
 
@@ -4468,14 +4484,6 @@ class MisoraApp(tk.Tk):
         self.btn_lock_box.pack(side="left", padx=(2, 4))
         create_tooltip(self.btn_lock_box, "Translation Lock (Ctrl+L) — Protect box from batch/paste/replace")
 
-        # Rendered Character Count & Game Box Overflow Warning (Rule 19, Rule 20 D13 / GAME-BOX-PREVIEW)
-        self.lbl_char_count = self._tag_role(
-            tk.Label(self.speaker_view_row, text="", bg=t["bg_panel"], fg=t["fg_muted"], font=("Segoe UI", max(8, u_sz - 1))),
-            "label_char_count"
-        )
-        self.lbl_char_count.pack(side="left", padx=(2, 6))
-        create_tooltip(self.lbl_char_count, "Rendered dialogue length (excluding NGUI tags). Warns on overflow (>45 chars/line).")
-
         # Unified VIEW Group (Select Box, All Script, Preview) docked on right side of Speaker row (FEAT-03)
         self.view_group = self._tag_role(
             tk.Frame(self.speaker_view_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
@@ -4931,21 +4939,16 @@ class MisoraApp(tk.Tk):
         text_container = self._tag_role(tk.Frame(self.gd_inner, bg=t["bg_panel"]), "panel")
         text_container.pack(fill="both", expand=True, padx=6, pady=(2, 10))
 
-        # Horizontal Column Ruler for Clean View (#12)
-        self.ruler_clean = tk.Text(
+        # Pixel-Calibrated Horizontal Ruler for Clean View (S17 / BUG-40, FEAT-09)
+        self.ruler_clean = tk.Canvas(
             text_container,
-            height=1,
-            font=("Consolas", max(8, d_sz - 2)),
+            height=20,
             bg=gutter_bg,
-            fg=gutter_fg,
             bd=0,
-            relief="flat",
-            wrap="none",
-            takefocus=0,
+            highlightthickness=0,
             cursor="arrow",
         )
-        self.ruler_clean.insert("1.0", "     ....5...10...15...20...25...30...35...40...45...50...55...60...65...70...75...80")
-        self.ruler_clean.config(state="disabled")
+        self.ruler_clean.bind("<Configure>", lambda e: self._redraw_pixel_rulers())
         if self.show_column_ruler:
             self.ruler_clean.pack(side="top", fill="x", pady=(0, 2))
 
@@ -5155,21 +5158,16 @@ class MisoraApp(tk.Tk):
         # VIEW 2: Continuous Script Dialog Stream
         self.continuous_wrap = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
 
-        # Horizontal Column Ruler for Continuous View (#12)
-        self.ruler_cont = tk.Text(
+        # Pixel-Calibrated Horizontal Ruler for All Script View (S17 / BUG-40, FEAT-09)
+        self.ruler_cont = tk.Canvas(
             self.continuous_wrap,
-            height=1,
-            font=("Consolas", max(8, d_sz - 2)),
+            height=20,
             bg=gutter_bg,
-            fg=gutter_fg,
             bd=0,
-            relief="flat",
-            wrap="none",
-            takefocus=0,
+            highlightthickness=0,
             cursor="arrow",
         )
-        self.ruler_cont.insert("1.0", "      ....5...10...15...20...25...30...35...40...45...50...55...60...65...70...75...80")
-        self.ruler_cont.config(state="disabled")
+        self.ruler_cont.bind("<Configure>", lambda e: self._redraw_pixel_rulers())
         if self.show_column_ruler:
             self.ruler_cont.pack(side="top", fill="x", padx=8, pady=(2, 2))
 
@@ -5526,6 +5524,7 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "gd_inner"):
             self.gd_inner.update_idletasks()
             self._sync_gd_scroll_bounds()
+        self._redraw_pixel_rulers()
         self.show_toast(f"Line numbers {'enabled' if visible else 'hidden'}")
         self._save_user_prefs(silent=True)
 
@@ -5556,6 +5555,8 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "gd_inner"):
             self.gd_inner.update_idletasks()
             self._sync_gd_scroll_bounds()
+        if visible:
+            self._redraw_pixel_rulers()
         self.show_toast(f"Column ruler {'enabled' if visible else 'hidden'}")
         self._save_user_prefs(silent=True)
 
@@ -5569,6 +5570,7 @@ class MisoraApp(tk.Tk):
             self.gutter_clean.config(state="normal")
             self.gutter_clean.delete("1.0", tk.END)
             self.gutter_clean.insert("1.0", numbers)
+            self._apply_gutter_overflow_tag(self.gutter_clean)
             self.gutter_clean.config(state="disabled")
         except Exception:
             pass
@@ -6597,6 +6599,7 @@ class MisoraApp(tk.Tk):
         text = self.txt_dialogue.get("1.0", "end-1c")
         for m in NGUI_TAG_RE.finditer(text):
             self.txt_dialogue.tag_add("ngui_tag", f"1.0 + {m.start()}c", f"1.0 + {m.end()}c")
+        self._apply_overflow_highlights(self.txt_dialogue)
         self.txt_dialogue.tag_raise("search_hit")
 
         self.txt_continuous.tag_remove("ngui_tag", "1.0", tk.END)
@@ -7583,7 +7586,6 @@ class MisoraApp(tk.Tk):
                 text="🔒" if is_locked else "🔓",
                 bg=self.theme["accent_yellow"] if is_locked else self.theme["bg_panel"]
             )
-        self._update_rendered_char_count(box.clean_text)
 
         if hasattr(self, "btn_prev"):
             can_prev = (self.current_box_idx > 0) or (self.current_doc and self.current_doc.has_metadata())
@@ -7599,6 +7601,7 @@ class MisoraApp(tk.Tk):
             self.txt_dialogue.delete("1.0", tk.END)
             if compiled:
                 self._insert_compiled_ngui_text(self.txt_dialogue, "1.0", box.clean_text)
+                self._apply_overflow_highlights(self.txt_dialogue)
                 self.txt_dialogue.config(state="disabled")
             else:
                 self.txt_dialogue.insert("1.0", box.clean_text)
@@ -7764,8 +7767,6 @@ class MisoraApp(tk.Tk):
             self._mark_document_dirty(self.current_file_path)
             try:
                 self._update_raw_view()
-                if box_idx == getattr(self, "current_box_idx", -1):
-                    self._update_rendered_char_count(new_tx)
             except Exception:
                 pass
             mutated = True
@@ -7784,6 +7785,7 @@ class MisoraApp(tk.Tk):
                 gutter.config(state="normal", height=eff_height)
                 gutter.delete("1.0", tk.END)
                 gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
+                self._apply_gutter_overflow_tag(gutter)
                 gutter.config(state="disabled")
             except Exception:
                 pass
@@ -7900,13 +7902,17 @@ class MisoraApp(tk.Tk):
         self._commit_widget_edit(w)
 
     def _highlight_ngui_tags_for_widget(self, w: tk.Text) -> None:
-        """Syntax-color NGUI tags within a specific Text widget."""
-        if self.var_preview_compiled.get() or not w.winfo_exists():
+        """Syntax-color NGUI tags and pixel-calibrated overflow within a specific Text widget."""
+        if not w.winfo_exists():
+            return
+        if self.var_preview_compiled.get():
+            self._apply_overflow_highlights(w)
             return
         w.tag_remove("ngui_tag", "1.0", tk.END)
         tx = w.get("1.0", "end-1c")
         for m in NGUI_TAG_RE.finditer(tx):
             w.tag_add("ngui_tag", f"1.0 + {m.start()}c", f"1.0 + {m.end()}c")
+        self._apply_overflow_highlights(w)
         w.tag_raise("ngui_tag")
 
     def on_copy_script(self) -> None:
@@ -8780,11 +8786,6 @@ class MisoraApp(tk.Tk):
                     lbl_segs = tk.Label(hdr, text=f"{len(box.segs)} segs", font=("Segoe UI", max(7, d_sz - 4), "bold"), fg=t["misora_pink"], bg=hdr_bg)
                     lbl_segs.pack(side="left", padx=(2, 4))
 
-                # Rendered character count (Rule 19 / GAME-BOX-PREVIEW)
-                char_len = get_rendered_length(box.clean_text)
-                lbl_chars = tk.Label(hdr, text=f"({char_len} chars)", font=("Segoe UI", max(7, d_sz - 4)), fg=t["fg_muted"], bg=hdr_bg)
-                lbl_chars.pack(side="right", padx=(4, 6))
-
                 hdr.pack(fill="x", pady=0)
 
                 # Editor Row with dynamic line-number gutter
@@ -8812,6 +8813,7 @@ class MisoraApp(tk.Tk):
                     spacing3=2,
                 )
                 gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
+                self._apply_gutter_overflow_tag(gutter)
                 gutter.config(state="disabled")
                 if self.show_line_numbers:
                     gutter.pack(side="left", fill="y", padx=(0, 2))
@@ -8838,6 +8840,7 @@ class MisoraApp(tk.Tk):
                 self._configure_editor_rich_tags(txt, d_fam, d_sz)
                 if compiled:
                     self._insert_compiled_ngui_text(txt, "1.0", box.clean_text)
+                    self._apply_overflow_highlights(txt)
                     txt.config(state="disabled")
                 else:
                     txt.insert("1.0", box.clean_text)
@@ -9302,7 +9305,6 @@ class MisoraApp(tk.Tk):
             self._auto_resize_dialogue_box()
             self._highlight_ngui_tags()
             self._highlight_dialogue_matches()
-            self._update_rendered_char_count(new_tx)
             self._update_gutter_clean()
             return True
         else:
@@ -9483,24 +9485,183 @@ class MisoraApp(tk.Tk):
             self._modified_boxes = set()
             self._original_box_texts = {}
 
-    def _update_rendered_char_count(self, text: str) -> None:
-        """Update live rendered character counter and warn if text overflows dialogue frame (Rule 19 / GAME-BOX-PREVIEW)."""
-        if not hasattr(self, "lbl_char_count") or not self.lbl_char_count.winfo_exists():
+    def _get_dialogue_measure_font(self) -> tkfont.Font:
+        """Return a cached tkfont.Font matching the active dialogue editor font."""
+        d_fam = getattr(self, "dialogue_font_family", "Consolas")
+        d_sz = int(getattr(self, "dialogue_font_size", 11))
+        cached = getattr(self, "_dialogue_measure_font", None)
+        if cached is None:
+            cached = tkfont.Font(root=self, family=d_fam, size=d_sz)
+            self._dialogue_measure_font = cached
+        else:
+            try:
+                if cached.cget("family") != d_fam or int(cached.cget("size")) != d_sz:
+                    cached.configure(family=d_fam, size=d_sz)
+            except Exception:
+                cached = tkfont.Font(root=self, family=d_fam, size=d_sz)
+                self._dialogue_measure_font = cached
+        return cached
+
+    def _measure_dialogue_metrics(self, text: str) -> Dict[str, Any]:
+        """Shared pixel-calibrated dialogue measurement helper (S17 / BUG-40, FEAT-09).
+
+        Uses active editor font to compute `safe_w = font.measure('1234567890' * 5)`
+        (50 digit-widths, an estimate of the in-game font). Strips NGUI tags to 0px,
+        preserves ruby base text, and gives `{playername}`/`{N}` placeholders a realistic
+        non-zero width. Measures rendered prefixes with `font.measure(prefix)` for
+        kerning-accurate width and exact raw-index overflow mapping.
+        """
+        f = self._get_dialogue_measure_font()
+        safe_w = max(1, int(f.measure("1234567890" * 5)))
+        digit_w = safe_w / 50.0
+        placeholder_sample = "PlayerName"
+
+        raw_lines = text.split("\n") if text else [""]
+        line_metrics: List[Dict[str, Any]] = []
+
+        for line_no, raw_line in enumerate(raw_lines, start=1):
+            units: List[Tuple[int, str]] = []
+            pos = 0
+            for m in NGUI_TOKEN_RE.finditer(raw_line):
+                if m.start() > pos:
+                    for j in range(pos, m.start()):
+                        units.append((j, raw_line[j]))
+                tok = m.group(0)
+                ruby_m = RUBY_RE.fullmatch(tok)
+                if ruby_m:
+                    base_start = m.start(3)
+                    base_end = m.end(3)
+                    if base_start >= 0 and base_end >= base_start:
+                        for j in range(base_start, base_end):
+                            units.append((j, raw_line[j]))
+                elif PLACEHOLDER_RE.fullmatch(tok):
+                    units.append((m.start(), placeholder_sample))
+                pos = m.end()
+            if pos < len(raw_line):
+                for j in range(pos, len(raw_line)):
+                    units.append((j, raw_line[j]))
+
+            rendered_parts: List[str] = []
+            overflow_raw_start: Optional[int] = None
+            pixel_width = 0
+            for raw_idx, piece in units:
+                rendered_parts.append(piece)
+                pixel_width = int(f.measure("".join(rendered_parts)))
+                if overflow_raw_start is None and pixel_width > safe_w:
+                    overflow_raw_start = raw_idx
+
+            line_metrics.append({
+                "line_no": line_no,
+                "pixel_width": pixel_width,
+                "overflow_raw_start": overflow_raw_start,
+                "raw_len": len(raw_line),
+            })
+
+        line_count = len(raw_lines)
+        return {
+            "safe_w": safe_w,
+            "digit_w": digit_w,
+            "line_count": line_count,
+            "has_line_overflow": line_count >= 4,
+            "has_width_overflow": any(l["overflow_raw_start"] is not None for l in line_metrics),
+            "lines": line_metrics,
+        }
+
+    def _apply_overflow_highlights(self, widget: Optional[tk.Text]) -> None:
+        """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget."""
+        if not widget or not widget.winfo_exists():
+            return
+        try:
+            widget.tag_remove("line_overflow", "1.0", tk.END)
+            text = widget.get("1.0", "end-1c")
+            metrics = self._measure_dialogue_metrics(text)
+            for info in metrics["lines"]:
+                ov_start = info["overflow_raw_start"]
+                if ov_start is not None:
+                    ln = info["line_no"]
+                    widget.tag_add("line_overflow", f"{ln}.{ov_start}", f"{ln}.end")
+        except Exception:
+            pass
+
+    def _apply_gutter_overflow_tag(self, gutter_widget: Optional[tk.Text]) -> None:
+        """Color vertical line-number gutter red from line 4+ (3 or more linebreaks)."""
+        if not gutter_widget or not gutter_widget.winfo_exists():
+            return
+        try:
+            ov_fg = "#ff5c7c" if not self._is_light_theme() else "#c9184a"
+            d_sz = int(getattr(self, "dialogue_font_size", 11))
+            gutter_widget.tag_configure("gutter_overflow", foreground=ov_fg, font=("Consolas", max(8, d_sz - 1), "bold"))
+            gutter_widget.tag_remove("gutter_overflow", "1.0", tk.END)
+            total_lines = int(gutter_widget.index("end-1c").split(".")[0])
+            if total_lines >= 4:
+                gutter_widget.tag_add("gutter_overflow", "4.0", tk.END)
+        except Exception:
+            pass
+
+    def _draw_single_pixel_ruler(self, canvas: tk.Canvas, x0: int) -> None:
+        """Render tick marks and 50 digit-width (est.) overflow zone on a Canvas ruler."""
+        if not canvas or not canvas.winfo_exists():
             return
         t = self.theme
-        lines_info = measure_line_lengths(text)
-        total_len = sum(l[1] for l in lines_info)
-        max_line = max((l[1] for l in lines_info), default=0)
-        if max_line > 45:
-            self.lbl_char_count.config(
-                text=f"Chars: {total_len} (Max: {max_line}) ⚠ Overflow",
-                fg=t["misora_pink"]
-            )
-        else:
-            self.lbl_char_count.config(
-                text=f"Chars: {total_len} (Max: {max_line})",
-                fg=t["fg_muted"]
-            )
+        light = self._is_light_theme()
+        gutter_bg = "#e8e8e8" if light else "#2d2d30"
+        gutter_fg = "#707070" if light else "#858585"
+        red_zone_bg = "#ffd6dc" if light else "#4a1c24"
+        red_fg = "#c9184a" if light else "#ff5c7c"
+        marker_fg = t["misora_pink"]
+
+        canvas.configure(bg=gutter_bg)
+        canvas.delete("all")
+
+        metrics = self._measure_dialogue_metrics("")
+        safe_w = metrics["safe_w"]
+        digit_w = metrics["digit_w"]
+        ch = max(20, int(canvas.winfo_height() or 20))
+        cw = max(int(canvas.winfo_width() or 0), int(x0 + safe_w + 180))
+
+        # Red overflow zone past 50 digit-widths
+        ov_x = x0 + safe_w
+        canvas.create_rectangle(ov_x, 0, cw, ch, fill=red_zone_bg, outline="")
+        canvas.create_line(x0, ch - 1, cw, ch - 1, fill=gutter_fg)
+
+        col = 0
+        while True:
+            tx = x0 + int(round(col * digit_w))
+            if tx > cw - 8:
+                break
+            is_major = (col % 10 == 0)
+            tick_h = 8 if is_major else 4
+            tick_col = red_fg if col > 50 else (marker_fg if col == 50 else gutter_fg)
+            canvas.create_line(tx, ch - tick_h - 1, tx, ch - 1, fill=tick_col, width=2 if col == 50 else 1)
+            if is_major:
+                lbl = "50d" if col == 50 else str(col)
+                canvas.create_text(tx + 2, 2, text=lbl, anchor="nw", fill=tick_col, font=("Segoe UI", 7, "bold" if col == 50 else "normal"))
+            col += 5
+
+        canvas.create_line(ov_x, 0, ov_x, ch, fill=marker_fg, width=2)
+        canvas.create_text(ov_x + 4, 2, text="est. >50d", anchor="nw", fill=red_fg, font=("Segoe UI", 7, "bold"))
+
+    def _redraw_pixel_rulers(self) -> None:
+        """Redraw both Clean and All Script Canvas rulers aligned to editor text origins."""
+        if hasattr(self, "ruler_clean") and self.ruler_clean.winfo_exists():
+            x0_clean = (self.gutter_clean.winfo_reqwidth() + 2 if getattr(self, "show_line_numbers", True) and hasattr(self, "gutter_clean") else 0) + 11
+            try:
+                if self.txt_dialogue.winfo_ismapped() and self.ruler_clean.winfo_ismapped():
+                    x0_clean = (self.txt_dialogue.winfo_rootx() - self.ruler_clean.winfo_rootx()) + int(self.txt_dialogue.cget("bd") or 1) + int(self.txt_dialogue.cget("padx") or 10)
+            except Exception:
+                pass
+            self._draw_single_pixel_ruler(self.ruler_clean, max(0, x0_clean))
+
+        if hasattr(self, "ruler_cont") and self.ruler_cont.winfo_exists():
+            x0_cont = (24 if getattr(self, "show_line_numbers", True) else 0) + 17
+            try:
+                cards = getattr(self, "_card_widgets", {})
+                first_txt = next((c.get("txt") for c in cards.values() if c.get("txt") and c["txt"].winfo_ismapped()), None)
+                if first_txt is not None and self.ruler_cont.winfo_ismapped():
+                    x0_cont = (first_txt.winfo_rootx() - self.ruler_cont.winfo_rootx()) + int(first_txt.cget("bd") or 1) + int(first_txt.cget("padx") or 8)
+            except Exception:
+                pass
+            self._draw_single_pixel_ruler(self.ruler_cont, max(0, x0_cont))
 
     def on_revert_box(self) -> None:
         if self.current_file_path:

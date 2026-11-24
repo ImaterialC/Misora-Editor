@@ -58,7 +58,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 ### 5. Machine Translation, Security & Safety
 * **DeepL & Local LLM Integration**: Fast single-box and batch translation with rate-limiting delay and non-blocking background workers.
 * **DPAPI Credential Security**: API keys stored encrypted using Windows Data Protection API (`dpapi:...`); secrets automatically redacted from logs and diagnostic exports.
-* **NGUI Tag Engine & Length Counter**: Single-source NGUI syntax highlighting, vertical hyphen gradient generation (`[c0-c1]`), ruby text (`[rub:...]`), and live rendered character length counter warning against in-game overflow (> 45 chars; native pixel-calibrated overflow ruler planned for v1.4.1 / S17).
+* **NGUI Tag Engine & Pixel-Calibrated Rulers**: Single-source NGUI syntax highlighting, vertical hyphen gradient generation (`[c0-c1]`), ruby text (`[rub:...]`), and pixel-calibrated overflow rulers & inline/gutter highlights (50 digit-widths estimate / line 4+).
 * **Workspace & Geometry Safety**: Safe multi-folder drop notifications and virtual screen coordinate clamping to prevent off-screen window restoration.
 
 ---

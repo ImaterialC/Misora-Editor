@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S16 Verification Baseline — 2026-11-25):
+Unit Test Suite (S17 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 321 tests across 38 modules (281 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 323 tests across 39 modules (283 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 321 tests (exact disk discovery):
+Test suites included in the 323 tests (exact disk discovery):
+  tests/test_p3_s17_pixel_rulers.py         — 2 S17 pixel-measure helper, Canvas rulers, line 4+ red gutter & char counter removal tests (all pass)
   tests/test_p3_s16_misora_workspace.py     — 4 S16 .misora v1 workspace, stable lock matching & U-B18 overwrite diff tests (all pass)
   tests/test_p3_s15_selection_drawer_open.py — 4 S15 select box both views, reserved lock slot, collapsible left drawer, empty state & batched multi-open tests (all pass)
   tests/test_p3_s14_toolbar_search_ui.py    — 5 S14 search grid 5-col alignment, scope current widget hiding, player icon / ribbon cleanup, and responsive toolbars tests (all pass)
@@ -103,9 +104,18 @@ Test suites included in the 321 tests (exact disk discovery):
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
 
-### Track 2 Progress: Group G3 (S16) COMPLETE
-- **Status:** S16 is 100% COMPLETE (FEAT-08).
-- **Next Session:** S17 (`All Script` MTL Drawer & `Import from XUAT`).
+### Track 2 Progress: Group G4a (S17) COMPLETE
+- **Status:** S17 is 100% COMPLETE (BUG-40, FEAT-09).
+- **Next Session:** S18 (Game-style Preview frames).
+
+### S17 Shared Pixel-Measure Helper, Calibrated Rulers & Remove Char Counter (2026-11-25)
+- **Session Scope:** BUG-40, FEAT-09 (`U-B22..U-B26`, `DEP-8`) — Track 2 · Group G4a.
+- **Pixel Measurement & Rulers (`misora.py`):**
+  - Added `_get_dialogue_measure_font()` and `_measure_dialogue_metrics()` driven by the active editor font (`safe_w = font.measure("1234567890" * 5)` = 50 digit-widths, labeled as an estimate of the in-game font), using kerning-accurate `font.measure(prefix)`, 0px NGUI tag stripping, ruby base-only measurement, non-zero `{playername}`/`{N}` placeholder width, and exact raw-index overflow mapping.
+  - Replaced static `tk.Text` rulers (`ruler_clean`, `ruler_cont`) with pixel-calibrated `tk.Canvas` rulers aligned to the editor text origin, showing a red overflow zone past 50 digit-widths (`est. >50d`).
+  - Added `"gutter_overflow"` red/bold styling from line 4+ (3+ linebreaks) and `"line_overflow"` inline highlighting for characters past `safe_w` in both Dialogue and All Script views.
+  - Removed `lbl_char_count`, `_update_rendered_char_count()`, and card `(N chars)` labels (keeping `core/ngui_tags.py:measure_line_lengths()` intact).
+- **Docs & Tests:** Updated `README.md`, `tests/test_phase5_mtl_security_preview.py` (`test_06` lines 268–277), and added `tests/test_p3_s17_pixel_rulers.py` (1 failing-first Defect Probe + 1 Regression Guard). Full test suite discovered count: 323 tests across 39 modules (283 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### S16 `.misora` v1 Workspace Session & Overwrite Diff Dialog (2026-11-25)
 - **Session Scope:** FEAT-08 (`U-B17`, `U-B18`) — Track 2 · Group G3 (post-DEP-4, DEP-9).

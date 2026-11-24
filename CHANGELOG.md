@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S17 — Shared Pixel-Measure Helper, Calibrated Rulers (50 Digit-Widths / Line 4+) & Remove Char Counter
+- **Session Scope:** BUG-40, FEAT-09 (`U-B22..U-B26`, `DEP-8` — Lead Ruling #4) — Track 2 · Group G4a.
+- **Pixel-Calibrated Measurement & Overflow Highlighting (`misora.py`):**
+  - Added `_get_dialogue_measure_font()` and `_measure_dialogue_metrics()` driven by the active editor font (`safe_w = font.measure("1234567890" * 5)` = 50 digit-widths, labeled as an estimate of the in-game font), using kerning-accurate prefix measurement (`font.measure(prefix)`), 0px NGUI tag stripping, ruby base-only measurement, non-zero `{playername}`/`{N}` placeholder width, and exact raw-character overflow index mapping.
+  - Replaced static `Consolas 9pt` `tk.Text` rulers (`ruler_clean`, `ruler_cont`) with pixel-calibrated `tk.Canvas` rulers aligned to the editor text origin, showing a red overflow zone past 50 digit-widths (`est. >50d`).
+  - Added `"gutter_overflow"` red/bold styling on vertical line-number gutters from line 4+ (3 or more linebreaks) in both Dialogue and All Script views.
+  - Added theme-legible `"line_overflow"` inline highlighting (`_apply_overflow_highlights()`) for characters past `safe_w` on each logical line.
+  - Removed inaccurate `lbl_char_count`, `_update_rendered_char_count()`, and card `(N chars)` labels (keeping `core/ngui_tags.py:measure_line_lengths()` intact).
+- **Docs & Tests:** Updated `README.md` and `tests/test_phase5_mtl_security_preview.py` (`test_06` lines 268–277); added `tests/test_p3_s17_pixel_rulers.py` (1 failing-first Defect Probe + 1 Regression Guard).
+- **Files Created:** `tests/test_p3_s17_pixel_rulers.py`.
+- **Files Modified:** `misora.py`, `README.md`, `tests/test_phase5_mtl_security_preview.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/ngui_tags.py`, `core/story_ast.py`, `assets/`.
+
 ### S16 — `.misora` v1 Workspace Session & Overwrite Diff Dialog
 - **Session Scope:** FEAT-08 (`U-B17`, `U-B18`) — Track 2 · Group G3 (post-DEP-4, DEP-9).
 - **Core Workspace (`core/workspace.py`, `core/__init__.py`):**
