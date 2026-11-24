@@ -44,6 +44,8 @@ class BoxEditDelta:
     file_path: str = ""
     box_uid: Optional[int] = None
     source: str = "keyboard"  # "keyboard", "ribbon", "paste", "mtl"
+    old_seg_texts: Optional[List[str]] = None
+    new_seg_texts: Optional[List[str]] = None
 
 
 @dataclass
@@ -212,16 +214,18 @@ class MasterUndoJournal:
                 and isinstance(state.undo_stack[-1].deltas[0], BoxEditDelta)
             ):
                 prev_delta = state.undo_stack[-1].deltas[0]
-                same_box = (
-                    (prev_delta.box_uid is not None and prev_delta.box_uid == delta.box_uid)
-                    or (prev_delta.box_index == delta.box_index)
-                )
+                if prev_delta.box_uid is not None and delta.box_uid is not None:
+                    same_box = (prev_delta.box_uid == delta.box_uid)
+                else:
+                    same_box = (prev_delta.box_index == delta.box_index)
                 same_source = (prev_delta.source == delta.source)
                 same_file = (prev_delta.file_path == delta.file_path)
 
                 if same_box and same_source and same_file and (now - state.undo_stack[-1].timestamp) <= COALESCE_WINDOW_SECS:
                     prev_delta.new_text = delta.new_text
                     prev_delta.new_speaker = delta.new_speaker
+                    if delta.new_seg_texts is not None:
+                        prev_delta.new_seg_texts = delta.new_seg_texts
                     state.undo_stack[-1].timestamp = now
                     state.undo_stack[-1].coalesced = True
                     return

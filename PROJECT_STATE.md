@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S03 Verification Baseline — 2026-11-24):
+Unit Test Suite (S04 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 248 tests across 25 modules (208 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 254 tests across 26 modules (214 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 248 tests (exact disk discovery):
+Test suites included in the 254 tests (exact disk discovery):
+  tests/test_p3_s04_ast_mutations.py        — 6 S04 AST mutation, voice cue/breaker ownership, multi-segment undo/paste, UID coalesce & tombstone tests (all pass)
   tests/test_p3_s03_binary_v2.py            — 9 S03 strict binary parse, lossless v2, command map/breakers, and synthetic bundle verify tests (all pass)
   tests/test_p3_s02_hygiene.py              — 5 S02 hygiene, single-version User-Agent, and backup isolation tests (all pass)
   tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (18 pass, 2 skipped)
@@ -84,6 +85,33 @@ Test suites included in the 248 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S04 Kind-Conversion Box Separation, Voice/Breaker Ownership, Multi-Segment Undo/Paste, UID Coalesce & Tombstones (2026-11-24)
+- **Session Scope:** BUG-02, BUG-05, BUG-06, BUG-17, HYG-04 (Track 1 · Group B2 / DEP-5 part 2).
+- **BUG-02 (`core/story_ast.py:inject_box()`, `core/story_ast.py:set_box_kind()`):**
+  - In `inject_box()` and `set_box_kind()`, target primary `Record.uid` is captured before mutation.
+  - Whenever converting `print <-> tag` (e.g. clearing speaker adjacent to narration) would cause adjacent boxes to collapse, minimal valid empty boundary breaker (`Record(cmd_id=10, cmd_name="touch", args=[])`) is inserted before and/or after so they remain separate boxes (Lead Ruling (b) — never implicitly merge).
+  - Preceding boundary breaker is inserted strictly before the target box's owned record span (anchored before any attached preceding `cmd_id == 12 vo_` cue, never between voice cue and dialogue).
+  - Deferred `_rebuild_boxes()` until after both speaker and dialogue records are updated in `inject_box()`, preventing stale intermediate projections. Target box resolved by captured UID.
+- **BUG-05 (`core/story_ast.py:insert_box()`, `core/story_ast.py:delete_boxes()`, `core/story_ast.py:move_box()`):**
+  - Unified structural ownership via `_get_box_record_span()`: a `cmd_id == 12` (`vo_...`) record immediately preceding a box's first segment is owned by that box.
+  - In `insert_box()` and `move_box()`, insertions before an existing box anchor strictly before that box's owned span (`start_idx`), never stealing the destination box's voice cue.
+  - In `move_box()`, the owned voice cue moves with the box; gap neighbors are separated with a boundary breaker if they would merge; duplicate empty breakers are collapsed via `_collapse_duplicate_breakers()`.
+  - In `delete_boxes()`, attached voice cue records are deleted; redundant empty tap-breakers (`cmd_id == 10 and not args`) are removed unless surviving neighbors would merge; duplicate breakers are collapsed. Unknown interstitial commands (`cmd_id == 999`) and voice cues belonging to other boxes are strictly preserved.
+- **BUG-06 (`core/story_ast.py`, `core/undo_journal.py`, `misora.py`):**
+  - Multi-segment editing is non-blocking: allows normal continuous editing on multi-segment boxes.
+  - Added small non-blocking `'N segs'` badge to Continuous View card header and Page View `speaker_ribbon_row` (`self.lbl_segs_badge`) configured dynamically in `_sync_clean_view_to_current_box()`.
+  - Extended `BoxEditDelta` with `old_seg_texts: Optional[List[str]] = None` and `new_seg_texts: Optional[List[str]] = None`. Populated at dialogue keystroke and flush sites (`_flush_continuous_card_edits`, `_on_card_text_edited`, `_on_dialogue_edited`), propagating `new_seg_texts` to stack-top delta on coalesce.
+  - `_apply_delta` (`BoxEditDelta`) resolves target box by `delta.box_uid` first (falling back to `delta.box_index`), restoring original segment splits losslessly via `inject_box(..., seg_texts=...)`.
+  - In `on_box_paste()`, deep-copies `_box_clipboard` `BoxSnapshot`s directly when internal clipboard text matches system clipboard, preserving multi-segment structures.
+- **BUG-17 (`core/undo_journal.py:MasterUndoJournal.record()`):**
+  - Fixed undo coalescing: requires matching `prev_delta.box_uid == delta.box_uid` when both are non-None, preventing edits on different boxes with the same box index from coalescing.
+- **HYG-04 (`core/story_ast.py:delete_boxes()`):**
+  - Deterministic tombstone pruning against active records (`self.removed_records &= {r.uid for r in self.records}`) upon physical deletion in `delete_boxes()`, eliminating unbounded memory growth while maintaining full compatibility. Added `prune_removed_records()` helper.
+- **New Test Suite:** Added `tests/test_p3_s04_ast_mutations.py` with 5 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 254 tests across 26 modules (214 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/undo_journal.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s04_ast_mutations.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/script_codec.py`, `core/bundle_io.py`, `core/search_engine.py`, `assets/*.py`.
 
 ### S03 Strict Binary Parse, Lossless v2, Command Map/Breakers & Bundle Verify (2026-11-24)
 - **Session Scope:** BUG-01, BUG-03, BUG-04, BUG-09 (Track 1 · Group B1 / DEP-5 part 1).
@@ -555,6 +583,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **RIBBON-CUT-PASTE-NO-COMMIT** | RESOLVED | `misora.py` | Virtual `<<Cut>>` and `<<Paste>>` explicitly invoke central `_commit_widget_edit`. Covered by `test_30`. | 2 |
 | **MULTI-TEXTASSET-TARGET** | PARTIALLY RESOLVED (2026-11-24: S03 / BUG-09) | `core/bundle_io.py` | Pre-save SHA-256 non-target object verification in `save_bundle_story` detects modified or dropped non-target objects. Covered by `test_p3_s03_binary_v2:test_probe_5`; production fixture compatibility remains BLOCKED. | 1 |
 | **INJECT-EXTRA-ARGS** | RESOLVED | `core/story_ast.py` | `inject_box` and `set_metadata` preserve unmanaged trailing args. | 1 |
+| **KIND-CONVERSION-COLLAPSE** | RESOLVED (2026-11-24: S04 / BUG-02) | `core/story_ast.py:set_box_kind()`, `inject_box()` | Minimal valid boundary breaker (`cmd_id=10`) inserted before/after kind-converted boxes when adjacent boxes would merge; target UID resolved before/after write. Covered by `test_p3_s04_ast_mutations:test_probe_1`. | 1 |
+| **STRUCTURAL-VOICE-BREAKER-OWNERSHIP** | RESOLVED (2026-11-24: S04 / BUG-05) | `core/story_ast.py:insert_box()`, `delete_boxes()`, `move_box()` | Preceding `cmd_id == 12 vo_` cue owned by box across moves/deletes; boundary insertions anchor before destination voice cues; redundant tap-breakers cleaned up without neighbor merge. Covered by `test_p3_s04_ast_mutations:test_probe_2`. | 1 |
 
 ### P0 (new, from manual testing 2026-11-20)
 
@@ -597,6 +627,9 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **BULK-DELTA-NONATOMIC** | RESOLVED | `misora.py` | Multi-file text replacement in `on_replace_all()` and undo/redo in `_apply_delta()` use `write_atomic_utf8()` with transaction rollback and `open_documents` cache sync. Covered by `test_s5_bulk_replace_safety`. | 2 |
 | **HARDCODED-PROJECT-PATH** | RESOLVED | `misora_config.json`; `tests/test_misora_ui_integration.py:34-45` | Committed config reset to empty defaults; UI integration tests isolated from root config. | 3 |
 | **PLAINTEXT-SAVE-ROUTING** | REOPENED (2026-11-24: BUG-11) | `misora.py` | Historically routed between Plain Text (Page/Continuous) and Story Bundle AST. Reopened for edge-case plain text save routing under BUG-11. | 2 |
+| **MULTI-SEGMENT-UNDO-PASTE** | RESOLVED (2026-11-24: S04 / BUG-06) | `core/story_ast.py`, `core/undo_journal.py`, `misora.py` | Non-blocking multi-segment editing with `'N segs'` badge; `BoxEditDelta.old_seg_texts`/`new_seg_texts` segment preservation; lossless `BoxSnapshot` paste. Covered by `test_p3_s04_ast_mutations:test_probe_3`. | 2 |
+| **UNDO-UID-COALESCE** | RESOLVED (2026-11-24: S04 / BUG-17) | `core/undo_journal.py:MasterUndoJournal.record()` | Coalescing requires matching `box_uid` when non-None, preventing edits on distinct boxes with identical index from coalescing. Covered by `test_p3_s04_ast_mutations:test_probe_4`. | 2 |
+| **TOMBSTONE-UNBOUNDED-GROWTH** | RESOLVED (2026-11-24: S04 / HYG-04) | `core/story_ast.py:delete_boxes()` | Dead record UIDs deterministically pruned against active records in `self.records`. Covered by `test_p3_s04_ast_mutations:test_probe_5`. | 2 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 

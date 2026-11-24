@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S04 — Kind-Conversion Box Separation, Voice/Breaker Ownership, Multi-Segment Undo/Paste, UID Coalesce & Tombstones
+- **Session Scope:** BUG-02, BUG-05, BUG-06, BUG-17, HYG-04 (Track 1 · Group B2 (DEP-5 part 2)).
+- **BUG-02 (`core/story_ast.py:inject_box()`, `core/story_ast.py:set_box_kind()`):**
+  - Captured target primary `Record.uid` before mutation.
+  - Implemented boundary breaker insertion (`Record(cmd_id=10, cmd_name="touch", args=[])`) whenever converting `print <-> tag` (e.g. clearing speaker adjacent to narration) would cause `_rebuild_boxes()` to collapse adjacent boxes into multi-segments.
+  - Anchored preceding boundary breakers strictly before target box's owned record span `start_idx` (preceding attached `cmd_id == 12 vo_` voice cues, never detaching voice records).
+  - Added optional `rebuild: bool = True` to `set_box_kind()` to defer projection rebuild until full speaker + text record write completes in `inject_box()`, eliminating stale `"Narrator"` projection.
+  - Resolved target box by primary `Record.uid` instead of stale positional `box_index`.
+- **BUG-05 (`core/story_ast.py:insert_box()`, `delete_boxes()`, `move_box()`):**
+  - Defined box owned record span `_get_box_record_span()` including attached preceding `cmd_id == 12 vo_` voice records.
+  - `insert_box()` emits `Record(cmd_id=12, cmd_name="touch", args=[snap.voice_cue])` when snapshot contains a voice cue, and anchors insertions before destination box's `start_idx` so voice cues are never stolen.
+  - `move_box()` relocates attached voice records with their box; anchors before destination box's `start_idx`; ensures gap neighbors that share speaker & kind receive a separating tap-breaker.
+  - `delete_boxes()` removes attached voice records; removes redundant empty tap-breakers (`cmd_id == 10 and not args`) while preserving them if surviving neighbors would merge; preserves unknown interstitial commands (`cmd_id == 999`).
+  - Added `_collapse_duplicate_breakers()` to prevent stacked duplicate empty tap-breakers (`touch#10 touch#10`) in binary output.
+- **BUG-06 (`core/story_ast.py`, `core/undo_journal.py`, `misora.py`):**
+  - Formalized `inject_box(..., seg_texts: Optional[List[str]] = None)` restoring multi-segment text splits losslessly while preserving unmanaged extra args and `break_char`.
+  - Extended `BoxEditDelta` with optional `old_seg_texts: Optional[List[str]] = None` and `new_seg_texts: Optional[List[str]] = None`.
+  - Populated `box_uid` and `old_seg_texts`/`new_seg_texts` across dialogue keystroke and flush handlers (`_flush_continuous_card_edits`, `_on_card_text_edited`, `_on_dialogue_edited`), updating the stack top on coalescing while preserving existing undo-before-mutation flow.
+  - In `_apply_delta` (`BoxEditDelta`), resolved target box index by `box_uid` first and passed `seg_texts` to `inject_box()`, losslessly restoring multi-segment splits on Undo/Redo.
+  - In `on_box_paste()`, deep-copied `_box_clipboard` `BoxSnapshot` objects directly when internal clipboard text matches system clipboard, eliminating `DialogueBlock` flattening and preserving `seg_texts`, `voice_cue`, and `extra_args`.
+  - Added non-blocking `'N segs'` badge to Continuous View card headers and Page View `speaker_ribbon_row` (`self.lbl_segs_badge`) whenever `len(box.segs) > 1`.
+- **BUG-17 (`core/undo_journal.py:record()`):**
+  - Corrected `same_box` coalescing condition: requires `prev_delta.box_uid == delta.box_uid` when both are non-None, falling back to `box_index` only when at least one `box_uid` is None.
+  - Propagated `new_seg_texts` onto `prev_delta` during coalescing, ensuring multi-segment undo restores the original pre-coalesce segment texts.
+- **HYG-04 (`core/story_ast.py:delete_boxes()`, `prune_removed_records()`):**
+  - Pruned `doc.removed_records` deterministically against active records (`self.removed_records &= {r.uid for r in self.records}`) after physical deletion, preventing unbounded memory accumulation across repeated insert/delete cycles.
+- **Test Suite:** Added `tests/test_p3_s04_ast_mutations.py` with 5 Defect Probes (failing-first) and 1 lightweight Regression Guard (passing). Full test suite discovered count: 254 tests across 26 modules (214 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/undo_journal.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s04_ast_mutations.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/script_codec.py`, `core/bundle_io.py`, `core/search_engine.py`, `assets/*.py`.
+
 ### S03 — Strict Binary Parse, Lossless v2 + \b64:, Command Map/Breakers & Fixture-Gated Bundle Verify
 - **Session Scope:** BUG-01, BUG-03, BUG-04, BUG-09 (Track 1 · Group B1 (DEP-5 part 1)).
 - **BUG-01 (`core/story_ast.py:from_binary()`, `core/bundle_io.py:load_bundle_story()`):**

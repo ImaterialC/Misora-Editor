@@ -451,7 +451,52 @@ class StoryDocument:
         # Rebase box projection so segment pointers remain strictly valid
         self._rebuild_boxes()
 
-    def set_box_kind(self, box_index: int, new_kind: str) -> None:
+    def _get_box_record_span(self, box: Box) -> Tuple[int, int, Optional[Record]]:
+        """
+        Return (start_idx, end_idx, voice_record) in self.records for box.
+        start_idx points to the attached preceding voice cue (if present) or first segment record.
+        end_idx points to the last segment record (inclusive).
+        """
+        if not box.segs:
+            return 0, 0, None
+        first_seg_uid = box.segs[0].record.uid
+        last_seg_uid = box.segs[-1].record.uid
+        first_seg_idx = next((i for i, r in enumerate(self.records) if r.uid == first_seg_uid), 0)
+        last_seg_idx = next((i for i, r in enumerate(self.records) if r.uid == last_seg_uid), first_seg_idx)
+
+        start_idx = first_seg_idx
+        voice_rec = None
+        for i in range(first_seg_idx - 1, -1, -1):
+            r = self.records[i]
+            if r.uid in self.removed_records:
+                continue
+            if (r.cmd_id == 12 and r.args and r.args[0].startswith("vo_")) or (r.cmd_name == "voice" and r.args):
+                start_idx = i
+                voice_rec = r
+            break
+
+        return start_idx, last_seg_idx, voice_rec
+
+    def _collapse_duplicate_breakers(self) -> None:
+        """Prune consecutive duplicate empty tap-breakers (cmd_id == 10 and not args)."""
+        collapsed: List[Record] = []
+        last_was_empty_tap = False
+        for r in self.records:
+            is_empty_tap = (r.cmd_id == 10 and not r.args)
+            if is_empty_tap and last_was_empty_tap:
+                continue
+            collapsed.append(r)
+            if r.cmd_id in DEFAULT_BREAKER_IDS:
+                last_was_empty_tap = is_empty_tap
+            elif r.cmd_name in DEFAULT_TEXT_CMDS:
+                last_was_empty_tap = False
+        self.records = collapsed
+
+    def prune_removed_records(self) -> None:
+        """Prune dead record UIDs from removed_records against active records (HYG-04)."""
+        self.removed_records &= {r.uid for r in self.records}
+
+    def set_box_kind(self, box_index: int, new_kind: str, rebuild: bool = True) -> None:
         """
         Convert a dialogue box between 'print' (spoken dialogue) and 'tag' (narration).
         'tag' records have no speaker argument (args=[text, ...extra]).
@@ -462,6 +507,59 @@ class StoryDocument:
         box = self.boxes[box_index]
         if box.kind == new_kind:
             return
+
+        target_uid = box.segs[0].record.uid
+        start_idx, end_idx, voice_rec = self._get_box_record_span(box)
+
+        target_sp = "" if new_kind == "tag" else (box.speaker or "Narrator")
+
+        # Check preceding active text command in self.records before start_idx
+        prec_text_cmd = None
+        has_breaker_before = False
+        for i in range(start_idx - 1, -1, -1):
+            r = self.records[i]
+            if r.uid in self.removed_records:
+                continue
+            if r.cmd_id in DEFAULT_BREAKER_IDS:
+                has_breaker_before = True
+                break
+            if r.cmd_name in DEFAULT_TEXT_CMDS:
+                prec_text_cmd = r
+                break
+
+        need_breaker_before = False
+        if prec_text_cmd is not None and not has_breaker_before:
+            prec_kind = prec_text_cmd.cmd_name
+            prec_sp = prec_text_cmd.args[0] if prec_kind == "print" and len(prec_text_cmd.args) >= 2 else ""
+            if prec_kind == new_kind and prec_sp == target_sp:
+                need_breaker_before = True
+
+        # Check following active text command in self.records after end_idx
+        foll_text_cmd = None
+        has_breaker_after = False
+        for i in range(end_idx + 1, len(self.records)):
+            r = self.records[i]
+            if r.uid in self.removed_records:
+                continue
+            if r.cmd_id in DEFAULT_BREAKER_IDS:
+                has_breaker_after = True
+                break
+            if r.cmd_name in DEFAULT_TEXT_CMDS:
+                foll_text_cmd = r
+                break
+
+        need_breaker_after = False
+        if foll_text_cmd is not None and not has_breaker_after:
+            foll_kind = foll_text_cmd.cmd_name
+            foll_sp = foll_text_cmd.args[0] if foll_kind == "print" and len(foll_text_cmd.args) >= 2 else ""
+            if foll_kind == new_kind and foll_sp == target_sp:
+                need_breaker_after = True
+
+        # Insert breakers if needed (anchoring strictly before start_idx, i.e. before voice cue)
+        if need_breaker_after:
+            self.records.insert(end_idx + 1, Record(cmd_id=10, cmd_name="touch", args=[]))
+        if need_breaker_before:
+            self.records.insert(start_idx, Record(cmd_id=10, cmd_name="touch", args=[]))
 
         if new_kind == "tag":
             box.kind = "tag"
@@ -478,7 +576,7 @@ class StoryDocument:
                     rec.args = [""]
         elif new_kind == "print":
             box.kind = "print"
-            sp = box.speaker or "Narrator"
+            sp = target_sp
             box.speaker = sp
             for seg in box.segs:
                 rec = seg.record
@@ -491,7 +589,8 @@ class StoryDocument:
         else:
             raise ValueError(f"Unknown box kind: {new_kind}. Expected 'print' or 'tag'.")
 
-        self._rebuild_boxes()
+        if rebuild:
+            self._rebuild_boxes()
 
     def inject_box(
         self,
@@ -510,6 +609,7 @@ class StoryDocument:
             raise IndexError(f"Box index {box_index} out of range (0-{len(self.boxes)-1})")
 
         box = self.boxes[box_index]
+        target_uid = box.segs[0].record.uid
 
         # Verify record ownership
         doc_record_uids = {r.uid for r in self.records}
@@ -521,11 +621,11 @@ class StoryDocument:
         if new_speaker is not None:
             norm_sp = PLAYER_PLACEHOLDER_RE.sub("{0}", new_speaker)
             if not norm_sp and box.kind == "print":
-                self.set_box_kind(box_index, "tag")
-                box = self.boxes[box_index]
+                self.set_box_kind(box_index, "tag", rebuild=False)
+                box = next((b for b in self.boxes if b.segs and b.segs[0].record.uid == target_uid), box)
             elif norm_sp and box.kind == "tag":
-                self.set_box_kind(box_index, "print")
-                box = self.boxes[box_index]
+                self.set_box_kind(box_index, "print", rebuild=False)
+                box = next((b for b in self.boxes if b.segs and b.segs[0].record.uid == target_uid), box)
                 box.speaker = norm_sp
             else:
                 box.speaker = norm_sp
@@ -569,6 +669,9 @@ class StoryDocument:
                 else:
                     rec.args = [seg_text] + rec.args[1:]
 
+        # Rebuild projection ONLY after full speaker + text record write
+        self._rebuild_boxes()
+
     # -------------------------------------------------------------------------
     # Structural AST Mutation APIs
     # -------------------------------------------------------------------------
@@ -596,6 +699,9 @@ class StoryDocument:
         new_records: List[Record] = []
         is_print = (snap.kind == "print" and bool(snap.speaker))
 
+        if snap.voice_cue:
+            new_records.append(Record(cmd_id=12, cmd_name="touch", args=[snap.voice_cue]))
+
         for k, seg_tx in enumerate(snap.seg_texts):
             norm_tx = xuat_to_game(seg_tx, self.break_char)
             ext = (snap.extra_args[k] if snap.extra_args and k < len(snap.extra_args) else [])
@@ -609,24 +715,22 @@ class StoryDocument:
             # Document has no boxes yet: append records
             self.records.extend(new_records)
         elif index <= 0:
-            # Insert at beginning: find insertion point before first box segment
-            first_rec = self.boxes[0].segs[0].record
-            insert_pos = next((i for i, r in enumerate(self.records) if r.uid == first_rec.uid), 0)
+            # Insert at beginning: anchor BEFORE destination box's start_idx (including its vo_ cue)
+            dest_start, _, _ = self._get_box_record_span(self.boxes[0])
             breaker_rec = Record(cmd_id=10, cmd_name=breaker_cmd, args=[])
-            self.records[insert_pos:insert_pos] = new_records + [breaker_rec]
+            self.records[dest_start:dest_start] = new_records + [breaker_rec]
         elif index >= len(self.boxes):
             # Append after last box: find last record of last box
-            last_rec = self.boxes[-1].segs[-1].record
-            last_pos = next((i for i, r in enumerate(self.records) if r.uid == last_rec.uid), len(self.records) - 1)
+            _, dest_end, _ = self._get_box_record_span(self.boxes[-1])
             breaker_rec = Record(cmd_id=10, cmd_name=breaker_cmd, args=[])
-            self.records[last_pos + 1:last_pos + 1] = [breaker_rec] + new_records
+            self.records[dest_end + 1:dest_end + 1] = [breaker_rec] + new_records
         else:
-            # Insert between boxes: find last record of previous box
-            prev_last_rec = self.boxes[index - 1].segs[-1].record
-            prev_pos = next((i for i, r in enumerate(self.records) if r.uid == prev_last_rec.uid), 0)
+            # Insert between boxes: anchor BEFORE destination box's start_idx
+            dest_start, _, _ = self._get_box_record_span(self.boxes[index])
             breaker_rec = Record(cmd_id=10, cmd_name=breaker_cmd, args=[])
-            self.records[prev_pos + 1:prev_pos + 1] = [breaker_rec] + new_records
+            self.records[dest_start:dest_start] = new_records + [breaker_rec]
 
+        self._collapse_duplicate_breakers()
         self._rebuild_boxes()
         target_box_idx = max(0, min(index, len(self.boxes) - 1))
         return self.boxes[target_box_idx]
@@ -647,11 +751,30 @@ class StoryDocument:
             if 0 <= idx < len(self.boxes):
                 box = self.boxes[idx]
                 snapshots.append(BoxSnapshot.from_box(box))
-                for seg in box.segs:
-                    uids_to_remove.add(seg.record.uid)
+                start_idx, end_idx, voice_rec = self._get_box_record_span(box)
+                for r in self.records[start_idx : end_idx + 1]:
+                    uids_to_remove.add(r.uid)
+
+                # Check if immediately followed by an empty tap-breaker (cmd_id == 10 and not args)
+                if end_idx + 1 < len(self.records):
+                    nxt = self.records[end_idx + 1]
+                    if nxt.cmd_id == 10 and not nxt.args:
+                        # Check surviving neighbor before start_idx and after end_idx+1
+                        prec_cmd = next((self.records[i] for i in range(start_idx - 1, -1, -1) if self.records[i].uid not in uids_to_remove and self.records[i].cmd_name in DEFAULT_TEXT_CMDS), None)
+                        foll_cmd = next((self.records[i] for i in range(end_idx + 2, len(self.records)) if self.records[i].uid not in uids_to_remove and self.records[i].cmd_name in DEFAULT_TEXT_CMDS), None)
+                        # If surviving neighbors would merge (same kind and speaker), keep the breaker
+                        neighbors_would_merge = False
+                        if prec_cmd and foll_cmd:
+                            p_sp = prec_cmd.args[0] if prec_cmd.cmd_name == "print" and len(prec_cmd.args) >= 2 else ""
+                            f_sp = foll_cmd.args[0] if foll_cmd.cmd_name == "print" and len(foll_cmd.args) >= 2 else ""
+                            if prec_cmd.cmd_name == foll_cmd.cmd_name and p_sp == f_sp:
+                                neighbors_would_merge = True
+                        if not neighbors_would_merge:
+                            uids_to_remove.add(nxt.uid)
 
         self.records = [r for r in self.records if r.uid not in uids_to_remove]
-        self.removed_records.update(uids_to_remove)
+        self.removed_records &= {r.uid for r in self.records}
+        self._collapse_duplicate_breakers()
         self._rebuild_boxes()
         snapshots.reverse()
         return snapshots
@@ -669,23 +792,53 @@ class StoryDocument:
             raise IndexError(f"to_index {to_index} out of range")
 
         box_to_move = self.boxes[from_index]
-        move_uids = {seg.record.uid for seg in box_to_move.segs}
-        move_recs = [r for r in self.records if r.uid in move_uids]
+        dest_box = self.boxes[to_index]
+        dest_primary_uid = dest_box.segs[0].record.uid
+
+        # Owned span includes attached voice cue
+        start_idx, end_idx, voice_rec = self._get_box_record_span(box_to_move)
+        move_recs = self.records[start_idx : end_idx + 1]
+        move_uids = {r.uid for r in move_recs}
+
+        # Check neighbors left in the gap at source
+        prec_active = next((self.records[i] for i in range(start_idx - 1, -1, -1) if self.records[i].uid not in move_uids and self.records[i].uid not in self.removed_records and self.records[i].cmd_name in DEFAULT_TEXT_CMDS), None)
+        foll_active = next((self.records[i] for i in range(end_idx + 1, len(self.records)) if self.records[i].uid not in move_uids and self.records[i].uid not in self.removed_records and self.records[i].cmd_name in DEFAULT_TEXT_CMDS), None)
+        need_gap_breaker = False
+        if prec_active and foll_active:
+            p_sp = prec_active.args[0] if prec_active.cmd_name == "print" and len(prec_active.args) >= 2 else ""
+            f_sp = foll_active.args[0] if foll_active.cmd_name == "print" and len(foll_active.args) >= 2 else ""
+            if prec_active.cmd_name == foll_active.cmd_name and p_sp == f_sp:
+                prec_idx = next(i for i, r in enumerate(self.records) if r.uid == prec_active.uid)
+                foll_idx = next(i for i, r in enumerate(self.records) if r.uid == foll_active.uid)
+                has_brk = any(self.records[i].cmd_id in DEFAULT_BREAKER_IDS for i in range(prec_idx + 1, foll_idx) if self.records[i].uid not in move_uids)
+                if not has_brk:
+                    need_gap_breaker = True
 
         # Remove records from current location
         self.records = [r for r in self.records if r.uid not in move_uids]
+        if need_gap_breaker:
+            insert_gap_pos = min(start_idx, len(self.records))
+            self.records.insert(insert_gap_pos, Record(cmd_id=10, cmd_name="touch", args=[]))
+
+        self._collapse_duplicate_breakers()
         self._rebuild_boxes()
 
-        # Insert before or after target box
-        target_box = self.boxes[to_index if to_index < from_index else to_index - 1]
-        if to_index < from_index:
-            target_pos = next(i for i, r in enumerate(self.records) if r.uid == target_box.segs[0].record.uid)
-            self.records[target_pos:target_pos] = move_recs
-        else:
-            last_target_uid = target_box.segs[-1].record.uid
-            target_pos = next(i for i, r in enumerate(self.records) if r.uid == last_target_uid)
-            self.records[target_pos + 1:target_pos + 1] = move_recs
+        # Locate destination box in rebuilt document
+        dest_box_in_doc = next((b for b in self.boxes if b.segs and b.segs[0].record.uid == dest_primary_uid), None)
+        if not dest_box_in_doc:
+            return
 
+        d_start, d_end, _ = self._get_box_record_span(dest_box_in_doc)
+        if to_index < from_index:
+            # Insert before destination box: anchor BEFORE d_start (before dest box's voice cue)
+            breaker_rec = Record(cmd_id=10, cmd_name="touch", args=[])
+            self.records[d_start:d_start] = move_recs + [breaker_rec]
+        else:
+            # Insert after destination box: anchor AFTER d_end
+            breaker_rec = Record(cmd_id=10, cmd_name="touch", args=[])
+            self.records[d_end + 1:d_end + 1] = [breaker_rec] + move_recs
+
+        self._collapse_duplicate_breakers()
         self._rebuild_boxes()
 
     def clone_boxes(self, indices: List[int], target_index: int) -> List[Box]:
