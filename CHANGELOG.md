@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S20 — Docked Right-Side MTL Drawer: Tab Infrastructure & `Dialogue` Multi-Engine Stack
+- **Session Scope:** FEAT-12 (`U-B9`, `U-B32` — Track 2 · Group G6a, post-`DEP-6`).
+- **Right-Side Drawer `'MTL'` Tab (`misora.py`):**
+  - Added **`MTL`** as the 3rd tab in the right-side drawer (`Customize` | `NGUI Glossary` | `MTL`) via `_build_side_drawer()` and `_switch_side_drawer_tab()`, and routed `Translator -> Translator Assistant...` (`Ctrl+T`) and the `MTL` toolbar button (`on_open_translator_assistant()`) to toggle the docked `'mtl'` drawer tab (retiring the floating `TranslatorAssistantDialog` entry point while keeping the class intact for backward-compatible test guards).
+- **`Dialogue` (1-Box) Multi-Engine Stack (`misora.py`):**
+  - Vertically stacks engine cards **only** for user-enabled engines (default: `XUAT Cache` + `Google`; opt-in toggles for `DeepL`, `Local / Sugoi`, `LLM / OpenAI` persisted in `misora_config.json`).
+  - Each card features an editable scratchpad isolated from `"MisoraShortcuts"` story-widget routing with local `Ctrl+Z` / `Ctrl+Y` (`tk.TclError`-safe), per-card `↻` Refresh (bypasses session cache), and per-card `→` Apply (enforces model-level Translation Lock, preserves whitespace with zero `.strip()`, mutates AST before recording `BoxEditDelta(source="mtl")` with `old_seg_texts`/`new_seg_texts`).
+  - Top `Refresh All` refreshes enabled engines only, uses a 256-entry LRU `OrderedDict` session cache, and prompts `messagebox.askyesno` confirmation before batch-calling paid APIs (`DeepL`, `LLM / OpenAI`).
+  - All async worker calls run `TagMasker`-protected `translate_async()` via `queue.Queue` and main-thread on-demand `_poll_mtl_drawer_queue()` (`after(50, ...)` cancelled on teardown) with `(file_path, doc_id, box_uid, src_hash, req_seq, engine)` stale guards (`BUG-27`, `BUG-32`).
+- **Tests:** Added `tests/test_p3_s20_mtl_drawer_dialogue.py` (2 failing-first Defect Probes + 1 Regression Guard).
+
 ### S19 — Whole-File Editable `Raw Commands` (Lossless v2, Confirm, `DocumentRecordsDelta` Undo & Lock/JP Remap)
 - **Session Scope:** FEAT-11 (`U-B31` — Track 2 · Group G5, post-`DEP-5`).
 - **Undo Journal (`core/undo_journal.py`, `core/__init__.py`):**

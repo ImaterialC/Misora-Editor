@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S19 Verification Baseline — 2026-11-25):
+Unit Test Suite (S20 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 330 tests across 41 modules (290 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 333 tests across 42 modules (293 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 330 tests (exact disk discovery):
+Test suites included in the 333 tests (exact disk discovery):
+  tests/test_p3_s20_mtl_drawer_dialogue.py — 3 S20 docked MTL drawer tab, Dialogue multi-engine stack, lock/whitespace Apply, paid-API confirm & stale guard tests (all pass)
   tests/test_p3_s19_raw_commands_edit.py    — 4 S19 whole-file Raw Commands v2 editing, confirmation, DocumentRecordsDelta undo & lock/JP remap tests (all pass)
   tests/test_p3_s18_game_preview.py         — 3 S18 code-drawn Dialogue Preview & All Script Preview (wrap='none', bleed, cstyle_* sweep, no AtlasAdv) tests (all pass)
   tests/test_p3_s17_pixel_rulers.py         — 2 S17 pixel-measure helper, Canvas rulers, line 4+ red gutter & char counter removal tests (all pass)
@@ -105,6 +106,21 @@ Test suites included in the 330 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G6a (S20) COMPLETE
+- **Status:** S20 is 100% COMPLETE (FEAT-12).
+- **Next Session:** S21.
+
+### S20 Docked Right-Side MTL Drawer — Tab Infrastructure & `Dialogue` Multi-Engine Stack (2026-11-25)
+- **Session Scope:** FEAT-12 (`U-B9`, `U-B32`) — Track 2 · Group G6a (post-`DEP-6`).
+- **Right-Side Drawer `'MTL'` Tab (`misora.py`):**
+  - Added **`MTL`** as the 3rd right-side drawer tab (`Customize` | `NGUI Glossary` | `MTL`) in `_build_side_drawer()` and `_switch_side_drawer_tab()`, routing `Translator -> Translator Assistant...` (`Ctrl+T`) and the `MTL` button (`on_open_translator_assistant()`) to `_toggle_side_drawer("mtl")`. Preserved `TranslatorAssistantDialog` class for backward-compatible S8a/S11/S07 guards.
+- **`Dialogue` (1-Box) Multi-Engine Stack (`misora.py`):**
+  - Vertically stacks engine cards only for user-enabled engines (default: `XUAT Cache` + `Google`; opt-in toggles for `DeepL`, `Local / Sugoi`, `LLM / OpenAI` persisted in `misora_config.json`).
+  - Each card includes an editable scratchpad isolated from `"MisoraShortcuts"` with local `Ctrl+Z`/`Ctrl+Y`, per-card `↻` Refresh (bypasses session cache), and per-card `→` Apply (enforces model-level Translation Lock, preserves whitespace with no `.strip()`, mutates AST before `BoxEditDelta(source="mtl")` with `old_seg_texts`/`new_seg_texts`).
+  - Top `Refresh All` uses a 256-entry LRU `OrderedDict` session cache and prompts `messagebox.askyesno` before batch-calling paid APIs (`DeepL`, `LLM / OpenAI`).
+  - All async calls use `TagMasker`-protected `translate_async()` via `queue.Queue` + on-demand main-thread `_poll_mtl_drawer_queue()` (cancelled on teardown) and `(file_path, doc_id, box_uid, src_hash, req_seq, engine)` stale guards (`BUG-27`, `BUG-32`).
+- **Tests:** Added `tests/test_p3_s20_mtl_drawer_dialogue.py` (2 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 333 tests across 42 modules (293 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G5 (S19) COMPLETE
 - **Status:** S19 is 100% COMPLETE (FEAT-11).
