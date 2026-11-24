@@ -27,7 +27,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 <img align="right" width="95" src="assets/misora_chibi.png" alt="Misora Chibi">
 
-**Misora** completely eliminates this pipeline. It loads `.unity3d` bundles directly into memory, exposes dialogue in a clean **Game Display View** side-by-side with a **Raw AST Script View**, and allows you to patch the bundle in-place in under **100 milliseconds** (`Ctrl+S`).
+**Misora** completely eliminates this pipeline. It loads `.unity3d` bundles directly into memory, exposes dialogue in a clean **Dialogue View** side-by-side with a **Raw Commands** pane, and allows you to patch the bundle in-place in under **100 milliseconds** (`Ctrl+S`).
 
 ---
 
@@ -38,10 +38,10 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 * **Bi-directional XUAT Sync**: When saving a bundle correction, Misora automatically locates and updates the matching community translation dictionary (`.txt`) under `Translation\en\Text\`, escaping newlines, preserving BOM/CRLF formatting, and creating automated `.bak` backups.
 * **Strict Text Encoding**: Multi-encoding engine with deterministic BOM detection (`UTF-8-SIG`, `UTF-16`) and strict CP932 / Windows-31J Japanese fallback without silent `errors="replace"` corruption.
 
-### 2. Dual-View Story Editor & Continuous Flow
-* **Game Display View (Clean Dialogue)**: Displays dialogue exactly as the player sees it in-game, uninterrupted by technical script cues for lip-sync (`lip_sync`), animations (`chara_anim`), camera pans, or voice cues (`voice`).
-* **Continuous Document View (`Ctrl+Alt+C`)**: Read and edit entire story chapters seamlessly in a modern scrollable card flow, with synchronized live carets, real-time speaker badges, and Box 0 chapter metadata synopsis editing.
-* **Raw AST Script View (Technical Records)**: Displays the full sequence of underlying engine command records with line markers and decoded arguments.
+### 2. Dual-View Story Editor & All Script Flow
+* **Dialogue View (Clean Dialogue)**: Displays dialogue exactly as the player sees it in-game, uninterrupted by technical script cues for lip-sync (`lip_sync`), animations (`chara_anim`), camera pans, or voice cues (`voice`).
+* **All Script View (`Ctrl+Alt+C`)**: Read and edit entire story chapters seamlessly in a modern scrollable card flow, with synchronized live carets, real-time speaker badges, and Box 0 chapter metadata synopsis editing.
+* **Raw Commands View (Technical Records)**: Displays the full sequence of underlying engine command records with line markers and decoded arguments.
 * **Placeholder Insertion**: Insert `{playername}` with a single click or shortcut (**Ctrl+P**). Misora automatically maps `{playername}` $\leftrightarrow$ `{0}` between community dictionaries and the game engine.
 
 ### 3. Clean Story Interchange Format (CSIF) & Paste Preview
@@ -81,8 +81,8 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 | **Ctrl + L** | Translation Lock | Toggle translation lock on active dialogue box |
 | **Ctrl + Shift + I** | Import Script | Import Clean Story Interchange Format (CSIF) script |
 | **Ctrl + Shift + E** | Export Script | Export story to CSIF text file |
-| **Ctrl + Alt + C** | Continuous View | Switch to scrollable Continuous Flow view |
-| **Ctrl + Alt + V** | Page View | Switch to single-box Game Display view |
+| **Ctrl + Alt + C** | All Script View | Switch to scrollable All Script flow view |
+| **Ctrl + Alt + V** | Page View | Switch to single-box Dialogue view |
 | **Alt + Left** | Previous Box | Navigate to previous dialogue box |
 | **Alt + Right** | Next Box | Navigate to next dialogue box |
 | **Ctrl + G** | Go to Box | Jump to specific dialogue box index |

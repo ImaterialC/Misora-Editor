@@ -1259,6 +1259,35 @@ def restore_stable_locks(
     return matched_uids, unresolved
 
 
+class _ReplaceRowProxy:
+    """Proxy object maintaining backwards compatibility for self.row_replace."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    def pack_forget(self) -> None:
+        if hasattr(self.app, "_hide_replace_row"):
+            self.app._hide_replace_row()
+
+    def grid_remove(self) -> None:
+        if hasattr(self.app, "_hide_replace_row"):
+            self.app._hide_replace_row()
+
+    def pack(self, *args: Any, **kwargs: Any) -> None:
+        if hasattr(self.app, "_show_replace_row"):
+            self.app._show_replace_row()
+
+    def grid(self, *args: Any, **kwargs: Any) -> None:
+        if hasattr(self.app, "_show_replace_row"):
+            self.app._show_replace_row()
+
+    def winfo_viewable(self) -> bool:
+        return bool(getattr(self.app, "_replace_row_visible", False))
+
+    def winfo_manager(self) -> str:
+        return "grid" if getattr(self.app, "_replace_row_visible", False) else ""
+
+
 class MisoraApp(tk.Tk):
     """Main Application Window for Misora: Unity3D Revision Tool."""
 
@@ -1834,6 +1863,8 @@ class MisoraApp(tk.Tk):
                     self._saved_continuous_view = raw["continuous_view"]
                 if isinstance(raw.get("sync_xuat"), bool):
                     self._saved_sync_xuat = raw["sync_xuat"]
+                if isinstance(raw.get("show_ngui_ribbon"), bool):
+                    self._saved_show_ngui_ribbon = raw["show_ngui_ribbon"]
             except Exception as exc:
                 self.logger.warning("UI / Theme / Config", f"Failed to parse {CONFIG_PATH}: {exc}")
                 try:
@@ -1892,6 +1923,7 @@ class MisoraApp(tk.Tk):
                 "window_geometry": self.geometry() if hasattr(self, "geometry") else "",
                 "continuous_view": bool(self.var_continuous_view.get()) if hasattr(self, "var_continuous_view") else False,
                 "sync_xuat": bool(self.var_sync_xuat.get()) if hasattr(self, "var_sync_xuat") else True,
+                "show_ngui_ribbon": bool(self.var_show_ngui_ribbon.get()) if hasattr(self, "var_show_ngui_ribbon") else getattr(self, "_saved_show_ngui_ribbon", True),
             }
             # In-memory serialization before file write ensures DPAPISecurityError never truncates config (BUG-33)
             encoded_payload = json.dumps(payload, indent=2, ensure_ascii=False)
@@ -3142,6 +3174,57 @@ class MisoraApp(tk.Tk):
             ],
         )
 
+        # Search Panel Action Buttons (BUG-38 parity: identical font & padding)
+        style.configure(
+            "Search.TButton",
+            background=btn_bg,
+            foreground=fg_btn,
+            bordercolor=t["border"],
+            darkcolor=t["border"],
+            lightcolor=btn_hover,
+            borderwidth=1,
+            relief="raised",
+            font=("Segoe UI", u_sz),
+            padding=(6, 2),
+        )
+        style.map(
+            "Search.TButton",
+            background=[
+                ("disabled", t["bg_editor"]),
+                ("pressed", btn_press),
+                ("active", btn_hover),
+            ],
+            foreground=[
+                ("disabled", t["fg_muted"]),
+                ("active", fg_btn),
+            ],
+        )
+        style.configure(
+            "SearchPink.TButton",
+            background=accent_bg,
+            foreground=fg_accent,
+            bordercolor=accent_press,
+            darkcolor=accent_press,
+            lightcolor=accent_hover,
+            borderwidth=1,
+            relief="raised",
+            font=("Segoe UI", u_sz),
+            padding=(6, 2),
+        )
+        style.map(
+            "SearchPink.TButton",
+            background=[
+                ("disabled", btn_bg),
+                ("pressed", accent_press),
+                ("active", accent_hover),
+            ],
+            foreground=[
+                ("disabled", t["fg_muted"]),
+                ("pressed", fg_accent_press),
+                ("active", fg_accent_hover),
+            ],
+        )
+
         # Compact Utility Button
         style.configure(
             "Small.TButton",
@@ -3266,6 +3349,7 @@ class MisoraApp(tk.Tk):
 
         self.var_continuous_view = tk.BooleanVar(master=self, value=False)
         self.var_preview_compiled = tk.BooleanVar(master=self, value=False)
+        self.var_show_ngui_ribbon = tk.BooleanVar(master=self, value=getattr(self, "_saved_show_ngui_ribbon", True))
         self._all_menus: List[tk.Menu] = []
 
         menubar = tk.Menu(
@@ -3332,7 +3416,7 @@ class MisoraApp(tk.Tk):
 
         view_menu = tk.Menu(menubar, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
         view_menu.add_checkbutton(
-            label="Continuous Dialog View",
+            label="All Script View",
             variable=self.var_continuous_view,
             command=self._on_toggle_continuous_view,
             selectcolor=t["misora_pink"]
@@ -3341,6 +3425,12 @@ class MisoraApp(tk.Tk):
             label="Preview Compiled NGUI Attributes",
             variable=self.var_preview_compiled,
             command=self._on_toggle_preview_compiled,
+            selectcolor=t["misora_pink"]
+        )
+        view_menu.add_checkbutton(
+            label="Toggle NGUI Ribbon",
+            variable=self.var_show_ngui_ribbon,
+            command=self._on_toggle_ngui_ribbon,
             selectcolor=t["misora_pink"]
         )
         view_menu.add_separator()
@@ -3649,18 +3739,28 @@ class MisoraApp(tk.Tk):
         self.search_frame.pack_forget()
         self._search_bar_visible = False
 
-        row1 = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
-        row1.pack(fill="x", padx=8, pady=4)
+        self.search_grid = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
+        self.search_grid.pack(fill="x", padx=8, pady=4)
 
-        self._tag_role(
-            tk.Label(row1, text="Find:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["misora_pink"], width=7, anchor="w"),
+        self.search_grid.columnconfigure(0, weight=0)
+        self.search_grid.columnconfigure(1, weight=1)
+        self.search_grid.columnconfigure(2, weight=0, uniform="search_btn")
+        self.search_grid.columnconfigure(3, weight=0, uniform="search_btn")
+        self.search_grid.columnconfigure(4, weight=0)
+        self.search_grid.rowconfigure(0, uniform="search_row", pad=2)
+        self.search_grid.rowconfigure(1, uniform="search_row", pad=2)
+
+        # Row 0: Find
+        self.lbl_find = self._tag_role(
+            tk.Label(self.search_grid, text="Find:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["misora_pink"], width=7, anchor="w"),
             "label_accent"
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.lbl_find.grid(row=0, column=0, padx=(0, 6), pady=2, sticky="w")
 
         self.search_var = tk.StringVar(master=self)
         self.search_entry = self._tag_role(
             tk.Entry(
-                row1,
+                self.search_grid,
                 textvariable=self.search_var,
                 font=("Consolas", 10),
                 bg=t["bg_editor"],
@@ -3673,34 +3773,33 @@ class MisoraApp(tk.Tk):
             ),
             "entry_editor"
         )
-        self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.search_entry.grid(row=0, column=1, padx=(0, 8), pady=2, sticky="ew")
         self.search_entry.bind("<Return>", lambda e: self.on_start_search())
         self.search_entry.bind("<Escape>", lambda e: self._hide_search_bar())
 
         self.ico_find = self.get_icon("search", (14, 14))
         self.ico_cancel = self.get_icon("cancel", (14, 14))
-        self.btn_find = ttk.Button(row1, text=" Find in Files", image=self.ico_find, compound="left", style="Pink.TButton", command=self.on_start_search, width=14)
-        self.btn_find.pack(side="left", padx=4)
+        self.btn_find = ttk.Button(self.search_grid, text=" Find in Files", image=self.ico_find, compound="left", style="SearchPink.TButton", command=self.on_start_search, width=14)
+        self.btn_find.grid(row=0, column=2, padx=4, pady=2, sticky="nsew")
 
-        self.btn_cancel = ttk.Button(row1, text=" Cancel", image=self.ico_cancel, compound="left", style="TButton", command=self.on_cancel_search, state="disabled", width=12)
-        self.btn_cancel.pack(side="left", padx=4)
+        self.btn_cancel = ttk.Button(self.search_grid, text=" Cancel", image=self.ico_cancel, compound="left", style="Search.TButton", command=self.on_cancel_search, state="disabled", width=14)
+        self.btn_cancel.grid(row=0, column=3, padx=4, pady=2, sticky="nsew")
 
         self.ico_close = self.get_icon("close", (12, 12))
-        self.btn_close_search = ttk.Button(row1, text="✕", image=self.ico_close, style="Small.TButton", command=self._hide_search_bar, width=3)
-        self.btn_close_search.pack(side="left", padx=(4, 0))
+        self.btn_close_search = ttk.Button(self.search_grid, text="✕", image=self.ico_close, style="Small.TButton", command=self._hide_search_bar, width=3)
+        self.btn_close_search.grid(row=0, column=4, padx=(4, 0), pady=2, sticky="e")
         create_tooltip(self.btn_close_search, "Close Search Bar (Esc)")
 
-        # Row 1.5: Replace row (shown when Ctrl+H / Replace is activated)
-        self.row_replace = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
-        self._tag_role(
-            tk.Label(self.row_replace, text="Replace:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["accent_blue"], width=7, anchor="w"),
+        # Row 1: Replace (hidden initially until on_show_replace)
+        self.lbl_replace = self._tag_role(
+            tk.Label(self.search_grid, text="Replace:", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["accent_blue"], width=7, anchor="w"),
             "label_voice"
-        ).pack(side="left", padx=(0, 6))
+        )
 
         self.replace_var = tk.StringVar(master=self)
         self.replace_entry = self._tag_role(
             tk.Entry(
-                self.row_replace,
+                self.search_grid,
                 textvariable=self.replace_var,
                 font=("Consolas", 10),
                 bg=t["bg_editor"],
@@ -3713,22 +3812,18 @@ class MisoraApp(tk.Tk):
             ),
             "entry_editor"
         )
-        self.replace_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self.replace_entry.bind("<Escape>", lambda e: self._hide_search_bar())
         self.replace_entry.bind("<Return>", lambda e: self.on_replace_next())
 
         self.ico_replace = self.get_icon("replace", (14, 14))
         self.ico_replace_all = self.get_icon("replace_all", (14, 14))
-        self.btn_replace = ttk.Button(self.row_replace, text=" Replace", image=self.ico_replace, compound="left", style="TButton", command=self.on_replace_next, width=14)
-        self.btn_replace.pack(side="left", padx=4)
+        self.btn_replace = ttk.Button(self.search_grid, text=" Replace", image=self.ico_replace, compound="left", style="Search.TButton", command=self.on_replace_next, width=14)
+        self.btn_replace_all = ttk.Button(self.search_grid, text=" Replace All", image=self.ico_replace_all, compound="left", style="Search.TButton", command=self.on_replace_all, width=14)
 
-        self.btn_replace_all = ttk.Button(self.row_replace, text=" Replace All", image=self.ico_replace_all, compound="left", style="TButton", command=self.on_replace_all, width=12)
-        self.btn_replace_all.pack(side="left", padx=4)
-
-        spacer_close = tk.Frame(self.row_replace, bg=t["bg_panel"], width=28, height=1)
-        spacer_close.pack(side="left", padx=(4, 0))
-        spacer_close.pack_propagate(False)
+        self.replace_spacer = self._tag_role(tk.Frame(self.search_grid, bg=t["bg_panel"], width=28, height=1), "panel")
+        self.row_replace = _ReplaceRowProxy(self)
         self._replace_row_visible = False
+        self._hide_replace_row()
 
         row2 = self._tag_role(tk.Frame(self.search_frame, bg=t["bg_panel"]), "panel")
         row2.pack(fill="x", padx=8, pady=(0, 4))
@@ -3799,6 +3894,28 @@ class MisoraApp(tk.Tk):
 
         # Initialize scope widgets with project path
         self._sync_scope_widgets()
+
+    def _show_replace_row(self) -> None:
+        """Show Replace row in search bar 5-column grid (BUG-38)."""
+        if hasattr(self, "lbl_replace"):
+            self.lbl_replace.grid(row=1, column=0, padx=(0, 6), pady=2, sticky="w")
+            self.replace_entry.grid(row=1, column=1, padx=(0, 8), pady=2, sticky="ew")
+            self.btn_replace.grid(row=1, column=2, padx=4, pady=2, sticky="nsew")
+            self.btn_replace_all.grid(row=1, column=3, padx=4, pady=2, sticky="nsew")
+            if hasattr(self, "replace_spacer"):
+                self.replace_spacer.grid(row=1, column=4, padx=(4, 0), pady=2, sticky="e")
+        self._replace_row_visible = True
+
+    def _hide_replace_row(self) -> None:
+        """Hide Replace row in search bar 5-column grid (BUG-38)."""
+        if hasattr(self, "lbl_replace"):
+            self.lbl_replace.grid_remove()
+            self.replace_entry.grid_remove()
+            self.btn_replace.grid_remove()
+            self.btn_replace_all.grid_remove()
+            if hasattr(self, "replace_spacer"):
+                self.replace_spacer.grid_remove()
+        self._replace_row_visible = False
 
     # -------------------------------------------------------------------------
     # Main Workspace (#4 Distinct Nav Buttons, #5/#6 Clean Header, #7 Inline Ribbon)
@@ -4032,6 +4149,7 @@ class MisoraApp(tk.Tk):
 
         # TOP VIEW: Game Display View (Page-by-Page OR Continuous Dialog Stream)
         top_view = self._tag_role(tk.Frame(self.v_paned, bg=t["bg_panel"]), "panel")
+        self.top_view = top_view
         self.v_paned.add(top_view, minsize=140, height=400, stretch="always")
 
         gd_header = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
@@ -4040,7 +4158,7 @@ class MisoraApp(tk.Tk):
         self.lbl_gd_title = self._tag_role(
             tk.Label(
                 gd_header,
-                text="GAME VIEW (Clean Dialogue)",
+                text="Dialogue",
                 font=("Segoe UI", u_sz, "bold"),
                 bg=t["bg_panel"],
                 fg=t["misora_pink"]
@@ -4075,41 +4193,19 @@ class MisoraApp(tk.Tk):
         self.btn_translate.pack(side="right", padx=(2, 2))
         create_tooltip(self.btn_translate, "Open Translator Assistant (Ctrl+T)")
 
-        self.cb_cont = ttk.Checkbutton(
-            gd_header,
-            text="Continuous View",
-            variable=self.var_continuous_view,
-            command=self._on_toggle_continuous_view,
-            style="Accent.TCheckbutton",
-            cursor="hand2"
-        )
-        self.cb_cont.pack(side="right", padx=(4, 4))
-        create_tooltip(self.cb_cont, "Toggle Continuous View / All Script")
-
-        self.cb_sel_box = ttk.Checkbutton(
-            gd_header,
-            text="Select Box",
-            variable=self.var_select_box_mode,
-            command=self._on_toggle_select_box_mode,
-            style="Accent.TCheckbutton",
-            cursor="hand2"
-        )
-        self.cb_sel_box.pack(side="right", padx=(4, 4))
-        create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
-
-        # Combined Row for Speaker + Compact NGUI Ribbon (#7 & #10)
-        speaker_ribbon_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
-        speaker_ribbon_row.pack(fill="x", padx=8, pady=(2, 4))
+        # Row 1: Speaker Controls (Left) + Unified VIEW Group (Right) (#7, #10, FEAT-02, FEAT-03, BUG-39)
+        self.speaker_view_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
+        self.speaker_view_row.pack(fill="x", padx=8, pady=(2, 4))
 
         self._tag_role(
-            tk.Label(speaker_ribbon_row, text="Speaker:", bg=t["bg_panel"], fg=t["fg_muted"]),
+            tk.Label(self.speaker_view_row, text="Speaker:", bg=t["bg_panel"], fg=t["fg_muted"]),
             "label_muted"
         ).pack(side="left", padx=(0, 4))
 
         self.speaker_var = tk.StringVar(master=self)
         self.entry_speaker = self._tag_role(
             tk.Entry(
-                speaker_ribbon_row,
+                self.speaker_view_row,
                 textvariable=self.speaker_var,
                 font=(d_fam, max(9, d_sz - 1), "bold"),
                 bg=t["bg_editor"],
@@ -4129,7 +4225,7 @@ class MisoraApp(tk.Tk):
         self.entry_speaker.bind("<<Paste>>", lambda e: self.after_idle(self._commit_speaker_edit))
 
         self.btn_speaker_dropdown = ttk.Button(
-            speaker_ribbon_row,
+            self.speaker_view_row,
             text="▼",
             style="Small.TButton",
             width=2,
@@ -4140,7 +4236,7 @@ class MisoraApp(tk.Tk):
 
         self.ico_pin = self.get_icon("pin", (16, 16))
         self.btn_pin_speaker = tk.Button(
-            speaker_ribbon_row,
+            self.speaker_view_row,
             text="📌",
             image=self.ico_pin,
             fg=t["fg_text"],
@@ -4155,21 +4251,54 @@ class MisoraApp(tk.Tk):
         self.btn_pin_speaker.pack(side="left", padx=(1, 4))
         create_tooltip(self.btn_pin_speaker, "Pin Speaker (locks current speaker across box navigation)")
 
+        # Player Button: icon-only (player.png), moved out of NGUI ribbon into speaker row (FEAT-02)
+        dark_p = self._is_dark_color(t["bg_panel"])
+        btn_bg = self._shift_hex(t["bg_panel"], 10 if dark_p else -8)
+        btn_hover = self._shift_hex(t["bg_panel"], 22 if dark_p else -16)
+        btn_fg = best_contrast_fg(btn_bg, t["fg_text"], "#ffffff")
+        accent_bg = t["misora_pink"]
+        accent_hover = t["misora_pink_hover"]
+        fg_accent = best_contrast_fg(accent_bg)
+
+        self.ico_player = self.get_icon("player", (14, 14))
+        self.btn_player = self._tag_role(
+            tk.Button(
+                self.speaker_view_row,
+                text="👤",
+                image=self.ico_player,
+                compound="none" if self.ico_player else "left",
+                font=("Segoe UI", max(8, u_sz - 1)),
+                bg=btn_bg,
+                fg=btn_fg,
+                activebackground=btn_hover,
+                activeforeground=btn_fg,
+                bd=1,
+                relief="raised",
+                padx=2,
+                pady=0,
+                cursor="hand2",
+                command=self.on_insert_playername,
+            ),
+            "ribbon_btn",
+        )
+        self.btn_player.pack(side="left", padx=(1, 4))
+        create_tooltip(self.btn_player, "Insert Player Name tag ({0} / {playername}) (Ctrl+P)")
+
         self.lbl_voice_cue = self._tag_role(
-            tk.Label(speaker_ribbon_row, text="", bg=t["bg_panel"], fg=t["accent_blue"], font=("Segoe UI", max(8, u_sz - 1))),
+            tk.Label(self.speaker_view_row, text="", bg=t["bg_panel"], fg=t["accent_blue"], font=("Segoe UI", max(8, u_sz - 1))),
             "label_voice"
         )
         self.lbl_voice_cue.pack(side="left", padx=(2, 4))
 
         self.lbl_segs_badge = self._tag_role(
-            tk.Label(speaker_ribbon_row, text="", bg=t["bg_panel"], fg=t["misora_pink"], font=("Segoe UI", max(7, u_sz - 2), "bold")),
+            tk.Label(self.speaker_view_row, text="", bg=t["bg_panel"], fg=t["misora_pink"], font=("Segoe UI", max(7, u_sz - 2), "bold")),
             "label_accent"
         )
         self.lbl_segs_badge.pack(side="left", padx=(2, 4))
 
         # Translation Lock Toggle Button (Rule 20 D8 / TRANSLATION-LOCK)
         self.btn_lock_box = tk.Button(
-            speaker_ribbon_row,
+            self.speaker_view_row,
             text="🔓",
             font=("Segoe UI", max(8, u_sz - 1)),
             bg=t["bg_panel"],
@@ -4186,30 +4315,97 @@ class MisoraApp(tk.Tk):
 
         # Rendered Character Count & Game Box Overflow Warning (Rule 19, Rule 20 D13 / GAME-BOX-PREVIEW)
         self.lbl_char_count = self._tag_role(
-            tk.Label(speaker_ribbon_row, text="", bg=t["bg_panel"], fg=t["fg_muted"], font=("Segoe UI", max(8, u_sz - 1))),
+            tk.Label(self.speaker_view_row, text="", bg=t["bg_panel"], fg=t["fg_muted"], font=("Segoe UI", max(8, u_sz - 1))),
             "label_char_count"
         )
         self.lbl_char_count.pack(side="left", padx=(2, 6))
         create_tooltip(self.lbl_char_count, "Rendered dialogue length (excluding NGUI tags). Warns on overflow (>45 chars/line).")
 
-        # Compact NGUI Ribbon docked on the right side of the Speaker row
-        dark_p = self._is_dark_color(t["bg_panel"])
-        btn_bg = self._shift_hex(t["bg_panel"], 10 if dark_p else -8)
-        btn_hover = self._shift_hex(t["bg_panel"], 22 if dark_p else -16)
-        btn_fg = best_contrast_fg(btn_bg, t["fg_text"], "#ffffff")
-        accent_bg = t["misora_pink"]
-        accent_hover = t["misora_pink_hover"]
-        fg_accent = best_contrast_fg(accent_bg)
-        accent_green = t.get("accent_green", "#2e7d32")
-
-        ribbon = self._tag_role(
-            tk.Frame(speaker_ribbon_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
+        # Unified VIEW Group (Select Box, All Script, Preview) docked on right side of Speaker row (FEAT-03)
+        self.view_group = self._tag_role(
+            tk.Frame(self.speaker_view_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
             "ribbon"
         )
-        ribbon.pack(side="right", padx=(4, 0))
+        self.view_group.pack(side="right", padx=(4, 0))
+
+        self.ico_sel_box = self.get_icon("box", (14, 14))
+        self.cb_sel_box = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" Select Box",
+                image=self.ico_sel_box,
+                compound="left" if self.ico_sel_box else "none",
+                variable=self.var_select_box_mode,
+                command=self._on_toggle_select_box_mode,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_sel_box.pack(side="left", padx=2, pady=1)
+        create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
+
+        self.ico_all_script = self.get_icon("all_script", (14, 14))
+        self.cb_cont = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" All Script",
+                image=self.ico_all_script,
+                compound="left" if self.ico_all_script else "none",
+                variable=self.var_continuous_view,
+                command=self._on_toggle_continuous_view,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_cont.pack(side="left", padx=2, pady=1)
+        create_tooltip(self.cb_cont, "Toggle All Script / Continuous Stream View")
+
+        self.ico_preview = self.get_icon("preview", (14, 14))
+        self.cb_compiled = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" Preview",
+                image=self.ico_preview,
+                compound="left" if self.ico_preview else "none",
+                variable=self.var_preview_compiled,
+                command=self._on_toggle_preview_compiled,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_compiled.pack(side="left", padx=2, pady=1)
+        create_tooltip(self.cb_compiled, "Toggle Compiled Attribute Preview (read-only)")
+
+        # Row 2: Collapsible NGUI Ribbon (Left) + Text & Box Actions Toolbar (Right) (BUG-39, FEAT-04)
+        self.ribbon_actions_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
+        self.ribbon_actions_row.pack(fill="x", padx=8, pady=(0, 4))
+
+        self.ribbon_frame = self._tag_role(
+            tk.Frame(self.ribbon_actions_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
+            "ribbon"
+        )
+        self.ribbon_frame.pack(side="left", padx=(0, 4))
 
         self.btn_ribbon_swatch = tk.Button(
-            ribbon,
+            self.ribbon_frame,
             width=2,
             bg=self._active_ngui_color,
             activebackground=self._active_ngui_color,
@@ -4224,7 +4420,7 @@ class MisoraApp(tk.Tk):
         self.ico_palette = self.get_icon("palette", (16, 16))
         btn_color = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text=" Color",
                 image=self.ico_palette,
                 compound="left",
@@ -4247,7 +4443,7 @@ class MisoraApp(tk.Tk):
 
         btn_grad = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="Grad",
                 font=("Segoe UI", 8, "bold"),
                 bg=accent_bg,
@@ -4269,7 +4465,7 @@ class MisoraApp(tk.Tk):
         self.ico_eyedropper = self.get_icon("eyedropper", (16, 16))
         self.btn_eyedropper = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="🎨",
                 image=self.ico_eyedropper,
                 fg=btn_fg,
@@ -4286,87 +4482,12 @@ class MisoraApp(tk.Tk):
         self.btn_eyedropper.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_eyedropper, "Open NGUI Color & Gradient Picker")
 
-        # Text & Box Actions Toolbar (docked in speaker row next to formatting ribbon)
-        actions_bar = self._tag_role(
-            tk.Frame(speaker_ribbon_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
-            "actions_toolbar"
-        )
-        actions_bar.pack(side="right", padx=(2, 4))
-
-        # Text Actions Group (Select Whole Story, Cut, Copy, Paste)
-        self.ico_sel_story = self.get_icon("select_story", (16, 16))
-        self.btn_sel_story = self._tag_role(
-            tk.Button(actions_bar, text="🗎", image=self.ico_sel_story, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_select_whole_story),
-            "ribbon_btn"
-        )
-        self.btn_sel_story.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_sel_story, "Select Whole Story Dialogue (Ctrl+Alt+A)")
-
-        self.ico_cut = self.get_icon("cut", (16, 16))
-        self.btn_cut = self._tag_role(
-            tk.Button(actions_bar, text="✂", image=self.ico_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_cut),
-            "ribbon_btn"
-        )
-        self.btn_cut.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_cut, "Cut Text (Ctrl+X)")
-
-        self.ico_copy = self.get_icon("copy", (16, 16))
-        self.btn_copy = self._tag_role(
-            tk.Button(actions_bar, text="📋", image=self.ico_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_copy),
-            "ribbon_btn"
-        )
-        self.btn_copy.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_copy, "Copy Text (Ctrl+C)")
-
-        self.ico_paste = self.get_icon("paste", (16, 16))
-        self.btn_paste = self._tag_role(
-            tk.Button(actions_bar, text="📥", image=self.ico_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_paste),
-            "ribbon_btn"
-        )
-        self.btn_paste.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_paste, "Paste Text / Multi-Box Delimiter Split (Ctrl+V)")
-
-        self._tag_role(tk.Label(actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
-
-        # Box Actions Group (New Box, Cut Box, Copy Box, Paste Box)
-        self.ico_plus = self.get_icon("plus", (16, 16))
-        self.btn_box_new = self._tag_role(
-            tk.Button(actions_bar, text="➕", image=self.ico_plus, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
-            "ribbon_btn"
-        )
-        self.btn_box_new.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_box_new, "New Dialogue Box (Ctrl+N)")
-
-        self.ico_box_cut = self.get_icon("box_cut", (18, 18))
-        self.btn_box_cut = self._tag_role(
-            tk.Button(actions_bar, text="✂📦", image=self.ico_box_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
-            "ribbon_btn"
-        )
-        self.btn_box_cut.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
-
-        self.ico_box_copy = self.get_icon("box_copy", (18, 18))
-        self.btn_box_copy = self._tag_role(
-            tk.Button(actions_bar, text="📋📦", image=self.ico_box_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
-            "ribbon_btn"
-        )
-        self.btn_box_copy.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
-
-        self.ico_box_paste = self.get_icon("box_paste", (18, 18))
-        self.btn_box_paste = self._tag_role(
-            tk.Button(actions_bar, text="📥📦", image=self.ico_box_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
-            "ribbon_btn"
-        )
-        self.btn_box_paste.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
-
-        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+        self._tag_role(tk.Label(self.ribbon_frame, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         # NGUI Formatting Buttons
         self.btn_ruby = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="Ruby",
                 font=("Segoe UI", 8, "bold"),
                 bg=accent_bg,
@@ -4385,9 +4506,10 @@ class MisoraApp(tk.Tk):
         self.btn_ruby.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_ruby, "Wrap Selection with Ruby / Furigana ([rub:...]...[/rub]) (Ctrl+R)")
 
+        # Standalone [-] compatibility button parented OUTSIDE ribbon_frame and unmapped (Safeguard 1)
         self.btn_dash = self._tag_role(
             tk.Button(
-                ribbon,
+                self,
                 text="[-]",
                 font=("Segoe UI", 8, "bold"),
                 bg=btn_bg,
@@ -4403,32 +4525,7 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_btn",
         )
-        self.btn_dash.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_dash, "Reset Color to Default ([-])")
-
-        self.ico_player = self.get_icon("player", (14, 14))
-        self.btn_player = self._tag_role(
-            tk.Button(
-                ribbon,
-                text=" {0}",
-                image=self.ico_player,
-                compound="left",
-                font=("Segoe UI", 8, "bold"),
-                bg=btn_bg,
-                fg=btn_fg,
-                activebackground=btn_hover,
-                activeforeground=btn_fg,
-                bd=1,
-                relief="raised",
-                padx=2,
-                pady=0,
-                cursor="hand2",
-                command=self.on_insert_playername,
-            ),
-            "ribbon_btn",
-        )
-        self.btn_player.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_player, "Insert Player Name tag ({0}) (Ctrl+P)")
 
         mini_style_buttons = [
             ("B", "[b]", "[/b]", "Bold Text ([b]...[/b]) (Ctrl+B)"),
@@ -4444,7 +4541,7 @@ class MisoraApp(tk.Tk):
             f_sz = 8 if len(lbl) <= 2 else 7
             b_mini = self._tag_role(
                 tk.Button(
-                    ribbon,
+                    self.ribbon_frame,
                     text=lbl,
                     font=("Segoe UI", f_sz, "bold"),
                     bg=btn_bg,
@@ -4467,7 +4564,7 @@ class MisoraApp(tk.Tk):
 
         self.btn_size = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="Size",
                 font=("Segoe UI", 8, "bold"),
                 bg=btn_bg,
@@ -4486,13 +4583,13 @@ class MisoraApp(tk.Tk):
         self.btn_size.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_size, "Change Font Size (<size=...>)")
 
-        self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+        self._tag_role(tk.Label(self.ribbon_frame, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         # History: Undo & Redo with illustrated icons
         self.ico_undo = self.get_icon("undo", (16, 16))
         self.btn_ribbon_undo = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="↶",
                 image=self.ico_undo,
                 fg=btn_fg,
@@ -4512,7 +4609,7 @@ class MisoraApp(tk.Tk):
         self.ico_redo = self.get_icon("redo", (16, 16))
         self.btn_ribbon_redo = self._tag_role(
             tk.Button(
-                ribbon,
+                self.ribbon_frame,
                 text="↷",
                 image=self.ico_redo,
                 fg=btn_fg,
@@ -4529,27 +4626,84 @@ class MisoraApp(tk.Tk):
         self.btn_ribbon_redo.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_ribbon_redo, "Redo (Ctrl+Y)")
 
-        self.ico_preview = self.get_icon("preview", (16, 16))
-        self.cb_compiled = self._tag_role(
-            tk.Checkbutton(
-                actions_bar,
-                text=" Preview",
-                image=self.ico_preview,
-                compound="left",
-                variable=self.var_preview_compiled,
-                command=self._on_toggle_preview_compiled,
-                font=("Segoe UI", max(8, u_sz - 2), "bold"),
-                bg=t["bg_editor"],
-                fg=t["fg_text"],
-                selectcolor=t["bg_panel"],
-                activebackground=t["bg_editor"],
-                activeforeground=t["misora_pink"],
-                cursor="hand2",
-            ),
-            "check_ribbon"
+        # Text & Box Actions Toolbar (docked on right side of ribbon_actions_row)
+        self.actions_bar = self._tag_role(
+            tk.Frame(self.ribbon_actions_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
+            "actions_toolbar"
         )
-        self.cb_compiled.pack(side="left", padx=(2, 3), pady=1)
-        create_tooltip(self.cb_compiled, "Toggle Compiled Attribute Preview (read-only)")
+        self.actions_bar.pack(side="right", padx=(2, 0))
+
+        # Text Actions Group (Select Whole Story, Cut, Copy, Paste)
+        self.ico_sel_story = self.get_icon("select_story", (16, 16))
+        self.btn_sel_story = self._tag_role(
+            tk.Button(self.actions_bar, text="🗎", image=self.ico_sel_story, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_select_whole_story),
+            "ribbon_btn"
+        )
+        self.btn_sel_story.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_sel_story, "Select Whole Story Dialogue (Ctrl+Alt+A)")
+
+        self.ico_cut = self.get_icon("cut", (16, 16))
+        self.btn_cut = self._tag_role(
+            tk.Button(self.actions_bar, text="✂", image=self.ico_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_cut),
+            "ribbon_btn"
+        )
+        self.btn_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_cut, "Cut Text (Ctrl+X)")
+
+        self.ico_copy = self.get_icon("copy", (16, 16))
+        self.btn_copy = self._tag_role(
+            tk.Button(self.actions_bar, text="📋", image=self.ico_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_copy),
+            "ribbon_btn"
+        )
+        self.btn_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_copy, "Copy Text (Ctrl+C)")
+
+        self.ico_paste = self.get_icon("paste", (16, 16))
+        self.btn_paste = self._tag_role(
+            tk.Button(self.actions_bar, text="📥", image=self.ico_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_text_paste),
+            "ribbon_btn"
+        )
+        self.btn_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_paste, "Paste Text / Multi-Box Delimiter Split (Ctrl+V)")
+
+        self._tag_role(tk.Label(self.actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # Box Actions Group (New Box, Cut Box, Copy Box, Paste Box)
+        self.ico_plus = self.get_icon("plus", (16, 16))
+        self.btn_box_new = self._tag_role(
+            tk.Button(self.actions_bar, text="➕", image=self.ico_plus, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
+            "ribbon_btn"
+        )
+        self.btn_box_new.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_new, "New Dialogue Box (Ctrl+N)")
+
+        self.ico_box_cut = self.get_icon("box_cut", (18, 18))
+        self.btn_box_cut = self._tag_role(
+            tk.Button(self.actions_bar, text="✂📦", image=self.ico_box_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
+            "ribbon_btn"
+        )
+        self.btn_box_cut.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
+
+        self.ico_box_copy = self.get_icon("box_copy", (18, 18))
+        self.btn_box_copy = self._tag_role(
+            tk.Button(self.actions_bar, text="📋📦", image=self.ico_box_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
+            "ribbon_btn"
+        )
+        self.btn_box_copy.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
+
+        self.ico_box_paste = self.get_icon("box_paste", (18, 18))
+        self.btn_box_paste = self._tag_role(
+            tk.Button(self.actions_bar, text="📥📦", image=self.ico_box_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
+            "ribbon_btn"
+        )
+        self.btn_box_paste.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
+
+        # Respect initial ribbon visibility toggle without triggering premature preferences save
+        if hasattr(self, "var_show_ngui_ribbon") and not self.var_show_ngui_ribbon.get():
+            self.ribbon_frame.pack_forget()
 
         gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
@@ -4962,10 +5116,11 @@ class MisoraApp(tk.Tk):
 
         raw_header = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
         raw_header.pack(fill="x", padx=8, pady=4)
-        self._tag_role(
-            tk.Label(raw_header, text="RAW SCRIPT VIEW (Technical AST Records)", font=("Segoe UI", u_sz, "bold"), bg=t["bg_panel"], fg=t["fg_muted"]),
+        self.lbl_raw_title = self._tag_role(
+            tk.Label(raw_header, text="Raw Commands", font=("Segoe UI", u_sz, "bold"), bg=t["bg_panel"], fg=t["fg_muted"]),
             "label_muted"
-        ).pack(side="left")
+        )
+        self.lbl_raw_title.pack(side="left")
 
         raw_container = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
         raw_container.pack(fill="both", expand=True, padx=8, pady=(0, 6))
@@ -5326,6 +5481,31 @@ class MisoraApp(tk.Tk):
         if target:
             self._commit_widget_edit(target)
 
+    def _update_top_header_title(self) -> None:
+        """Update top view header title according to active view and preview modes (FEAT-03)."""
+        if not hasattr(self, "lbl_gd_title"):
+            return
+        is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
+        is_prev = bool(getattr(self, "var_preview_compiled", None) and self.var_preview_compiled.get())
+        if is_cont:
+            title = "All Script Preview" if is_prev else "All Script"
+        else:
+            title = "Dialogue Preview" if is_prev else "Dialogue"
+        self.lbl_gd_title.config(text=title)
+
+    def _on_toggle_ngui_ribbon(self) -> None:
+        """Toggle visibility of the NGUI formatting ribbon docked in ribbon_actions_row (FEAT-04)."""
+        if not hasattr(self, "ribbon_frame"):
+            return
+        if self.var_show_ngui_ribbon.get():
+            if hasattr(self, "actions_bar") and self.actions_bar.winfo_manager():
+                self.ribbon_frame.pack(side="left", padx=(0, 4), before=self.actions_bar)
+            else:
+                self.ribbon_frame.pack(side="left", padx=(0, 4))
+        else:
+            self.ribbon_frame.pack_forget()
+        self._save_user_prefs(silent=True)
+
     def _on_toggle_preview_compiled(self) -> None:
         """Toggle between editable raw NGUI tags and compiled visual preview."""
         if self.var_preview_compiled.get():
@@ -5336,6 +5516,7 @@ class MisoraApp(tk.Tk):
             self.lbl_status.config(
                 text="Raw NGUI Tag Edit Mode active."
             )
+        self._update_top_header_title()
         self._update_views()
 
     def _get_or_create_compiled_style_tag(
@@ -6312,7 +6493,7 @@ class MisoraApp(tk.Tk):
 
             self.gd_scroll_wrap.pack_forget()
             self.continuous_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
-            self.lbl_gd_title.config(text="GAME VIEW (Continuous Stream)")
+            self._update_top_header_title()
             self._update_views()
             target_idx = -1 if self.is_box0_active else self.current_box_idx
             self.after(50, lambda: self._focus_continuous_box(target_idx, move_cursor=True, char_offset=char_offset))
@@ -6340,7 +6521,7 @@ class MisoraApp(tk.Tk):
 
             self.continuous_wrap.pack_forget()
             self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-            self.lbl_gd_title.config(text="GAME VIEW (Clean Dialogue)")
+            self._update_top_header_title()
             self._update_views()
 
             try:
@@ -9979,6 +10160,10 @@ class MisoraApp(tk.Tk):
         self._syncing_folder_path_var = True
         try:
             if scope == "folder":
+                if not self.btn_browse_search_folder.winfo_manager():
+                    self.btn_browse_search_folder.pack(side="left", padx=(0, 2))
+                if not self.folder_path_entry.winfo_manager():
+                    self.folder_path_entry.pack(side="left", fill="x", expand=True, padx=(0, 2))
                 self.folder_path_entry.config(state="normal")
                 self.btn_browse_search_folder.config(state="normal")
                 if getattr(self, "selected_search_folder", None):
@@ -9986,17 +10171,16 @@ class MisoraApp(tk.Tk):
                 else:
                     self.folder_path_var.set("")
             elif scope == "project":
+                if not self.btn_browse_search_folder.winfo_manager():
+                    self.btn_browse_search_folder.pack(side="left", padx=(0, 2))
+                if not self.folder_path_entry.winfo_manager():
+                    self.folder_path_entry.pack(side="left", fill="x", expand=True, padx=(0, 2))
                 self.folder_path_entry.config(state="normal")
                 self.btn_browse_search_folder.config(state="normal")
                 self.folder_path_var.set(self._get_project_display_path())
             else:  # "current"
-                if getattr(self, "current_file_path", None):
-                    self.folder_path_var.set(str(self.current_file_path.parent))
-                elif getattr(self, "open_documents", None) and self.open_documents:
-                    first_path = next(iter(self.open_documents.keys()))
-                    self.folder_path_var.set(str(first_path.parent) if isinstance(first_path, Path) else "(Current Open Files)")
-                else:
-                    self.folder_path_var.set("(Current Open Files)")
+                self.btn_browse_search_folder.pack_forget()
+                self.folder_path_entry.pack_forget()
                 self.folder_path_entry.config(state="readonly")
                 self.btn_browse_search_folder.config(state="disabled")
         finally:
@@ -10032,8 +10216,7 @@ class MisoraApp(tk.Tk):
             self._search_bar_visible = True
         self._sync_scope_widgets()
         if getattr(self, "_replace_row_visible", False):
-            self.row_replace.pack_forget()
-            self._replace_row_visible = False
+            self._hide_replace_row()
         self.search_entry.focus_set()
         self.search_entry.select_range(0, tk.END)
 
@@ -10045,14 +10228,9 @@ class MisoraApp(tk.Tk):
         if not getattr(self, "_search_bar_visible", False):
             self.search_frame.pack(before=self.h_paned, fill="x", padx=8, pady=(6, 4))
             self._search_bar_visible = True
+        self._sync_scope_widgets()
         if not getattr(self, "_replace_row_visible", False):
-            children = self.search_frame.winfo_children()
-            row1 = children[0] if children else None
-            if row1:
-                self.row_replace.pack(fill="x", padx=8, pady=(0, 4), after=row1)
-            else:
-                self.row_replace.pack(fill="x", padx=8, pady=(0, 4))
-            self._replace_row_visible = True
+            self._show_replace_row()
         self.search_entry.focus_set()
         self.search_entry.select_range(0, tk.END)
 

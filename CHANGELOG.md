@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S14 — Search Bar 5-Col Grid, Hide Current Dir, Player Icon/No `[-]`, VIEW Group, Toggle NGUI Ribbon & `Raw Commands`
+- **Session Scope:** BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04 (Track 2 · Group G1 (post-DEP-3)).
+- **BUG-38 (`misora.py` — U-B1, U-B2):**
+  - Unified search bar Find and Replace rows into one shared 5-column grid (`self.search_grid`) with column weights `(0, 1, 0, 0, 0)` and `uniform="search_btn"` for action buttons, ensuring Find and Replace entry fields align with identical `winfo_rootx()` and `winfo_width()`.
+  - Introduced `Search.TButton` and `SearchPink.TButton` with uniform font (`Segoe UI`, `u_sz`), consistent padding `(6, 2)`, and identical layout weights so all 4 search action buttons (`Find in Files`, `Cancel`, `Replace`, `Replace All`) have identical width and height.
+  - Implemented `_show_replace_row()` and `_hide_replace_row()` with `_ReplaceRowProxy` compatibility proxy so `self.row_replace.pack_forget()` / `pack()` calls gracefully map to grid operations without crashing.
+- **FEAT-01 (`misora.py` — U-B21):**
+  - Updated `_sync_scope_widgets()`: when search scope is `'current'`, hides `folder_path_entry` and `btn_browse_search_folder` via `pack_forget()`, preserving `selected_search_folder` and `project_folder` untouched.
+  - Automatically restores `folder_path_entry` and `btn_browse_search_folder` via `pack()` when switching scope back to `'folder'` or `'project'`.
+- **FEAT-02 (`misora.py` — U-B3+U-B5, U-B4, U-B13):**
+  - Converted Player button to icon-only (`player.png`, no `{0}` text in label; Unicode fallback `"👤"` when icon unavailable), attached 350ms tooltip explaining `{playername}` / `{0}`, and relocated it out of the NGUI formatting ribbon into the speaker control row next to `txt_speaker`.
+  - Removed standalone `[-]` button from NGUI ribbon (`ribbon_frame.winfo_children()` has 0 `[-]` buttons) while keeping `[-]` formatting accessible in the NGUI Glossary dialog and menu. Parented unmapped compatibility `self.btn_dash` outside `ribbon_frame` to satisfy existing test assertions.
+- **FEAT-03 (`misora.py`, `README.md` — U-B6, U-B7, U-B8, U-B30):**
+  - Renamed `Continuous View` -> `All Script` across UI labels, tooltips, and View menu (`"All Script View"`).
+  - Unified view toggles (`cb_sel_box`, `cb_cont`, `cb_compiled`) into a single cohesive `VIEW` group (`self.view_group`) with icons, Unicode fallbacks, and tooltips.
+  - Implemented dynamic top header updating via `_update_top_header_title()`: updates `lbl_gd_title` to `"Dialogue"` / `"All Script"` when preview is OFF, and `"Dialogue Preview"` / `"All Script Preview"` when preview is ON.
+  - Renamed bottom pane title strictly to **`Raw Commands`** (`lbl_raw_title`), while maintaining internal AST and continuous view identifiers intact.
+- **BUG-39 & FEAT-04 (`misora.py` — U-B14):**
+  - Replaced single horizontally packed `speaker_ribbon_row` with stacked responsive rows (`speaker_view_row` and `ribbon_actions_row`), eliminating toolbar clipping at `1280x720` and snapped `~960px` window widths.
+  - Added `View > Toggle NGUI Ribbon` checkbutton menu item backed by `self.var_show_ngui_ribbon` and `_on_toggle_ngui_ribbon()`, with preference persistence in `misora_config.json` (`"show_ngui_ribbon"`).
+- **Test Suite:** Added `tests/test_p3_s14_toolbar_search_ui.py` with 4 Defect Probes (failing-first) and 1 Regression Guard (passing).
+- **Files Modified:** `misora.py`, `README.md`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s14_toolbar_search_ui.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/splash.py`.
+
 ### S13 — Continuous Ribbon/Size/Dirty Sync, Shortcut Conflicts, Complete Tooltips & `Ctrl+H` Hygiene
 - **Session Scope:** BUG-28, BUG-29, HYG-03, HYG-07 (Track 1 · Group F3 (DEP-3 — Completes all non-fixture Track 1 P0/P1 bugs)).
 - **Milestone Note:** **Track 1 Automated Stabilization Gate (S01..S13) COMPLETE** (unlocks Track 2 `S14..S23` and `AGENTS.md` §24 MTL Drawer gate).

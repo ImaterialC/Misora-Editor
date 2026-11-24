@@ -1,9 +1,9 @@
 # Misora Editor — Canonical Project State
 
-Last updated: 2026-11-24
+Last updated: 2026-11-25
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.4.1 (Phase 2.5 Track 1)
+Target release: v1.4.1 (Phase 2.5 Track 2)
 Current code baseline: root `__init__.py` reports `version = "1.4.0"`; unified across UI, splash, dialogs, and tests.
 Starting baseline pinned at commit `683724edaf2afac89d2695a80e30a471a0da9195`.
 
@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S13 Verification Baseline — 2026-11-24):
+Unit Test Suite (S14 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 308 tests across 35 modules (268 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 313 tests across 36 modules (273 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 308 tests (exact disk discovery):
+Test suites included in the 313 tests (exact disk discovery):
+  tests/test_p3_s14_toolbar_search_ui.py    — 5 S14 search grid 5-col alignment, scope current widget hiding, player icon / ribbon cleanup, and responsive toolbars tests (all pass)
   tests/test_p3_s13_ribbon_shortcuts.py     — 4 S13 continuous ribbon/size/dirty sync, shortcut conflicts, complete tooltips & Ctrl+H hygiene tests (all pass)
   tests/test_p3_s12_lifecycle_security.py   — 7 S12 logger flush barrier, DPAPI fail-closed, reload env disposal, deferred startup & splash safety tests (all pass)
   tests/test_p3_s11_mtl_threading.py        — 9 S11 main-thread queue-only async MTL, stale-result identity guard & safe batch cancel tests (all pass)
@@ -99,6 +100,35 @@ Test suites included in the 308 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G1 (S14) COMPLETE
+- **Status:** S14 is 100% COMPLETE (BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04).
+- **Next Session:** S15 (CSIF Roundtrip & Sparse Addressing).
+
+### S14 Search Bar 5-Col Grid, Hide Current Dir, Player Icon/No `[-]`, VIEW Group, Toggle NGUI Ribbon & `Raw Commands` (2026-11-25)
+- **Session Scope:** BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04 (Track 2 · Group G1 (post-DEP-3)).
+- **BUG-38 (`misora.py` — U-B1, U-B2):**
+  - Unified search bar Find and Replace rows into one shared 5-column grid (`self.search_grid`) with column weights `(0, 1, 0, 0, 0)` and `uniform="search_btn"` for action buttons, ensuring Find and Replace entry fields align with identical `winfo_rootx()` and `winfo_width()`.
+  - Introduced `Search.TButton` and `SearchPink.TButton` with uniform font (`Segoe UI`, `u_sz`), consistent padding `(6, 2)`, and identical layout weights so all 4 search action buttons (`Find in Files`, `Cancel`, `Replace`, `Replace All`) have identical width and height.
+  - Implemented `_show_replace_row()` and `_hide_replace_row()` with `_ReplaceRowProxy` compatibility proxy so `self.row_replace.pack_forget()` / `pack()` calls gracefully map to grid operations without crashing.
+- **FEAT-01 (`misora.py` — U-B21):**
+  - Updated `_sync_scope_widgets()`: when search scope is `'current'`, hides `folder_path_entry` and `btn_browse_search_folder` via `pack_forget()`, preserving `selected_search_folder` and `project_folder` untouched.
+  - Automatically restores `folder_path_entry` and `btn_browse_search_folder` via `pack()` when switching scope back to `'folder'` or `'project'`.
+- **FEAT-02 (`misora.py` — U-B3+U-B5, U-B4, U-B13):**
+  - Converted Player button to icon-only (`player.png`, no `{0}` text in label; Unicode fallback `"👤"` when icon unavailable), attached 350ms tooltip explaining `{playername}` / `{0}`, and relocated it out of the NGUI formatting ribbon into the speaker control row next to `txt_speaker`.
+  - Removed standalone `[-]` button from NGUI ribbon (`ribbon_frame.winfo_children()` has 0 `[-]` buttons) while keeping `[-]` formatting accessible in the NGUI Glossary dialog and menu. Parented unmapped compatibility `self.btn_dash` outside `ribbon_frame` to satisfy existing test assertions.
+- **FEAT-03 (`misora.py`, `README.md` — U-B6, U-B7, U-B8, U-B30):**
+  - Renamed `Continuous View` -> `All Script` across UI labels, tooltips, and View menu (`"All Script View"`).
+  - Unified view toggles (`cb_sel_box`, `cb_cont`, `cb_compiled`) into a single cohesive `VIEW` group (`self.view_group`) with icons, Unicode fallbacks, and tooltips.
+  - Implemented dynamic top header updating via `_update_top_header_title()`: updates `lbl_gd_title` to `"Dialogue"` / `"All Script"` when preview is OFF, and `"Dialogue Preview"` / `"All Script Preview"` when preview is ON.
+  - Renamed bottom pane title strictly to **`Raw Commands`** (`lbl_raw_title`), while maintaining internal AST and continuous view identifiers intact.
+- **BUG-39 & FEAT-04 (`misora.py` — U-B14):**
+  - Replaced single horizontally packed `speaker_ribbon_row` with stacked responsive rows (`speaker_view_row` and `ribbon_actions_row`), eliminating toolbar clipping at `1280x720` and snapped `~960px` window widths.
+  - Added `View > Toggle NGUI Ribbon` checkbutton menu item backed by `self.var_show_ngui_ribbon` and `_on_toggle_ngui_ribbon()`, with preference persistence in `misora_config.json` (`"show_ngui_ribbon"`).
+- **New Test Suite:** Added `tests/test_p3_s14_toolbar_search_ui.py` with 4 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 313 tests across 36 modules (273 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `misora.py`, `README.md`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s14_toolbar_search_ui.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/splash.py`.
 
 ### S13 Continuous Ribbon/Size/Dirty Sync, Shortcut Conflicts, Complete Tooltips & `Ctrl+H` Hygiene (2026-11-24)
 - **Session Scope:** BUG-28, BUG-29, HYG-03, HYG-07 (Track 1 · Group F3 / DEP-3 — Track 1 Final Gate).
@@ -812,7 +842,7 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **CONTINUOUS-EDIT-NO-COMMIT** | RESOLVED | `misora.py:_commit_widget_edit()` | Decoupled Page View Box 0 widgets and Continuous View Card -1 from `is_box0_active` boolean guard. Edits to continuous cards and Box 0 synopsis now commit directly to AST document. | 2 |
 | **BOX0-SWITCH-LOCKS-EDITOR** | RESOLVED | `misora.py:_on_toggle_continuous_view`, `on_prev_box`, `on_next_box` | Restores caret and keyboard focus immediately and via `after_idle` upon view toggles and box navigation. Guarded `_cont_focus_job` against stale cross-view firing. | 2 |
 | **VOICE-CUE-DISPLAY-MISSING** | RESOLVED | `core/story_ast.py:_rebuild_boxes` | Captured `cmd_id == 12` voice cues with `"vo_"` prefix; guarded breaker loop `elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:` so voice cues are never skipped or discarded. | 2 |
-| **FIND-REPLACE-UI-ASYMMETRY** | REOPENED (2026-11-24: BUG-38) | `misora.py:_build_search_panel` | Historically converted Find/Replace rows to 5-column grid and 2x2 buttons. Reopened for layout symmetry and coordinate alignment under BUG-38. | 2 |
+| **FIND-REPLACE-UI-ASYMMETRY** | RESOLVED (2026-11-25: S14 / BUG-38) | `misora.py:_build_search_bar` | Unified Find and Replace rows into shared 5-column grid (`self.search_grid`) with uniform button weights/sizes and identical entry geometry. Covered by `tests/test_p3_s14_toolbar_search_ui:test_probe_01`. | 2 |
 
 ### P1 — Functional, UI, & Security Issues (Phases 2, 3, 5)
 
