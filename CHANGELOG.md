@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S07 — Caret Paste Dirty/Lock, Mutate-Before-Undo, Non-Contiguous Cut Undo, Lock Enforcement & Read-Only Raw View
+- **Session Scope:** BUG-10, BUG-13, BUG-15, BUG-16, BUG-37 (Track 1 · Group C2 (post-DEP-4)).
+- **BUG-10 (`misora.py:_on_card_paste_caret()`):**
+  - In `_on_card_paste_caret()`, checked `is_box_locked()` on `box_idx` and target boxes across the `\n\n\n` delimiter paste loop; locked boxes are preserved untouched.
+  - Guarded against dirty-marking when all target boxes are locked (0 boxes mutated).
+  - Enforced `self._mark_document_dirty(self.current_file_path)` BEFORE `self._dirty_state_changed()`, preventing S2 dirty flag clobbering and correctly retaining `is_dirty=True` and window title `*`.
+- **BUG-13 (`misora.py`):**
+  - Enforced mutate-before-undo architecture across single-box Game Display (`_on_dialogue_edited`), Continuous View card editing (`_on_card_text_edited`), card flush (`_flush_continuous_card_edits`), and incremental find/replace (`on_replace_next`): AST `inject_box()` is executed FIRST before recording any `BoxEditDelta` or marking documents dirty.
+  - Replaced silent `except Exception: pass` blocks with `self.logger.exception(..., e)` and `self.set_status(f"Error: {e}", is_error=True)` per `AGENTS.md` §28.
+  - Captured pre-mutation segment state (`old_seg_texts`) and refreshed post-mutation segments (`new_seg_texts`) directly into `BoxEditDelta`, maintaining S04 multi-segment undo compatibility.
+- **BUG-15 (`core/undo_journal.py:BoxStructuralDelta`, `misora.py:on_box_cut()`, `misora.py:_apply_delta()`):**
+  - Extended `BoxStructuralDelta` with optional `indices: Optional[List[int]] = None` field to record exact non-contiguous target indices.
+  - In `on_box_cut()`, filtered out locked boxes with toast notification and stored exact sorted target indices list on the recorded delta; synchronized `_selected_boxes` before copying to prevent copying skipped locked boxes.
+  - In `_apply_delta()` (`BoxStructuralDelta`), restored snapshots at exact ascending indices on Undo and deleted exact recorded indices on Redo, guaranteeing lossless ordering restoration for non-contiguous cuts (e.g. `[1, 3]`).
+  - Added `_resync_box_indices_from_uids()` to re-sync `_locked_boxes` and `_modified_boxes` from authoritative UIDs after structural operations.
+- **BUG-16 (`misora.py:on_clear_dialogue_skeleton()`, `misora.py:TranslatorAssistantDialog._on_apply()`):**
+  - In `on_clear_dialogue_skeleton()`, enforced `is_box_locked()` at application/model layer: skips locked boxes, tracks preserved vs cleared count, and avoids dirty marking when 0 boxes are mutated.
+  - In `TranslatorAssistantDialog._on_apply()`, blocked translation application on locked boxes with informative toast notification; switched from destructive `.strip()` to `txt_trans.get("1.0", "end-1c")`, preserving authorial leading indentation and trailing newlines.
+- **BUG-37 (`misora.py:txt_raw`):**
+  - Initialized `self.txt_raw` strictly read-only with `state="disabled"`.
+  - Wrapped all raw AST view updates in `_update_raw_view()` and plain-text/empty-box handlers in `_update_views()` with safe `state="normal"` ... `finally: state="disabled"`, preventing user keystrokes from corrupting Raw AST view until `FEAT-11` (`S19`).
+- **Test Suite:** Added `tests/test_p3_s07_undo_locks_raw.py` with 5 Defect Probes (failing-first) and 1 lightweight Regression Guard (passing). Full test suite discovered count: 269 tests across 29 modules (229 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/undo_journal.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s07_undo_locks_raw.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/script_codec.py`, `core/search_engine.py`, `core/mtl_engine.py`.
+
 ### S06 — Per-Document State/Stable Locks, Plain-Text Preview Save, Windows LF Writes & 0-Box Save
 - **Session Scope:** BUG-11, BUG-12, BUG-18, BUG-19 (Track 1 · Group C1 (DEP-2, DEP-4)).
 - **BUG-11 (`misora.py:on_save()` — DEP-2):**

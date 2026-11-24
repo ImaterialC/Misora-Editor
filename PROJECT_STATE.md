@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S06 Verification Baseline — 2026-11-24):
+Unit Test Suite (S07 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 263 tests across 28 modules (223 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 269 tests across 29 modules (229 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 263 tests (exact disk discovery):
+Test suites included in the 269 tests (exact disk discovery):
+  tests/test_p3_s07_undo_locks_raw.py       — 6 S07 caret paste dirty/lock, mutate-before-undo, non-contiguous cut undo, lock enforcement & read-only raw tests (all pass)
   tests/test_p3_s06_doc_state_save.py       — 5 S06 per-document state/locks, plain-text preview save, LF writes & 0-box save tests (all pass)
   tests/test_p3_s05_treeview_csif.py        — 4 S05 Treeview dark-theme contrast, atomic sparse CSIF/metadata, and backslash parity tests (all pass)
   tests/test_p3_s04_ast_mutations.py        — 6 S04 AST mutation, voice cue/breaker ownership, multi-segment undo/paste, UID coalesce & tombstone tests (all pass)
@@ -87,6 +88,32 @@ Test suites included in the 263 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S07 Caret Paste Dirty/Lock, Mutate-Before-Undo, Non-Contiguous Cut Undo, Lock Enforcement & Read-Only Raw View (2026-11-24)
+- **Session Scope:** BUG-10, BUG-13, BUG-15, BUG-16, BUG-37 (Track 1 · Group C2 / post-DEP-4).
+- **BUG-10 (`misora.py:_on_card_paste_caret()`):**
+  - In `_on_card_paste_caret()`, checks `is_box_locked()` on `box_idx` and target boxes across the `\n\n\n` delimiter paste loop; locked boxes are preserved untouched.
+  - Skips dirty-marking and undo batch recording when all target boxes are locked (0 boxes mutated).
+  - Enforces `self._mark_document_dirty(self.current_file_path)` BEFORE `self._dirty_state_changed()`, preventing S2 dirty flag clobbering and correctly retaining `is_dirty=True` and window title `*`.
+- **BUG-13 (`misora.py`):**
+  - Enforces mutate-before-undo architecture across single-box Game Display (`_on_dialogue_edited`), Continuous View card editing (`_on_card_text_edited`), card flush (`_flush_continuous_card_edits`), and incremental find/replace (`on_replace_next`): AST `inject_box()` is executed FIRST before recording any `BoxEditDelta` or marking documents dirty.
+  - Replaces silent `except Exception: pass` blocks with `self.logger.exception(..., e)` and `self.set_status(f"Error: {e}", is_error=True)` per `AGENTS.md` §28.
+  - Captures pre-mutation segment state (`old_seg_texts`) and refreshed post-mutation segments (`new_seg_texts`) directly into `BoxEditDelta`, maintaining S04 multi-segment undo compatibility.
+- **BUG-15 (`core/undo_journal.py:BoxStructuralDelta`, `misora.py:on_box_cut()`, `misora.py:_apply_delta()`):**
+  - Extended `BoxStructuralDelta` with optional `indices: Optional[List[int]] = None` field to record exact non-contiguous target indices.
+  - In `on_box_cut()`, filters out locked boxes with toast notification and stores exact sorted target indices list on the recorded delta; synchronizes `_selected_boxes` before copying to prevent copying skipped locked boxes.
+  - In `_apply_delta()` (`BoxStructuralDelta`), restores snapshots at exact ascending indices on Undo and deletes exact recorded indices on Redo, guaranteeing lossless ordering restoration for non-contiguous cuts (e.g. `[1, 3]`).
+  - Added `_resync_box_indices_from_uids()` to re-sync `_locked_boxes` and `_modified_boxes` from authoritative UIDs after structural operations.
+- **BUG-16 (`misora.py:on_clear_dialogue_skeleton()`, `misora.py:TranslatorAssistantDialog._on_apply()`):**
+  - In `on_clear_dialogue_skeleton()`, enforces `is_box_locked()` at application/model layer: skips locked boxes, tracks preserved vs cleared count, and avoids dirty marking when 0 boxes are mutated.
+  - In `TranslatorAssistantDialog._on_apply()`, blocks translation application on locked boxes with informative toast notification; switched from destructive `.strip()` to `txt_trans.get("1.0", "end-1c")`, preserving authorial leading indentation and trailing newlines.
+- **BUG-37 (`misora.py:txt_raw`):**
+  - Initialized `self.txt_raw` strictly read-only with `state="disabled"`.
+  - Wrapped all raw AST view updates in `_update_raw_view()` and plain-text/empty-box handlers in `_update_views()` with safe `state="normal"` ... `finally: state="disabled"`, preventing user keystrokes from corrupting Raw AST view until `FEAT-11` (`S19`).
+- **New Test Suite:** Added `tests/test_p3_s07_undo_locks_raw.py` with 5 Defect Probes (failing-first) and 1 lightweight Regression Guard (passing). Full test suite discovered count: 269 tests across 29 modules (229 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/undo_journal.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s07_undo_locks_raw.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/script_codec.py`, `core/search_engine.py`, `core/mtl_engine.py`.
 
 ### S06 Per-Document State/Stable Locks, Plain-Text Preview Save, Windows LF Writes & 0-Box Save (2026-11-24)
 - **Session Scope:** BUG-11, BUG-12, BUG-18, BUG-19 (Track 1 · Group C1 / DEP-2, DEP-4).

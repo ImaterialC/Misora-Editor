@@ -4794,6 +4794,7 @@ class MisoraApp(tk.Tk):
         self.txt_raw = tk.Text(
             raw_container,
             wrap="none",
+            state="disabled",
             font=("Consolas", r_sz),
             bg=self._shift_hex(t["bg_editor"], -6),
             fg=t["fg_muted"],
@@ -6836,9 +6837,13 @@ class MisoraApp(tk.Tk):
                 self._highlight_ngui_tags()
                 self._highlight_continuous_matches()
 
-            self.txt_raw.delete("1.0", tk.END)
-            if self.current_file_path:
-                self.txt_raw.insert("1.0", f"(Plain text file: {self.current_file_path})")
+            try:
+                self.txt_raw.config(state="normal")
+                self.txt_raw.delete("1.0", tk.END)
+                if self.current_file_path:
+                    self.txt_raw.insert("1.0", f"(Plain text file: {self.current_file_path})")
+            finally:
+                self.txt_raw.config(state="disabled")
             return
 
         if not self.current_doc.boxes:
@@ -6848,7 +6853,11 @@ class MisoraApp(tk.Tk):
             self.txt_dialogue.delete("1.0", tk.END)
             self.txt_continuous.config(state="normal")
             self.txt_continuous.delete("1.0", tk.END)
-            self.txt_raw.delete("1.0", tk.END)
+            try:
+                self.txt_raw.config(state="normal")
+                self.txt_raw.delete("1.0", tk.END)
+            finally:
+                self.txt_raw.config(state="disabled")
             self.lbl_box_counter.config(text="Box: 0 / 0")
             self._auto_resize_dialogue_box()
             return
@@ -6954,35 +6963,39 @@ class MisoraApp(tk.Tk):
 
     def _update_raw_view(self) -> None:
         """Render Raw AST View and highlight records associated with current_box_idx or Box 0."""
-        self.txt_raw.delete("1.0", tk.END)
-        if not self.current_doc:
-            return
+        self.txt_raw.config(state="normal")
+        try:
+            self.txt_raw.delete("1.0", tk.END)
+            if not self.current_doc:
+                return
 
-        active_rec_indices = set()
-        if getattr(self, "is_box0_active", False) and self.current_doc:
-            for idx, r in enumerate(self.current_doc.records):
-                if (r.cmd_id == 0 and len(r.args) > 0 and r.args[0]) or \
-                   (r.cmd_id == 32 and len(r.args) > 0 and r.args[0]) or \
-                   (r.cmd_id == 1 and len(r.args) > 0 and r.args[0]):
-                    active_rec_indices.add(idx)
-        elif self.current_doc and self.current_doc.boxes and 0 <= self.current_box_idx < len(self.current_doc.boxes):
-            active_box = self.current_doc.boxes[self.current_box_idx]
-            active_uids = {s.record.uid for s in active_box.segs}
-            active_rec_indices = {i for i, r in enumerate(self.current_doc.records) if r.uid in active_uids}
+            active_rec_indices = set()
+            if getattr(self, "is_box0_active", False) and self.current_doc:
+                for idx, r in enumerate(self.current_doc.records):
+                    if (r.cmd_id == 0 and len(r.args) > 0 and r.args[0]) or \
+                       (r.cmd_id == 32 and len(r.args) > 0 and r.args[0]) or \
+                       (r.cmd_id == 1 and len(r.args) > 0 and r.args[0]):
+                        active_rec_indices.add(idx)
+            elif self.current_doc and self.current_doc.boxes and 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                active_box = self.current_doc.boxes[self.current_box_idx]
+                active_uids = {s.record.uid for s in active_box.segs}
+                active_rec_indices = {i for i, r in enumerate(self.current_doc.records) if r.uid in active_uids}
 
-        raw_lines = []
-        first_active_line = None
-        for i, r in enumerate(self.current_doc.records):
-            args_str = "  ".join(f"'{a}'" for a in r.args)
-            is_active = i in active_rec_indices
-            if is_active and first_active_line is None:
-                first_active_line = i + 1
-            marker = " >> " if is_active else "    "
-            raw_lines.append(f"{marker}[{i:03d}] {r.cmd_name:<14} {args_str}")
+            raw_lines = []
+            first_active_line = None
+            for i, r in enumerate(self.current_doc.records):
+                args_str = "  ".join(f"'{a}'" for a in r.args)
+                is_active = i in active_rec_indices
+                if is_active and first_active_line is None:
+                    first_active_line = i + 1
+                marker = " >> " if is_active else "    "
+                raw_lines.append(f"{marker}[{i:03d}] {r.cmd_name:<14} {args_str}")
 
-        self.txt_raw.insert("1.0", "\n".join(raw_lines))
-        if first_active_line is not None:
-            self.txt_raw.see(f"{first_active_line}.0")
+            self.txt_raw.insert("1.0", "\n".join(raw_lines))
+            if first_active_line is not None:
+                self.txt_raw.see(f"{first_active_line}.0")
+        finally:
+            self.txt_raw.config(state="disabled")
 
     # -------------------------------------------------------------------------
     # Continuous View: Box Card Stream Architecture & Two-Way Sync
@@ -7025,6 +7038,19 @@ class MisoraApp(tk.Tk):
                         old_tx = box.clean_text
                         box_uid = box.segs[0].record.uid if box.segs else None
                         old_segs = [s.text for s in box.segs] if len(box.segs) > 1 else None
+                        try:
+                            self.current_doc.inject_box(b_idx, None, new_tx)
+                        except Exception as e:
+                            self.logger.exception(f"Failed to flush card edit for box {b_idx}:", e)
+                            self.set_status(f"Error flushing box #{b_idx + 1}: {e}", is_error=True)
+                            continue
+
+                        new_segs = None
+                        if old_segs is not None:
+                            refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
+                            if refreshed_box:
+                                new_segs = [s.text for s in refreshed_box.segs]
+
                         delta = BoxEditDelta(
                             box_index=b_idx,
                             old_speaker=old_sp,
@@ -7035,23 +7061,11 @@ class MisoraApp(tk.Tk):
                             box_uid=box_uid,
                             source=getattr(self, "_current_edit_source", "keyboard"),
                             old_seg_texts=old_segs,
+                            new_seg_texts=new_segs,
                         )
                         self.undo_journal.record(delta, label=f"Edit box #{b_idx + 1}")
                         self._modified_boxes.add(b_idx)
                         self._mark_document_dirty(self.current_file_path)
-                        try:
-                            self.current_doc.inject_box(b_idx, None, new_tx)
-                            if old_segs is not None:
-                                refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
-                                if refreshed_box:
-                                    updated_segs = [s.text for s in refreshed_box.segs]
-                                    delta.new_seg_texts = updated_segs
-                                    key = self.undo_journal._get_key(str(self.current_file_path or ""))
-                                    state = self.undo_journal._get_state(key)
-                                    if state.undo_stack and state.undo_stack[-1].deltas and isinstance(state.undo_stack[-1].deltas[0], BoxEditDelta):
-                                        state.undo_stack[-1].deltas[0].new_seg_texts = updated_segs
-                        except Exception:
-                            pass
 
     def _on_card_text_edited(self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text] = None) -> None:
         """Handle inline typing inside a Box Card."""
@@ -7067,6 +7081,19 @@ class MisoraApp(tk.Tk):
             old_tx = box.clean_text
             box_uid = box.segs[0].record.uid if box.segs else None
             old_segs = [s.text for s in box.segs] if len(box.segs) > 1 else None
+            try:
+                self.current_doc.inject_box(box_idx, None, new_tx)
+            except Exception as e:
+                self.logger.exception(f"Failed to inject box {box_idx}:", e)
+                self.set_status(f"Error updating box #{box_idx + 1}: {e}", is_error=True)
+                return
+
+            new_segs = None
+            if old_segs is not None:
+                refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
+                if refreshed_box:
+                    new_segs = [s.text for s in refreshed_box.segs]
+
             delta = BoxEditDelta(
                 box_index=box_idx,
                 old_speaker=old_sp,
@@ -7077,21 +7104,12 @@ class MisoraApp(tk.Tk):
                 box_uid=box_uid,
                 source=getattr(self, "_current_edit_source", "keyboard"),
                 old_seg_texts=old_segs,
+                new_seg_texts=new_segs,
             )
             self.undo_journal.record(delta, label=f"Edit box #{box_idx + 1}")
             self._modified_boxes.add(box_idx)
             self._mark_document_dirty(self.current_file_path)
             try:
-                self.current_doc.inject_box(box_idx, None, new_tx)
-                if old_segs is not None:
-                    refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
-                    if refreshed_box:
-                        updated_segs = [s.text for s in refreshed_box.segs]
-                        delta.new_seg_texts = updated_segs
-                        key = self.undo_journal._get_key(str(self.current_file_path or ""))
-                        state = self.undo_journal._get_state(key)
-                        if state.undo_stack and state.undo_stack[-1].deltas and isinstance(state.undo_stack[-1].deltas[0], BoxEditDelta):
-                            state.undo_stack[-1].deltas[0].new_seg_texts = updated_segs
                 self._update_raw_view()
                 if box_idx == getattr(self, "current_box_idx", -1):
                     self._update_rendered_char_count(new_tx)
@@ -7581,10 +7599,20 @@ class MisoraApp(tk.Tk):
         if not self.current_doc or not self.current_doc.boxes:
             self.show_toast("No story document loaded")
             return
-        targets = sorted(self._selected_boxes) if self._selected_boxes else [self.current_box_idx]
-        targets = [idx for idx in targets if 0 <= idx < len(self.current_doc.boxes)]
-        if not targets:
+        raw_targets = sorted(self._selected_boxes) if self._selected_boxes else [self.current_box_idx]
+        raw_targets = [idx for idx in raw_targets if 0 <= idx < len(self.current_doc.boxes)]
+        if not raw_targets:
             return
+
+        unlocked_targets = [idx for idx in raw_targets if not self.is_box_locked(idx)]
+        locked_count = len(raw_targets) - len(unlocked_targets)
+        if locked_count > 0:
+            self.show_toast(f"🔒 Skipped {locked_count} locked box(es).")
+        if not unlocked_targets:
+            return
+
+        targets = unlocked_targets
+        self._selected_boxes = set(targets)
         self.on_box_copy()
         deleted_snapshots = self.current_doc.delete_boxes(targets)
         self.undo_journal.record(
@@ -7592,11 +7620,13 @@ class MisoraApp(tk.Tk):
                 op_type="delete",
                 box_index=targets[0],
                 snapshots=deleted_snapshots,
+                indices=list(targets),
                 file_path=str(self.current_file_path or ""),
             ),
             label="Cut Box(es)"
         )
         self._selected_boxes.clear()
+        self._resync_box_indices_from_uids()
         if self.current_box_idx >= len(self.current_doc.boxes):
             self.current_box_idx = max(0, len(self.current_doc.boxes) - 1)
         self._mark_document_dirty(self.current_file_path)
@@ -7721,32 +7751,53 @@ class MisoraApp(tk.Tk):
         if not self.current_doc or not self.current_doc.boxes:
             return "break"
 
+        # Check if all target boxes are locked (Technical Guard 2 / BUG-10)
+        total_boxes = len(self.current_doc.boxes)
+        targets_to_mutate = []
+        for offset in range(len(chunks)):
+            t_idx = box_idx + offset
+            if t_idx < total_boxes:
+                if not self.is_box_locked(t_idx):
+                    targets_to_mutate.append(t_idx)
+            else:
+                targets_to_mutate.append(t_idx)
+
+        if not targets_to_mutate:
+            self.show_toast("🔒 All target boxes are locked against edits.")
+            return "break"
+
+        mutated_count = 0
         self.undo_journal.begin_batch("Multi-box Delimiter Paste")
         try:
-            b0 = self.current_doc.boxes[box_idx]
-            first_text = head + chunks[0]
-            self.undo_journal.record(
-                BoxEditDelta(
-                    box_index=box_idx,
-                    old_speaker=b0.speaker,
-                    new_speaker=b0.speaker,
-                    old_text=b0.clean_text,
-                    new_text=first_text,
-                    file_path=str(self.current_file_path or ""),
-                    box_uid=b0.uid,
-                    source="paste_caret",
+            if not self.is_box_locked(box_idx):
+                b0 = self.current_doc.boxes[box_idx]
+                first_text = head + chunks[0]
+                self.current_doc.inject_box(box_idx, None, first_text)
+                self.undo_journal.record(
+                    BoxEditDelta(
+                        box_index=box_idx,
+                        old_speaker=b0.speaker,
+                        new_speaker=b0.speaker,
+                        old_text=b0.clean_text,
+                        new_text=first_text,
+                        file_path=str(self.current_file_path or ""),
+                        box_uid=b0.uid,
+                        source="paste_caret",
+                    )
                 )
-            )
-            self.current_doc.inject_box(box_idx, None, first_text)
-            self._modified_boxes.add(box_idx)
+                self._modified_boxes.add(box_idx)
+                mutated_count += 1
 
             for offset, chunk in enumerate(chunks[1:], start=1):
                 target_idx = box_idx + offset
+                if target_idx < len(self.current_doc.boxes) and self.is_box_locked(target_idx):
+                    continue
                 is_last = (offset == len(chunks) - 1)
                 if target_idx < len(self.current_doc.boxes):
                     orig_b = self.current_doc.boxes[target_idx]
                     orig_text = orig_b.clean_text
                     new_text = (chunk + tail + orig_text) if is_last else (chunk + orig_text)
+                    self.current_doc.inject_box(target_idx, None, new_text)
                     self.undo_journal.record(
                         BoxEditDelta(
                             box_index=target_idx,
@@ -7759,8 +7810,8 @@ class MisoraApp(tk.Tk):
                             source="paste_caret",
                         )
                     )
-                    self.current_doc.inject_box(target_idx, None, new_text)
                     self._modified_boxes.add(target_idx)
+                    mutated_count += 1
                 else:
                     new_text = (chunk + tail) if is_last else chunk
                     snap = BoxSnapshot(speaker="", voice_cue="", kind="tag", seg_texts=[new_text])
@@ -7774,14 +7825,19 @@ class MisoraApp(tk.Tk):
                         )
                     )
                     self._modified_boxes.add(target_idx)
+                    mutated_count += 1
         finally:
             self.undo_journal.end_batch()
 
-        self.is_dirty = True
-        self._render_continuous_view()
-        self._sync_clean_view_to_current_box()
-        self._dirty_state_changed()
-        self.show_toast(f"Pasted across {len(chunks)} boxes")
+        if mutated_count > 0:
+            self._resync_box_indices_from_uids()
+            self._mark_document_dirty(self.current_file_path)
+            self._dirty_state_changed()
+            self._render_continuous_view()
+            self._sync_clean_view_to_current_box()
+            self.show_toast(f"Pasted across {mutated_count} box(es)")
+        else:
+            self.show_toast("🔒 Target box(es) were locked; no edits applied.")
         return "break"
 
     def _on_size_dropdown_clicked(self) -> None:
@@ -8468,6 +8524,19 @@ class MisoraApp(tk.Tk):
                 return False
             box_uid = box.segs[0].record.uid if box.segs else None
             old_segs = [s.text for s in box.segs] if len(box.segs) > 1 else None
+            try:
+                self.current_doc.inject_box(idx, None, new_tx)
+            except Exception as e:
+                self.logger.exception(f"Failed to inject box {idx}:", e)
+                self.set_status(f"Error updating box #{idx + 1}: {e}", is_error=True)
+                return False
+
+            new_segs = None
+            if old_segs is not None:
+                refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
+                if refreshed_box:
+                    new_segs = [s.text for s in refreshed_box.segs]
+
             delta = BoxEditDelta(
                 box_index=idx,
                 old_speaker=old_sp,
@@ -8478,21 +8547,12 @@ class MisoraApp(tk.Tk):
                 box_uid=box_uid,
                 source=getattr(self, "_current_edit_source", "keyboard"),
                 old_seg_texts=old_segs,
+                new_seg_texts=new_segs,
             )
             self.undo_journal.record(delta, label=f"Edit box #{idx + 1}")
             self._modified_boxes.add(idx)
             self._mark_document_dirty(self.current_file_path)
             try:
-                self.current_doc.inject_box(idx, None, new_tx)
-                if old_segs is not None:
-                    refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
-                    if refreshed_box:
-                        updated_segs = [s.text for s in refreshed_box.segs]
-                        delta.new_seg_texts = updated_segs
-                        key = self.undo_journal._get_key(str(self.current_file_path or ""))
-                        state = self.undo_journal._get_state(key)
-                        if state.undo_stack and state.undo_stack[-1].deltas and isinstance(state.undo_stack[-1].deltas[0], BoxEditDelta):
-                            state.undo_stack[-1].deltas[0].new_seg_texts = updated_segs
                 self._update_raw_view()
             except Exception:
                 pass
@@ -8651,6 +8711,20 @@ class MisoraApp(tk.Tk):
             if cur_p in self.open_documents:
                 self.open_documents[cur_p]["locked_box_uids"] = set(self._locked_box_uids)
         self._update_views()
+
+    def _resync_box_indices_from_uids(self) -> None:
+        """Re-sync positional indices (_locked_boxes, _modified_boxes, _original_box_texts) from authoritative UIDs (S06 / S07)."""
+        if self.current_doc and self.current_doc.boxes:
+            if hasattr(self, "_locked_box_uids"):
+                self._locked_boxes = {i for i, b in enumerate(self.current_doc.boxes) if _get_box_uid(b) in self._locked_box_uids}
+            if hasattr(self, "_modified_box_uids"):
+                self._modified_boxes = {i for i, b in enumerate(self.current_doc.boxes) if _get_box_uid(b) in self._modified_box_uids}
+            if hasattr(self, "_original_jp_by_uid"):
+                self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), b.clean_text) for i, b in enumerate(self.current_doc.boxes)}
+        else:
+            self._locked_boxes = set()
+            self._modified_boxes = set()
+            self._original_box_texts = {}
 
     def _update_rendered_char_count(self, text: str) -> None:
         """Update live rendered character counter and warn if text overflows dialogue frame (Rule 19 / GAME-BOX-PREVIEW)."""
@@ -9561,7 +9635,22 @@ class MisoraApp(tk.Tk):
                 else:
                     old_sp = box.speaker
                     old_tx = box.clean_text
+                    box_uid = box.uid
+                    old_segs = [s.text for s in box.segs] if len(box.segs) > 1 else None
                     new_tx = box.clean_text.replace(find_text, replace_text, 1)
+                    try:
+                        self.current_doc.inject_box(self.current_box_idx, None, new_tx)
+                    except Exception as e:
+                        self.logger.exception(f"Failed to replace in box {self.current_box_idx}:", e)
+                        self.set_status(f"Error replacing in box #{self.current_box_idx + 1}: {e}", is_error=True)
+                        return
+
+                    new_segs = None
+                    if old_segs is not None:
+                        refreshed_box = next((b for b in self.current_doc.boxes if b.segs and b.segs[0].record.uid == box_uid), None)
+                        if refreshed_box:
+                            new_segs = [s.text for s in refreshed_box.segs]
+
                     self.undo_journal.record(
                         BoxEditDelta(
                             box_index=self.current_box_idx,
@@ -9572,10 +9661,11 @@ class MisoraApp(tk.Tk):
                             file_path=str(self.current_file_path),
                             box_uid=box.uid,
                             source="replace",
+                            old_seg_texts=old_segs,
+                            new_seg_texts=new_segs,
                         ),
                         label=f"Replace in box #{self.current_box_idx + 1}"
                     )
-                    self.current_doc.inject_box(self.current_box_idx, None, new_tx)
                     self._modified_boxes.add(self.current_box_idx)
                     self._mark_document_dirty(self.current_file_path)
                     self._dirty_state_changed()
@@ -9979,14 +10069,25 @@ class MisoraApp(tk.Tk):
                 self.open_file(target_file)
             if self.current_doc:
                 is_insert = (delta.op_type == "insert") if not reverse else (delta.op_type != "insert")
+                indices = getattr(delta, "indices", None)
                 if is_insert:
-                    for offset, snap in enumerate(delta.snapshots):
-                        self.current_doc.insert_box(delta.box_index + offset, snap)
-                    self.current_box_idx = delta.box_index
+                    if indices is not None and len(indices) == len(delta.snapshots):
+                        for idx, snap in zip(indices, delta.snapshots):
+                            self.current_doc.insert_box(idx, snap)
+                        self.current_box_idx = indices[0] if indices else delta.box_index
+                    else:
+                        for offset, snap in enumerate(delta.snapshots):
+                            self.current_doc.insert_box(delta.box_index + offset, snap)
+                        self.current_box_idx = delta.box_index
                 else:
-                    delete_indices = list(range(delta.box_index, delta.box_index + len(delta.snapshots)))
+                    if indices is not None:
+                        delete_indices = list(indices)
+                    else:
+                        delete_indices = list(range(delta.box_index, delta.box_index + len(delta.snapshots)))
                     self.current_doc.delete_boxes(delete_indices)
-                    self.current_box_idx = max(0, min(delta.box_index, len(self.current_doc.boxes) - 1))
+                    target_box = indices[0] if indices else delta.box_index
+                    self.current_box_idx = max(0, min(target_box, len(self.current_doc.boxes) - 1))
+                self._resync_box_indices_from_uids()
                 self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
@@ -11258,29 +11359,51 @@ class MisoraApp(tk.Tk):
         if not ans:
             return
 
+        cleared_count = 0
+        preserved_count = 0
         self.undo_journal.begin_batch("Clear Dialogue Skeleton")
-        for i, box in enumerate(self.current_doc.boxes):
-            if box.clean_text:
-                self.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=i,
-                        old_speaker=box.speaker,
-                        new_speaker=box.speaker,
-                        old_text=box.clean_text,
-                        new_text="",
-                        file_path=str(self.current_file_path) if self.current_file_path else "",
-                        box_uid=box.uid,
-                        source="clear",
+        try:
+            for i, box in enumerate(self.current_doc.boxes):
+                if self.is_box_locked(i):
+                    preserved_count += 1
+                    continue
+                if box.clean_text:
+                    old_sp = box.speaker
+                    old_tx = box.clean_text
+                    box_uid = box.uid
+                    try:
+                        self.current_doc.inject_box(i, old_sp, "")
+                    except Exception as e:
+                        self.logger.exception(f"Failed to clear box {i}:", e)
+                        continue
+
+                    self.undo_journal.record(
+                        BoxEditDelta(
+                            box_index=i,
+                            old_speaker=old_sp,
+                            new_speaker=old_sp,
+                            old_text=old_tx,
+                            new_text="",
+                            file_path=str(self.current_file_path) if self.current_file_path else "",
+                            box_uid=box_uid,
+                            source="clear",
+                        )
                     )
-                )
-                self.current_doc.inject_box(i, box.speaker, "")
-                self._modified_boxes.add(i)
-        self.undo_journal.end_batch()
-        self._mark_document_dirty(self.current_file_path)
-        self._dirty_state_changed()
-        self._update_views()
-        self.show_toast(f"✓ Cleared dialogue skeleton for {total} boxes")
-        self.lbl_status.config(text=f"Cleared dialogue skeleton for {total} boxes.")
+                    self._modified_boxes.add(i)
+                    cleared_count += 1
+        finally:
+            self.undo_journal.end_batch()
+
+        if cleared_count > 0:
+            self._mark_document_dirty(self.current_file_path)
+            self._dirty_state_changed()
+            self._update_views()
+
+        msg = f"Cleared dialogue skeleton for {cleared_count} boxes"
+        if preserved_count > 0:
+            msg += f" (preserved {preserved_count} locked)"
+        self.show_toast(f"✓ {msg}")
+        self.lbl_status.config(text=f"{msg}.")
 
     def on_register_unity3d_association(self) -> None:
         """Register or verify .unity3d file association for current Windows user (#8)."""
@@ -12250,22 +12373,35 @@ class TranslatorAssistantDialog(tk.Toplevel):
         b_idx = self.app.current_box_idx
         if b_idx < 0 or b_idx >= len(doc.boxes):
             return False
-        new_text = self.txt_trans.get("1.0", tk.END).strip()
+        if self.app.is_box_locked(b_idx):
+            self.app.show_toast(f"🔒 Box {b_idx + 1} is locked against translation.")
+            return False
+
+        new_text = self.txt_trans.get("1.0", "end-1c")
         old_box = doc.boxes[b_idx]
+        old_sp = old_box.speaker
+        old_tx = old_box.clean_text
+        box_uid = old_box.uid
+
+        try:
+            doc.inject_box(b_idx, old_sp, new_text)
+        except Exception as e:
+            self.app.logger.exception(f"Failed to apply translation to box {b_idx}:", e)
+            self.app.set_status(f"Error applying translation to Box #{b_idx + 1}: {e}", is_error=True)
+            return False
 
         self.app.undo_journal.record(
             BoxEditDelta(
                 box_index=b_idx,
-                old_speaker=old_box.speaker,
-                new_speaker=old_box.speaker,
-                old_text=old_box.clean_text,
+                old_speaker=old_sp,
+                new_speaker=old_sp,
+                old_text=old_tx,
                 new_text=new_text,
                 file_path=str(self.app.current_file_path) if self.app.current_file_path else "",
-                box_uid=old_box.uid,
+                box_uid=box_uid,
                 source="mtl",
             )
         )
-        doc.inject_box(b_idx, old_box.speaker, new_text)
         self.app._modified_boxes.add(b_idx)
         self.app._mark_document_dirty(self.app.current_file_path)
         self.app._dirty_state_changed()

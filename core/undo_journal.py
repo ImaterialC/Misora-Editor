@@ -56,6 +56,7 @@ class BoxStructuralDelta:
     snapshots: List[BoxSnapshot]
     file_path: str = ""
     source: str = "user"
+    indices: Optional[List[int]] = None
 
 
 @dataclass
