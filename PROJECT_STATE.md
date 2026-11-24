@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S15 Verification Baseline — 2026-11-25):
-py -3.12 -m unittest discover -s tests -v
-Result: Ran 317 tests across 37 modules (277 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Unit Test Suite (S16 Verification Baseline — 2026-11-25):
+py -3.12 -m unittest discover -s tests
+Result: Ran 321 tests across 38 modules (281 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 317 tests (exact disk discovery):
+Test suites included in the 321 tests (exact disk discovery):
+  tests/test_p3_s16_misora_workspace.py     — 4 S16 .misora v1 workspace, stable lock matching & U-B18 overwrite diff tests (all pass)
   tests/test_p3_s15_selection_drawer_open.py — 4 S15 select box both views, reserved lock slot, collapsible left drawer, empty state & batched multi-open tests (all pass)
   tests/test_p3_s14_toolbar_search_ui.py    — 5 S14 search grid 5-col alignment, scope current widget hiding, player icon / ribbon cleanup, and responsive toolbars tests (all pass)
   tests/test_p3_s13_ribbon_shortcuts.py     — 4 S13 continuous ribbon/size/dirty sync, shortcut conflicts, complete tooltips & Ctrl+H hygiene tests (all pass)
@@ -101,6 +102,21 @@ Test suites included in the 317 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G3 (S16) COMPLETE
+- **Status:** S16 is 100% COMPLETE (FEAT-08).
+- **Next Session:** S17 (`All Script` MTL Drawer & `Import from XUAT`).
+
+### S16 `.misora` v1 Workspace Session & Overwrite Diff Dialog (2026-11-25)
+- **Session Scope:** FEAT-08 (`U-B17`, `U-B18`) — Track 2 · Group G3 (post-DEP-4, DEP-9).
+- **Core Workspace (`core/workspace.py`, `core/__init__.py`):**
+  - Added pure-Python `.misora` v1 atomic JSON serialization/deserialization (`save_workspace`, `load_workspace`) via `write_atomic_encoded` and `read_text_file_strictly`, storing **strictly** file references (`rel_path` + `abs_path`), workspace state (`active_file`, `active_box_idx`, `is_box0_active`, `view_mode`, `search_scope`), and composite stable-key Translation Locks `(box_ordinal, jp_sha256)` — never unsaved story drafts, `.unity3d` binary blobs, or runtime `Record.uid` (`NO-01` / `NO-12`).
+  - Added `safe_relpath` (cross-drive Windows `ValueError` guard), `resolve_workspace_file_path` (relative-first then absolute fallback), `match_active_file` (portable `rel_path`/`abs_path` matching), and `compute_workspace_diff` (normalized Added/Removed/Kept + Dirty diff).
+- **UI & Session Integration (`misora.py`):**
+  - Added `File > Open Project (.misora)...` and `File > Save Project (.misora)...`, plus drag-and-drop `.misora` support in `_handle_dropped_paths()`.
+  - Added modal `ProjectDiffDialog` (`U-B18`, `AGENTS.md` §16) displaying old-vs-new file changes (`Added`/`Removed`/`Kept`, `* Unsaved`/`Clean`) with `Save Current` / `Discard & Open` / `Cancel`, flushing active edits before diffing and aborting cleanly on `Cancel` or failed save.
+  - Restores open tabs via batched `open_file(..., refresh_ui=False)`, re-attaches Translation Locks strictly via `restore_stable_locks()` (leaving unmatched locks unresolved and notifying the user, never silently transferring locks), handles missing files gracefully, and syncs view/header/scope controls.
+- **New Test Suite:** Added `tests/test_p3_s16_misora_workspace.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 321 tests across 38 modules (281 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G2 (S15) COMPLETE
 - **Status:** S15 is 100% COMPLETE (BUG-41, FEAT-05, FEAT-06, FEAT-07).

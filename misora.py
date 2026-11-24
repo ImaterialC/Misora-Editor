@@ -61,6 +61,10 @@ try:
         protect_secret, unprotect_secret, redact_secret,
         DecodedText, detect_encoding_and_decode, encode_with_metadata,
         read_text_file_strictly, write_atomic_encoded,
+        WORKSPACE_SCHEMA_VERSION, MISORA_WORKSPACE_EXT, WorkspaceError,
+        LockedKeyEntry, WorkspaceFileEntry, WorkspaceDiffEntry, WorkspaceSession,
+        safe_relpath, resolve_workspace_file_path, match_active_file,
+        compute_workspace_diff, save_workspace, load_workspace,
     )
 except ImportError:
     from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
@@ -78,6 +82,10 @@ except ImportError:
         protect_secret, unprotect_secret, redact_secret,
         DecodedText, detect_encoding_and_decode, encode_with_metadata,
         read_text_file_strictly, write_atomic_encoded,
+        WORKSPACE_SCHEMA_VERSION, MISORA_WORKSPACE_EXT, WorkspaceError,
+        LockedKeyEntry, WorkspaceFileEntry, WorkspaceDiffEntry, WorkspaceSession,
+        safe_relpath, resolve_workspace_file_path, match_active_file,
+        compute_workspace_diff, save_workspace, load_workspace,
     )
 
 try:
@@ -1150,6 +1158,123 @@ def safe_grab_release(dialog: Optional[tk.Toplevel]) -> None:
                 dialog.grab_release()
         except Exception:
             pass
+
+
+class ProjectDiffDialog(tk.Toplevel):
+    """Modal U-B18 Project Difference Mapping dialog before opening a .misora workspace."""
+
+    def __init__(
+        self,
+        parent: "MisoraApp",
+        diff_entries: List[WorkspaceDiffEntry],
+        target_name: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.result: str = "cancel"
+        self.title("Open Project — Review Open Files")
+        self.geometry("620x380")
+        self.minsize(480, 280)
+        apply_window_icon(self)
+
+        t = getattr(parent, "theme", THEME["dark"])
+        self.configure(bg=t["bg_main"])
+        fg_main = best_contrast_fg(t["bg_main"], t["fg_text"], "#ffffff")
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+
+        header_frame = tk.Frame(self, bg=t["bg_panel"], padx=12, pady=10)
+        header_frame.pack(fill="x")
+        proj_label = f"'{target_name}'" if target_name else "this project"
+        tk.Label(
+            header_frame,
+            text=f"Opening {proj_label} will replace your currently open files.",
+            bg=t["bg_panel"],
+            fg=t.get("misora_pink", fg_panel),
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            header_frame,
+            text="Review the file changes below. Unsaved edits will be lost unless you save first.",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 0))
+
+        table_frame = tk.Frame(self, bg=t["bg_main"], padx=12, pady=8)
+        table_frame.pack(fill="both", expand=True)
+
+        cols = ("file", "status", "dirty")
+        tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=10)
+        tree.heading("file", text="File")
+        tree.heading("status", text="Change")
+        tree.heading("dirty", text="State")
+        tree.column("file", width=340, anchor="w")
+        tree.column("status", width=110, anchor="center")
+        tree.column("dirty", width=110, anchor="center")
+
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        status_labels = {"added": "Added", "removed": "Removed", "kept": "Kept"}
+        for entry in diff_entries:
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    entry.display_name,
+                    status_labels.get(entry.status, entry.status.title()),
+                    "* Unsaved" if entry.is_dirty else "Clean",
+                ),
+            )
+
+        btn_bar = tk.Frame(self, bg=t["bg_main"], padx=12, pady=10)
+        btn_bar.pack(fill="x")
+
+        def _finish(choice: str) -> None:
+            self.result = choice
+            safe_grab_release(self)
+            try:
+                if self.winfo_exists():
+                    self.destroy()
+            except Exception:
+                pass
+
+        has_dirty = any(e.is_dirty for e in diff_entries)
+        btn_save = ttk.Button(
+            btn_bar,
+            text="Save Current",
+            style="Accent.TButton" if has_dirty else "TButton",
+            command=lambda: _finish("save"),
+        )
+        btn_save.pack(side="right", padx=(6, 0))
+        if not has_dirty:
+            btn_save.state(["disabled"])
+
+        ttk.Button(
+            btn_bar,
+            text="Discard & Open",
+            style="TButton" if has_dirty else "Accent.TButton",
+            command=lambda: _finish("discard"),
+        ).pack(side="right", padx=(6, 0))
+        ttk.Button(
+            btn_bar,
+            text="Cancel",
+            style="TButton",
+            command=lambda: _finish("cancel"),
+        ).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", lambda: _finish("cancel"))
+        self.bind("<Escape>", lambda _e: _finish("cancel"))
+        self.transient(parent)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        parent.wait_window(self)
 
 
 def write_atomic_utf8(
@@ -2779,6 +2904,13 @@ class MisoraApp(tk.Tk):
 
             # 1. Process dropped files
             if files:
+                misora_files = [f for f in files if f.suffix.lower() == MISORA_WORKSPACE_EXT and f.stat().st_size > 0]
+                regular_files = [f for f in files if f.suffix.lower() != MISORA_WORKSPACE_EXT]
+                if misora_files:
+                    self.open_project(misora_files[0])
+                files = regular_files
+
+            if files:
                 filter_bin = getattr(self, "dnd_filter_binary", True)
                 if filter_bin:
                     to_open = [f for f in files if f.suffix.lower() not in known_binary_exts and f.stat().st_size > 0]
@@ -3371,6 +3503,9 @@ class MisoraApp(tk.Tk):
         file_menu.add_cascade(label="Recent Files", menu=self.recent_menu)
         self._all_menus.append(self.recent_menu)
 
+        file_menu.add_separator()
+        file_menu.add_command(label="Open Project (.misora)...", command=self.on_open_project)
+        file_menu.add_command(label="Save Project (.misora)...", command=self.on_save_project)
         file_menu.add_separator()
         file_menu.add_command(label="Save & Patch Bundle", command=self.on_save, accelerator="Ctrl+S")
         file_menu.add_command(label="Reload Current File", command=self.on_reload, accelerator="F5")
@@ -11503,6 +11638,246 @@ class MisoraApp(tk.Tk):
         for p in list(self.open_documents.keys()):
             if not self.close_file(p):
                 break
+
+    def _close_all_documents_without_prompt(self) -> None:
+        """Close all open documents cleanly without prompting (used after ProjectDiffDialog confirmation)."""
+        for p, info in list(self.open_documents.items()):
+            env = info.get("env") if isinstance(info, dict) else None
+            if env is not None:
+                dispose_unity_env(env)
+            if hasattr(self, "undo_journal"):
+                self.undo_journal.prune_file(str(p))
+            if hasattr(self, "_saved_state_checkpoints"):
+                self._saved_state_checkpoints.pop(str(p), None)
+        self.open_documents.clear()
+        if self.current_unity_env is not None:
+            dispose_unity_env(self.current_unity_env)
+        self.current_file_path = None
+        self.current_doc = None
+        self.current_unity_env = None
+        self.current_text_obj = None
+        self.is_bundle_file = False
+        self.is_dirty = False
+        self._plain_text_content = ""
+        self._locked_boxes = set()
+        self._locked_box_uids = set()
+        self._modified_boxes = set()
+        self._modified_box_uids = set()
+        self._original_box_texts = {}
+        self._original_jp_by_uid = {}
+        self._clear_card_registry()
+        if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
+            self.undo_journal.set_active_file("")
+
+    def on_save_project(self) -> None:
+        """Prompt for a .misora file path and save the current workspace session."""
+        if not self.open_documents:
+            messagebox.showinfo("Save Project", "No files are currently open to save in a project.", parent=self)
+            return
+        init_dir = str(self.last_opened_dir) if getattr(self, "last_opened_dir", None) and self.last_opened_dir.exists() else None
+        target = filedialog.asksaveasfilename(
+            initialdir=init_dir,
+            title="Save Misora Project",
+            defaultextension=MISORA_WORKSPACE_EXT,
+            filetypes=[("Misora Project", f"*{MISORA_WORKSPACE_EXT}"), ("All Files", "*.*")],
+        )
+        if target:
+            self.save_project(Path(target))
+
+    def save_project(self, workspace_path: Union[str, Path]) -> bool:
+        """Save .misora v1 workspace session (strictly refs + state + stable locks ONLY)."""
+        if not self._flush_active_widget():
+            return False
+        self._save_active_document_state()
+
+        ws_path = Path(workspace_path).resolve()
+        ws_dir = ws_path.parent
+
+        file_entries: List[WorkspaceFileEntry] = []
+        for raw_p, entry in self.open_documents.items():
+            p = Path(raw_p).resolve()
+            rel = safe_relpath(p, ws_dir)
+            doc = entry.get("doc") if isinstance(entry, dict) else None
+            locked_uids = set(entry.get("locked_box_uids", set())) if isinstance(entry, dict) else set()
+            orig_jp_by_uid = dict(entry.get("original_jp_by_uid", {})) if isinstance(entry, dict) else {}
+            stable_pairs = get_document_stable_locks(doc, locked_uids, orig_jp_by_uid)
+            locked_keys = [LockedKeyEntry(box_ordinal=o, jp_sha256=h) for o, h in stable_pairs]
+            file_entries.append(WorkspaceFileEntry(rel_path=rel, abs_path=str(p), locked_keys=locked_keys))
+
+        active_file_str: Optional[str] = None
+        if self.current_file_path is not None:
+            cur_p = Path(self.current_file_path).resolve()
+            rel_active = safe_relpath(cur_p, ws_dir)
+            active_file_str = rel_active if rel_active else str(cur_p)
+
+        view_mode = "continuous" if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get() else "dialogue"
+        search_scope = self.scope_var.get() if hasattr(self, "scope_var") else "project"
+
+        session = WorkspaceSession(
+            files=file_entries,
+            active_file=active_file_str,
+            active_box_idx=int(getattr(self, "current_box_idx", 0)),
+            is_box0_active=bool(getattr(self, "is_box0_active", False)),
+            view_mode=view_mode,
+            search_scope=search_scope,
+        )
+        try:
+            save_workspace(ws_path, session)
+        except Exception as exc:
+            self.logger.exception(f"Failed to save project '{ws_path.name}':", exc)
+            messagebox.showerror("Save Project Error", f"Could not save project '{ws_path.name}':\n{exc}", parent=self)
+            return False
+
+        self.lbl_status.config(text=f"Saved project '{ws_path.name}' ({len(file_entries)} file(s)).")
+        self.show_toast(f"Saved project: {ws_path.name}")
+        return True
+
+    def on_open_project(self) -> None:
+        """Prompt for a .misora file and open the workspace session."""
+        init_dir = str(self.last_opened_dir) if getattr(self, "last_opened_dir", None) and self.last_opened_dir.exists() else None
+        target = filedialog.askopenfilename(
+            initialdir=init_dir,
+            title="Open Misora Project",
+            filetypes=[("Misora Project", f"*{MISORA_WORKSPACE_EXT}"), ("All Files", "*.*")],
+        )
+        if target:
+            self.open_project(Path(target))
+
+    def open_project(self, workspace_path: Union[str, Path]) -> bool:
+        """Open a .misora v1 workspace session with U-B18 diff dialog and stable lock matching."""
+        ws_path = Path(workspace_path).resolve()
+        ws_dir = ws_path.parent
+        try:
+            session = load_workspace(ws_path)
+        except (WorkspaceError, UnicodeDecodeError, OSError) as exc:
+            self.logger.error("Workspace", f"Failed to load '{ws_path}': {exc}")
+            messagebox.showerror("Open Project Error", f"Could not open project '{ws_path.name}':\n{exc}", parent=self)
+            return False
+
+        resolved_entries: List[Tuple[WorkspaceFileEntry, Optional[Path]]] = []
+        missing_labels: List[str] = []
+        for entry in session.files:
+            resolved = resolve_workspace_file_path(ws_dir, entry.rel_path, entry.abs_path)
+            resolved_entries.append((entry, resolved))
+            if resolved is None:
+                missing_labels.append(entry.rel_path or entry.abs_path)
+
+        target_paths = [resolved for _, resolved in resolved_entries if resolved is not None]
+
+        # Safeguard 3: Flush active widget & save active state BEFORE computing diff
+        if self.open_documents:
+            if not self._flush_active_widget():
+                return False
+            self._save_active_document_state()
+            diff_entries = compute_workspace_diff(
+                self.open_documents,
+                target_paths,
+                current_file_path=self.current_file_path,
+                current_is_dirty=getattr(self, "is_dirty", False),
+            )
+            dlg = ProjectDiffDialog(self, diff_entries, ws_path.name)
+            choice = getattr(dlg, "result", "cancel")
+            if choice == "cancel":
+                return False
+            if choice == "save":
+                for p in list(self.open_documents.keys()):
+                    info = self.open_documents.get(p, {})
+                    is_doc_dirty = (p == self.current_file_path and getattr(self, "is_dirty", False)) or bool(
+                        info.get("dirty", False) if isinstance(info, dict) else False
+                    )
+                    if is_doc_dirty and not self._save_document_entry(p):
+                        return False
+
+        self._close_all_documents_without_prompt()
+
+        unresolved_notices: List[str] = []
+        opened_entries: List[Tuple[WorkspaceFileEntry, Path]] = []
+        for entry, resolved in resolved_entries:
+            if resolved is None:
+                continue
+            try:
+                self.open_file(resolved, refresh_ui=False)
+            except Exception as exc:
+                self.logger.error("Workspace", f"Failed opening '{resolved}': {exc}")
+                missing_labels.append(str(resolved))
+                continue
+
+            doc_key = self._find_open_doc_key(resolved)
+            if doc_key is not None and doc_key in self.open_documents:
+                opened_entries.append((entry, doc_key))
+                doc_entry = self.open_documents[doc_key]
+                doc = doc_entry.get("doc")
+                orig_map = doc_entry.get("original_jp_by_uid", {})
+                stable_pairs = [(lk.box_ordinal, lk.jp_sha256) for lk in entry.locked_keys]
+                if stable_pairs:
+                    matched_uids, unresolved = restore_stable_locks(doc, stable_pairs, orig_map)
+                    doc_entry["locked_box_uids"] = set(matched_uids)
+                    if doc_key == self.current_file_path:
+                        self._locked_box_uids = set(matched_uids)
+                        self._resync_box_indices_from_uids()
+                    if unresolved:
+                        unresolved_notices.append(
+                            f"{doc_key.name}: {len(unresolved)} lock(s) unresolved"
+                        )
+
+        # Restore view_mode & search_scope (Safeguard 4)
+        if hasattr(self, "var_continuous_view"):
+            self.var_continuous_view.set(session.view_mode == "continuous")
+        if hasattr(self, "scope_var"):
+            self.scope_var.set(session.search_scope)
+
+        # Safeguard 3: All files missing grace -> restore empty state cleanly
+        if not opened_entries:
+            self._update_top_header_title()
+            self._sync_scope_widgets()
+            self._update_views()
+            self._refresh_opened_files_list()
+            self._dirty_state_changed()
+            self._sync_edit_menu_states()
+            if missing_labels:
+                msg = f"All {len(missing_labels)} file(s) referenced by '{ws_path.name}' were not found on disk."
+                self.logger.warning("Workspace", msg)
+                messagebox.showwarning("Missing Project Files", msg, parent=self)
+                self.lbl_status.config(text=msg)
+            return True
+
+        # Safeguard 1 & 2: Match active_file against rel_path & abs_path, then apply cursor AFTER activation
+        target_active = match_active_file(session.active_file, ws_dir, resolved_entries)
+        if target_active is None:
+            target_active = opened_entries[0][1]
+        self.open_file(target_active, refresh_ui=False)
+
+        if self.current_doc and self.current_doc.boxes:
+            self.current_box_idx = max(0, min(session.active_box_idx, len(self.current_doc.boxes) - 1))
+        else:
+            self.current_box_idx = 0
+        self.is_box0_active = bool(session.is_box0_active)
+
+        active_key = self._find_open_doc_key(target_active)
+        if active_key is not None and active_key in self.open_documents:
+            self._locked_box_uids = set(self.open_documents[active_key].get("locked_box_uids", set()))
+            self._resync_box_indices_from_uids()
+
+        # Safeguard 4: Sync view, header title, and scope UI controls together
+        self._update_top_header_title()
+        self._sync_scope_widgets()
+        self._update_views()
+        self._refresh_opened_files_list()
+        self._dirty_state_changed()
+        self._sync_edit_menu_states()
+
+        notices: List[str] = []
+        if missing_labels:
+            notices.append(f"Missing file(s) skipped ({len(missing_labels)}): " + ", ".join(missing_labels[:5]))
+        if unresolved_notices:
+            notices.append("Unresolved Translation Locks (not transferred): " + "; ".join(unresolved_notices))
+        if notices:
+            full_notice = "\n".join(notices)
+            self.logger.warning("Workspace", full_notice)
+            messagebox.showwarning("Project Open Notice", full_notice, parent=self)
+
+        self.lbl_status.config(text=f"Opened project '{ws_path.name}' ({len(opened_entries)} file(s)).")
+        return True
 
     # -------------------------------------------------------------------------
     # Right-Click Context Menus & External Editor Launching (#4D)

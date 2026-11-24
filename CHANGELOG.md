@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S16 — `.misora` v1 Workspace Session & Overwrite Diff Dialog
+- **Session Scope:** FEAT-08 (`U-B17`, `U-B18`) — Track 2 · Group G3 (post-DEP-4, DEP-9).
+- **Core Workspace (`core/workspace.py`, `core/__init__.py`):**
+  - Added pure-Python `.misora` v1 atomic JSON serialization/deserialization (`save_workspace`, `load_workspace`) via `write_atomic_encoded` and `read_text_file_strictly`, storing **strictly** file references (`rel_path` + `abs_path`), workspace state (`active_file`, `active_box_idx`, `is_box0_active`, `view_mode`, `search_scope`), and composite stable-key Translation Locks `(box_ordinal, jp_sha256)` — never unsaved story drafts, `.unity3d` binary blobs, or runtime `Record.uid` (`NO-01` / `NO-12`).
+  - Added `safe_relpath` (cross-drive Windows `ValueError` guard), `resolve_workspace_file_path` (relative-first then absolute fallback), `match_active_file` (portable `rel_path`/`abs_path` matching), and `compute_workspace_diff` (normalized Added/Removed/Kept + Dirty diff).
+- **UI & Session Integration (`misora.py`):**
+  - Added `File > Open Project (.misora)...` and `File > Save Project (.misora)...` menu commands, plus drag-and-drop `.misora` support in `_handle_dropped_paths()`.
+  - Added modal `ProjectDiffDialog` (`U-B18`, `AGENTS.md` §16) displaying old-vs-new file changes (`Added`/`Removed`/`Kept`, `* Unsaved`/`Clean`) with `Save Current` / `Discard & Open` / `Cancel`, flushing active edits before diffing and aborting cleanly on `Cancel` or failed save.
+  - Restores open tabs via batched `open_file(..., refresh_ui=False)`, re-attaches Translation Locks strictly via `restore_stable_locks()` (leaving unmatched locks unresolved and notifying the user, never silently transferring locks), handles missing files gracefully, and syncs view/header/scope controls.
+- **Test Suite:** Added `tests/test_p3_s16_misora_workspace.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing).
+- **Files Created:** `core/workspace.py`, `tests/test_p3_s16_misora_workspace.py`.
+- **Files Modified:** `core/__init__.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/bundle_io.py`, `core/script_codec.py`.
+
 ### S15 — Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open
 - **Session Scope:** BUG-41, FEAT-05, FEAT-06, FEAT-07 (Track 2 · Group G2 (post-DEP-4, DEP-9)).
 - **BUG-41 & FEAT-05 (`misora.py` — U-B11, U-B12, U-B29):**

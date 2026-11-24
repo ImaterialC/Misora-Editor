@@ -18,6 +18,12 @@ from .text_encoding import (
     DecodedText, detect_encoding_and_decode, encode_with_metadata,
     read_text_file_strictly, write_atomic_encoded,
 )
+from .workspace import (
+    WORKSPACE_SCHEMA_VERSION, MISORA_WORKSPACE_EXT, WorkspaceError,
+    LockedKeyEntry, WorkspaceFileEntry, WorkspaceDiffEntry, WorkspaceSession,
+    safe_relpath, resolve_workspace_file_path, match_active_file,
+    compute_workspace_diff, save_workspace, load_workspace,
+)
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
@@ -33,4 +39,8 @@ __all__ = [
     "protect_secret", "unprotect_secret", "redact_secret",
     "DecodedText", "detect_encoding_and_decode", "encode_with_metadata",
     "read_text_file_strictly", "write_atomic_encoded",
+    "WORKSPACE_SCHEMA_VERSION", "MISORA_WORKSPACE_EXT", "WorkspaceError",
+    "LockedKeyEntry", "WorkspaceFileEntry", "WorkspaceDiffEntry", "WorkspaceSession",
+    "safe_relpath", "resolve_workspace_file_path", "match_active_file",
+    "compute_workspace_diff", "save_workspace", "load_workspace",
 ]
