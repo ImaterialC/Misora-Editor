@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S04 Verification Baseline — 2026-11-24):
+Unit Test Suite (S05 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 254 tests across 26 modules (214 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 258 tests across 27 modules (218 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 254 tests (exact disk discovery):
+Test suites included in the 258 tests (exact disk discovery):
+  tests/test_p3_s05_treeview_csif.py        — 4 S05 Treeview dark-theme contrast, atomic sparse CSIF/metadata, and backslash parity tests (all pass)
   tests/test_p3_s04_ast_mutations.py        — 6 S04 AST mutation, voice cue/breaker ownership, multi-segment undo/paste, UID coalesce & tombstone tests (all pass)
   tests/test_p3_s03_binary_v2.py            — 9 S03 strict binary parse, lossless v2, command map/breakers, and synthetic bundle verify tests (all pass)
   tests/test_p3_s02_hygiene.py              — 5 S02 hygiene, single-version User-Agent, and backup isolation tests (all pass)
@@ -85,6 +86,28 @@ Test suites included in the 254 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S05 Dark-Theme Treeview Contrast (DEP-1 FIRST), Atomic Sparse CSIF/Metadata & Backslash Parity (2026-11-24)
+- **Session Scope:** BUG-31, BUG-07, BUG-08 (Track 1 · Group B3 / DEP-1 STRICTLY FIRST).
+- **BUG-31 (`misora.py:_apply_styles()` — DEP-1 FIRST):**
+  - Explicitly configured `Treeview` and `Treeview.Heading` styles inside `_apply_styles()` using `t["bg_editor"]`, `btn_bg`, `btn_hover`, and dynamic WCAG contrast-safe foregrounds via `best_contrast_fg()`.
+  - Added `style.map` for `Treeview` selected states (`t["misora_pink"]` with contrast-safe foreground) and `Treeview.Heading` active/hover states.
+  - Resolved white-on-white text illegibility across dark themes; verified WCAG contrast ratio $\ge 4.5$ across every preset in `THEME_PRESETS` (normal rows 14.73–18.80, selected 5.43–7.64, headings 14.48–15.73).
+- **BUG-07 (`core/script_codec.py:apply_to_document()`, `misora.py`):**
+  - Added `apply_metadata: bool = True` to `apply_to_document()`; wired `apply_metadata=apply_meta` from `_show_paste_preview_and_apply()` so unchecking Box 0 metadata leaves Box 0 strictly untouched.
+  - Enforced pre-validation of all sparse 1-based indices against document bounds (`1 <= b.index <= len(doc.boxes)`) before mutating metadata or any dialogue box.
+  - Implemented atomic transaction rollback: captured pre-mutation snapshot via `copy.deepcopy(doc.records)` and `set(doc.removed_records)`; any exception during metadata or dialogue application restores original document state completely.
+  - Captured target box UIDs (`bx.segs[0].record.uid`) before mutation and resolved targets by UID during application, preserving kind-conversions and boundary breakers.
+  - In `_show_paste_preview_and_apply()`, mapped sparse blocks to exact `b.index - 1` for `BoxEditDelta` and `_modified_boxes` (cursor-relative `start_idx + k` strictly for non-sparse payloads); populated `box_uid` and `old_seg_texts`/`new_seg_texts` on delta to align with S04 multi-segment undo contract.
+  - In `ScriptPastePreviewDialog`, mapped sparse preview rows directly to `new_blk.index - 1` and displayed discrete targets in the header banner.
+- **BUG-08 (`core/script_codec.py`):**
+  - In `serialize()`, added exactly one leading backslash to any dialogue body line or multiline metadata line matching regex `^\\*@@` (`CSIF_BODY_ESCAPE_RE`).
+  - In `_parse_csif()`, stripped exactly one leading backslash from any line matching regex `^\\+@@` (`CSIF_BODY_UNESCAPE_RE`); never strips all leading backslashes. Single-line `@@!` headers remain untouched.
+  - Verified exact lossless round-trip across `@@x`, `\@@x`, `\\@@x`, `\\\@@x`, and ordinary `\text`.
+- **New Test Suite:** Added `tests/test_p3_s05_treeview_csif.py` with 3 Defect Probes (failing-first) and 1 lightweight Regression Guard (passing). Full test suite discovered count: 258 tests across 27 modules (218 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `misora.py`, `core/script_codec.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s05_treeview_csif.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/undo_journal.py`, `core/bundle_io.py`, `assets/*.py`.
 
 ### S04 Kind-Conversion Box Separation, Voice/Breaker Ownership, Multi-Segment Undo/Paste, UID Coalesce & Tombstones (2026-11-24)
 - **Session Scope:** BUG-02, BUG-05, BUG-06, BUG-17, HYG-04 (Track 1 · Group B2 / DEP-5 part 2).
@@ -630,6 +653,9 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **MULTI-SEGMENT-UNDO-PASTE** | RESOLVED (2026-11-24: S04 / BUG-06) | `core/story_ast.py`, `core/undo_journal.py`, `misora.py` | Non-blocking multi-segment editing with `'N segs'` badge; `BoxEditDelta.old_seg_texts`/`new_seg_texts` segment preservation; lossless `BoxSnapshot` paste. Covered by `test_p3_s04_ast_mutations:test_probe_3`. | 2 |
 | **UNDO-UID-COALESCE** | RESOLVED (2026-11-24: S04 / BUG-17) | `core/undo_journal.py:MasterUndoJournal.record()` | Coalescing requires matching `box_uid` when non-None, preventing edits on distinct boxes with identical index from coalescing. Covered by `test_p3_s04_ast_mutations:test_probe_4`. | 2 |
 | **TOMBSTONE-UNBOUNDED-GROWTH** | RESOLVED (2026-11-24: S04 / HYG-04) | `core/story_ast.py:delete_boxes()` | Dead record UIDs deterministically pruned against active records in `self.records`. Covered by `test_p3_s04_ast_mutations:test_probe_5`. | 2 |
+| **TREEVIEW-DARK-THEME-CONTRAST** | RESOLVED (2026-11-24: S05 / BUG-31) | `misora.py:_apply_styles()` | Configured Treeview and Treeview.Heading contrast styles across all presets (WCAG ratio >= 4.5). Covered by `test_p3_s05_treeview_csif:test_probe_1`. | 2 |
+| **SPARSE-CSIF-ATOMIC-TRANSACTION** | RESOLVED (2026-11-24: S05 / BUG-07) | `core/script_codec.py`, `misora.py` | `apply_metadata` flag; pre-validation; atomic rollback; UID resolution; discrete sparse mapping in preview and undo deltas. Covered by `test_p3_s05_treeview_csif:test_probe_2`. | 2 |
+| **CSIF-BACKSLASH-PARITY-LOSS** | RESOLVED (2026-11-24: S05 / BUG-08) | `core/script_codec.py` | Lossless `serialize -> parse` round-trip across `^\\*@@` escaping and `^\\+@@` unescaping. Covered by `test_p3_s05_treeview_csif:test_probe_3`. | 2 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 

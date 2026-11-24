@@ -2986,6 +2986,44 @@ class MisoraApp(tk.Tk):
             arrowcolor=t["misora_pink"],
         )
 
+        # Treeview & Treeview.Heading Styling (BUG-31 / DEP-1 FIRST)
+        tree_bg = t["bg_editor"]
+        tree_fg = best_contrast_fg(tree_bg, t["fg_text"], "#ffffff")
+        sel_bg = t["misora_pink"]
+        sel_fg = best_contrast_fg(sel_bg)
+        heading_bg = btn_bg
+        heading_fg = best_contrast_fg(heading_bg, t["fg_text"], "#ffffff")
+        heading_hover = btn_hover
+        heading_fg_hover = best_contrast_fg(heading_hover, t["fg_text"], "#ffffff")
+
+        style.configure(
+            "Treeview",
+            background=tree_bg,
+            fieldbackground=tree_bg,
+            foreground=tree_fg,
+            font=("Segoe UI", u_sz),
+            rowheight=max(20, u_sz * 2),
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", sel_bg)],
+            foreground=[("selected", sel_fg)],
+        )
+
+        style.configure(
+            "Treeview.Heading",
+            background=heading_bg,
+            foreground=heading_fg,
+            font=("Segoe UI", u_sz, "bold"),
+            relief="raised",
+            borderwidth=1,
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", heading_hover)],
+            foreground=[("active", heading_fg_hover)],
+        )
+
     # -------------------------------------------------------------------------
     # Menu Bar (Includes NGUI Glossary Top-Level Menu #6 & Debug Menu #14)
     # -------------------------------------------------------------------------
@@ -10707,42 +10745,60 @@ class MisoraApp(tk.Tk):
             messagebox.showwarning("No Dialogue Found", "No valid dialogue blocks found in script.")
             return False
 
-        start_idx = max(0, self.current_box_idx)
         total_boxes = len(self.current_doc.boxes)
-        if start_idx >= total_boxes:
+        if result.is_sparse:
+            targets = []
+            for blk in result.blocks:
+                if blk.index is None or not (1 <= blk.index <= total_boxes):
+                    raise IndexError(f"Sparse index #{blk.index} is out of range. Document has {total_boxes} boxes.")
+                targets.append((blk.index - 1, blk))
+            count = len(targets)
             start_idx = 0
+        else:
+            start_idx = max(0, self.current_box_idx)
+            if start_idx >= total_boxes:
+                start_idx = 0
+            count = min(len(result.blocks), total_boxes - start_idx)
+            if count <= 0:
+                messagebox.showwarning("Target Full", "No remaining boxes available to paste into.")
+                return False
+            targets = [(start_idx + k, result.blocks[k]) for k in range(count)]
 
-        count = min(len(result.blocks), total_boxes - start_idx)
-        if count <= 0:
-            messagebox.showwarning("Target Full", "No remaining boxes available to paste into.")
-            return False
-
-        apply_speakers = any(bool(b.speaker.strip()) for b in result.blocks[:count])
+        apply_speakers = any(bool(b.speaker.strip()) for _, b in targets)
         apply_meta = not result.metadata.is_empty()
 
         if confirm:
             # Headless / mocked test compatibility check
             if messagebox.askyesno.__module__ != "tkinter.messagebox" or getattr(self, "_test_bypass_dialogs", False):
                 preview_lines = []
-                for i in range(min(count, 3)):
-                    blk = result.blocks[i]
-                    target_box_num = start_idx + i + 1
+                for i in range(min(len(targets), 3)):
+                    t_idx, blk = targets[i]
+                    target_box_num = t_idx + 1
                     snippet = " ".join(blk.text.splitlines())[:50]
                     preview_lines.append(f"  Box {target_box_num} [{blk.speaker or 'Narration'}]: {snippet}")
-                if count > 3:
-                    preview_lines.append(f"  ... and {count - 3} more boxes")
-                prompt = (
-                    f"Detected {len(result.blocks)} blocks ({result.format}).\n\n"
-                    f"Target range: Box {start_idx + 1} to Box {start_idx + count} (of {total_boxes}).\n\n"
-                    f"Preview:\n" + "\n".join(preview_lines) + "\n\n"
-                )
-                if len(result.blocks) > count:
-                    prompt += f"Note: {len(result.blocks) - count} excess blocks will be ignored.\n\n"
-                prompt += "Apply this script across these boxes?"
+                if len(targets) > 3:
+                    preview_lines.append(f"  ... and {len(targets) - 3} more boxes")
+                if result.is_sparse:
+                    target_desc = ", ".join(f"Box {t_idx + 1}" for t_idx, _ in targets)
+                    prompt = (
+                        f"Detected {len(result.blocks)} blocks ({result.format}).\n\n"
+                        f"Target boxes: {target_desc} (sparse, of {total_boxes}).\n\n"
+                        f"Preview:\n" + "\n".join(preview_lines) + "\n\n"
+                        "Apply this script across these boxes?"
+                    )
+                else:
+                    prompt = (
+                        f"Detected {len(result.blocks)} blocks ({result.format}).\n\n"
+                        f"Target range: Box {start_idx + 1} to Box {start_idx + count} (of {total_boxes}).\n\n"
+                        f"Preview:\n" + "\n".join(preview_lines) + "\n\n"
+                    )
+                    if len(result.blocks) > count:
+                        prompt += f"Note: {len(result.blocks) - count} excess blocks will be ignored.\n\n"
+                    prompt += "Apply this script across these boxes?"
                 if not messagebox.askyesno("Paste Across Boxes", prompt, parent=self):
                     return False
             else:
-                dlg = ScriptPastePreviewDialog(self, result, start_idx, source_label=source_label)
+                dlg = ScriptPastePreviewDialog(self, result, start_idx if not result.is_sparse else 0, source_label=source_label)
                 self.wait_window(dlg)
                 if not dlg.confirmed:
                     return False
@@ -10777,14 +10833,15 @@ class MisoraApp(tk.Tk):
                 )
 
             # Record box-level deltas in undo journal
-            for k in range(count):
-                b_idx = start_idx + k
+            for b_idx, new_blk in targets:
                 if b_idx in locked_set:
                     skipped_locked += 1
                     continue
                 old_box = self.current_doc.boxes[b_idx]
-                new_blk = result.blocks[k]
                 new_sp = new_blk.speaker if (apply_speakers and new_blk.speaker) else old_box.speaker
+                old_uid = old_box.segs[0].record.uid if old_box.segs and old_box.segs[0].record else old_box.uid
+                old_segs = [s.text for s in old_box.segs] if len(old_box.segs) > 1 else None
+                new_segs = [new_blk.text] if len(old_box.segs) > 1 else None
                 self.undo_journal.record(
                     BoxEditDelta(
                         box_index=b_idx,
@@ -10793,7 +10850,9 @@ class MisoraApp(tk.Tk):
                         old_text=old_box.clean_text,
                         new_text=new_blk.text,
                         file_path=str(self.current_file_path or ""),
-                        box_uid=old_box.uid,
+                        box_uid=old_uid,
+                        old_seg_texts=old_segs,
+                        new_seg_texts=new_segs,
                         source="paste_script",
                     )
                 )
@@ -10802,12 +10861,12 @@ class MisoraApp(tk.Tk):
                 self.current_doc,
                 result,
                 mode="replace",
-                start_box_index=start_idx,
+                start_box_index=start_idx if not result.is_sparse else 0,
                 apply_speakers=apply_speakers,
+                apply_metadata=apply_meta,
                 locked_indices=locked_set,
             )
-            for k in range(count):
-                b_idx = start_idx + k
+            for b_idx, _ in targets:
                 if b_idx not in locked_set:
                     self._modified_boxes.add(b_idx)
         finally:
@@ -11073,8 +11132,12 @@ class ScriptPastePreviewDialog(tk.Toplevel):
 
         total_doc_boxes = len(self.app.current_doc.boxes) if self.app.current_doc else 0
         blocks = self.result.blocks
-        self.count = min(len(blocks), max(0, total_doc_boxes - start_idx))
-        has_speakers = any(bool(b.speaker.strip()) for b in blocks[:self.count])
+        if self.result.is_sparse:
+            self.count = len(blocks)
+            has_speakers = any(bool(b.speaker.strip()) for b in blocks)
+        else:
+            self.count = min(len(blocks), max(0, total_doc_boxes - start_idx))
+            has_speakers = any(bool(b.speaker.strip()) for b in blocks[:self.count])
         has_meta = not self.result.metadata.is_empty()
 
         self.var_apply_speakers = tk.BooleanVar(master=self, value=has_speakers)
@@ -11114,12 +11177,18 @@ class ScriptPastePreviewDialog(tk.Toplevel):
         )
         lbl_title.pack(anchor="w")
 
-        info_lines = [
-            f"Format: {self.result.format.upper()}  |  Detected: {len(blocks)} blocks  |  Target: Box {self.start_idx + 1} to {self.start_idx + self.count} (of {total_doc_boxes})"
-        ]
-        if len(blocks) > self.count:
-            excess = len(blocks) - self.count
-            info_lines.append(f"⚠ Notice: {excess} excess block(s) will be skipped as they exceed total boxes.")
+        if self.result.is_sparse:
+            sparse_box_names = ", ".join(f"Box {b.index}" for b in blocks if b.index is not None)
+            info_lines = [
+                f"Format: {self.result.format.upper()} (Sparse)  |  Detected: {len(blocks)} blocks  |  Targets: {sparse_box_names} (of {total_doc_boxes})"
+            ]
+        else:
+            info_lines = [
+                f"Format: {self.result.format.upper()}  |  Detected: {len(blocks)} blocks  |  Target: Box {self.start_idx + 1} to {self.start_idx + self.count} (of {total_doc_boxes})"
+            ]
+            if len(blocks) > self.count:
+                excess = len(blocks) - self.count
+                info_lines.append(f"⚠ Notice: {excess} excess block(s) will be skipped as they exceed total boxes.")
         if has_meta:
             m = self.result.metadata
             m_parts = []
@@ -11234,21 +11303,39 @@ class ScriptPastePreviewDialog(tk.Toplevel):
         blocks = self.result.blocks
         apply_speakers = self.var_apply_speakers.get()
 
-        for k in range(self.count):
-            b_idx = self.start_idx + k
-            old_box = self.app.current_doc.boxes[b_idx]
-            new_blk = blocks[k]
+        if self.result.is_sparse:
+            for new_blk in blocks:
+                if new_blk.index is None:
+                    continue
+                b_idx = new_blk.index - 1
+                if not (0 <= b_idx < len(self.app.current_doc.boxes)):
+                    continue
+                old_box = self.app.current_doc.boxes[b_idx]
+                cur_spk = old_box.speaker or "(narration)"
+                if apply_speakers:
+                    new_spk = new_blk.speaker if new_blk.speaker else "(narration)"
+                else:
+                    new_spk = f"{cur_spk} (keep)"
 
-            cur_spk = old_box.speaker or "(narration)"
-            if apply_speakers:
-                new_spk = new_blk.speaker if new_blk.speaker else "(narration)"
-            else:
-                new_spk = f"{cur_spk} (keep)"
+                cur_txt = " ".join(old_box.clean_text.splitlines())[:80]
+                new_txt = " ".join(new_blk.text.splitlines())[:80]
+                self.tree.insert("", "end", values=(f"Box {new_blk.index}", cur_spk, new_spk, cur_txt, new_txt))
+        else:
+            for k in range(self.count):
+                b_idx = self.start_idx + k
+                old_box = self.app.current_doc.boxes[b_idx]
+                new_blk = blocks[k]
 
-            cur_txt = " ".join(old_box.clean_text.splitlines())[:80]
-            new_txt = " ".join(new_blk.text.splitlines())[:80]
+                cur_spk = old_box.speaker or "(narration)"
+                if apply_speakers:
+                    new_spk = new_blk.speaker if new_blk.speaker else "(narration)"
+                else:
+                    new_spk = f"{cur_spk} (keep)"
 
-            self.tree.insert("", "end", values=(f"Box {b_idx + 1}", cur_spk, new_spk, cur_txt, new_txt))
+                cur_txt = " ".join(old_box.clean_text.splitlines())[:80]
+                new_txt = " ".join(new_blk.text.splitlines())[:80]
+
+                self.tree.insert("", "end", values=(f"Box {b_idx + 1}", cur_spk, new_spk, cur_txt, new_txt))
 
     def on_apply(self) -> None:
         self.apply_speakers = self.var_apply_speakers.get()

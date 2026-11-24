@@ -9,6 +9,7 @@ Governed by AGENTS.md Rules 20 and 26.
 """
 from __future__ import annotations
 
+import copy
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -30,6 +31,8 @@ OUTER_FENCE_END_RE = re.compile(r"^\s*(?:```|~~~)\s*$")
 
 HEADER_PREFIX = "@@"
 ESCAPE_PREFIX = r"\@@"
+CSIF_BODY_ESCAPE_RE = re.compile(r"^\\*@@")
+CSIF_BODY_UNESCAPE_RE = re.compile(r"^\\+@@")
 
 # CSIF header matching
 SPARSE_HEADER_RE = re.compile(r"^@@#(\d+)\|(.*)$")
@@ -221,7 +224,10 @@ def _parse_csif(lines: List[str], result: ParseResult) -> None:
                 inline_val = m_meta.group(2)
                 current_meta_key = key
                 if inline_val is not None:
-                    current_body_lines.append(inline_val)
+                    if CSIF_BODY_UNESCAPE_RE.match(inline_val):
+                        current_body_lines.append(inline_val[1:])
+                    else:
+                        current_body_lines.append(inline_val)
                 continue
 
             # It is a dialogue header
@@ -268,8 +274,8 @@ def _parse_csif(lines: List[str], result: ParseResult) -> None:
                 )
         else:
             # Body line: check for escaped header \@@
-            if line.startswith(ESCAPE_PREFIX):
-                unescaped = line[1:]  # Strip leading \
+            if CSIF_BODY_UNESCAPE_RE.match(line):
+                unescaped = line[1:]  # Strip exactly ONE leading \
                 current_body_lines.append(unescaped)
             else:
                 current_body_lines.append(line)
@@ -367,15 +373,15 @@ def serialize(
         if meta.get("title"):
             out_lines.append("@@!title")
             for l in meta["title"].splitlines():
-                out_lines.append(f"\\{l}" if l.startswith("@@") else l)
+                out_lines.append(f"\\{l}" if CSIF_BODY_ESCAPE_RE.match(l) else l)
         if meta.get("subtitle"):
             out_lines.append("@@!subtitle")
             for l in meta["subtitle"].splitlines():
-                out_lines.append(f"\\{l}" if l.startswith("@@") else l)
+                out_lines.append(f"\\{l}" if CSIF_BODY_ESCAPE_RE.match(l) else l)
         if meta.get("summary"):
             out_lines.append("@@!summary")
             for l in meta["summary"].splitlines():
-                out_lines.append(f"\\{l}" if l.startswith("@@") else l)
+                out_lines.append(f"\\{l}" if CSIF_BODY_ESCAPE_RE.match(l) else l)
 
     if scope == "metadata":
         return "\n".join(out_lines) + ("\n" if out_lines else "")
@@ -426,7 +432,7 @@ def serialize(
         if clean_text:
             body_lines = clean_text.split("\n")
             for bl in body_lines:
-                if bl.startswith("@@"):
+                if CSIF_BODY_ESCAPE_RE.match(bl):
                     out_lines.append(f"\\{bl}")
                 else:
                     out_lines.append(bl)
@@ -447,6 +453,7 @@ def apply_to_document(
     start_box_index: int = 0,
     overflow: str = "create",
     apply_speakers: bool = True,
+    apply_metadata: bool = True,
     locked_indices: Optional[Set[int]] = None,
 ) -> int:
     """
@@ -456,26 +463,13 @@ def apply_to_document(
     - mode="insert": inserts new boxes starting at start_box_index.
     - mode="replace": overwrites boxes sequentially starting from start_box_index.
       If overflow="create", appends new boxes when exceeding document length.
-    - Preserves metadata if present in result.
+    - Preserves metadata if present in result and apply_metadata is True.
     - Never falls back to positional addressing silently when sparse.
+    - Atomic rollback: if any step raises, restores document state completely.
     """
-    # 1. Apply metadata if present
-    if not result.metadata.is_empty():
-        doc.set_metadata(
-            title=result.metadata.title,
-            subtitle=result.metadata.subtitle,
-            summary=result.metadata.summary,
-        )
-
-    if not result.blocks:
-        return 0
-
-    applied_count = 0
-
-    # 2. Sparse application
+    # Pre-validation for sparse mode before modifying anything
     if result.is_sparse:
         total_boxes = len(doc.boxes)
-        # Validate all sparse indices first
         for b in result.blocks:
             if b.index is None:
                 raise ValueError("Encountered un-indexed block in sparse result.")
@@ -484,50 +478,64 @@ def apply_to_document(
                     f"Sparse index #{b.index} is out of range. Document has {total_boxes} boxes."
                 )
 
-        # Apply blocks to specified 1-based indices
-        for b in result.blocks:
-            box_idx = b.index - 1
-            if locked_indices and box_idx in locked_indices:
-                continue
-            old_box = doc.boxes[box_idx]
-            if apply_speakers:
-                sp = "" if b.is_narration else sanitize_speaker(b.speaker)
-            else:
-                sp = old_box.speaker
+    # Atomic rollback snapshot (covering both sparse and non-sparse failure paths)
+    saved_records = copy.deepcopy(doc.records)
+    saved_removed = set(doc.removed_records)
 
-            doc.inject_box(box_idx, new_speaker=sp, new_text=b.text)
-            applied_count += 1
-
-        return applied_count
-
-    # 3. Non-sparse application
-    if mode == "insert":
-        insert_pos = max(0, min(start_box_index, len(doc.boxes)))
-        for b in result.blocks:
-            sp = "" if b.is_narration else sanitize_speaker(b.speaker)
-            kd = "tag" if b.is_narration or not sp else "print"
-            snap = BoxSnapshot(
-                speaker=sp,
-                voice_cue="",
-                kind=kd,
-                seg_texts=[b.text],
+    try:
+        # 1. Apply metadata if requested and present
+        if apply_metadata and not result.metadata.is_empty():
+            doc.set_metadata(
+                title=result.metadata.title,
+                subtitle=result.metadata.subtitle,
+                summary=result.metadata.summary,
             )
-            doc.insert_box(insert_pos, snap)
-            insert_pos += 1
-            applied_count += 1
-    elif mode == "replace":
-        curr_idx = max(0, start_box_index)
-        for b in result.blocks:
-            if curr_idx < len(doc.boxes):
+
+        if not result.blocks:
+            return 0
+
+        applied_count = 0
+
+        # 2. Sparse application
+        if result.is_sparse:
+            # Capture target UIDs:
+            # b.index is 1-based, box_idx is 0-based
+            targets = []
+            for b in result.blocks:
+                box_idx = b.index - 1
+                box = doc.boxes[box_idx]
+                uid = box.segs[0].record.uid if box.segs and box.segs[0].record else None
+                targets.append((b, uid, box_idx))
+
+            for b, uid, orig_idx in targets:
+                # Resolve target box by UID
+                curr_idx = None
+                if uid is not None:
+                    for idx, bx in enumerate(doc.boxes):
+                        if bx.segs and bx.segs[0].record and bx.segs[0].record.uid == uid:
+                            curr_idx = idx
+                            break
+                if curr_idx is None:
+                    curr_idx = orig_idx
+
                 if locked_indices and curr_idx in locked_indices:
-                    curr_idx += 1
                     continue
+
                 old_box = doc.boxes[curr_idx]
-                sp = ("" if b.is_narration else sanitize_speaker(b.speaker)) if apply_speakers else old_box.speaker
+                if apply_speakers:
+                    sp = "" if b.is_narration else sanitize_speaker(b.speaker)
+                else:
+                    sp = old_box.speaker
+
                 doc.inject_box(curr_idx, new_speaker=sp, new_text=b.text)
-                curr_idx += 1
                 applied_count += 1
-            elif overflow == "create":
+
+            return applied_count
+
+        # 3. Non-sparse application
+        if mode == "insert":
+            insert_pos = max(0, min(start_box_index, len(doc.boxes)))
+            for b in result.blocks:
                 sp = "" if b.is_narration else sanitize_speaker(b.speaker)
                 kd = "tag" if b.is_narration or not sp else "print"
                 snap = BoxSnapshot(
@@ -536,12 +544,41 @@ def apply_to_document(
                     kind=kd,
                     seg_texts=[b.text],
                 )
-                doc.insert_box(len(doc.boxes), snap)
-                curr_idx += 1
+                doc.insert_box(insert_pos, snap)
+                insert_pos += 1
                 applied_count += 1
-            else:
-                break
-    else:
-        raise ValueError(f"Unknown application mode: {mode}. Expected 'insert' or 'replace'.")
+        elif mode == "replace":
+            curr_idx = max(0, start_box_index)
+            for b in result.blocks:
+                if curr_idx < len(doc.boxes):
+                    if locked_indices and curr_idx in locked_indices:
+                        curr_idx += 1
+                        continue
+                    old_box = doc.boxes[curr_idx]
+                    sp = ("" if b.is_narration else sanitize_speaker(b.speaker)) if apply_speakers else old_box.speaker
+                    doc.inject_box(curr_idx, new_speaker=sp, new_text=b.text)
+                    curr_idx += 1
+                    applied_count += 1
+                elif overflow == "create":
+                    sp = "" if b.is_narration else sanitize_speaker(b.speaker)
+                    kd = "tag" if b.is_narration or not sp else "print"
+                    snap = BoxSnapshot(
+                        speaker=sp,
+                        voice_cue="",
+                        kind=kd,
+                        seg_texts=[b.text],
+                    )
+                    doc.insert_box(len(doc.boxes), snap)
+                    curr_idx += 1
+                    applied_count += 1
+                else:
+                    break
+        else:
+            raise ValueError(f"Unknown application mode: {mode}. Expected 'insert' or 'replace'.")
 
-    return applied_count
+        return applied_count
+    except Exception:
+        doc.records = saved_records
+        doc.removed_records = saved_removed
+        doc._rebuild_boxes()
+        raise
