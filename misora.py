@@ -1158,6 +1158,37 @@ def write_atomic_utf8(
     write_atomic_encoded(path, content, encoding=encoding, has_bom=has_bom, newline=newline)
 
 
+def make_collision_resistant_backup_path(
+    source_path: Union[str, Path],
+    backup_dir: Union[str, Path],
+    tag: str = "bak",
+) -> Path:
+    """Generate a unique, collision-resistant backup path for a source file (BUG-20 / QW-B17 + Grok-N03).
+
+    Format: <stem>.<tag>_<timestamp_microseconds>_<sha256_path_prefix><suffix>
+    Guarantees that same-stem files in different folders saved within the same second
+    or microsecond never overwrite each other, disambiguating if the target already exists.
+    """
+    src_p = Path(source_path)
+    b_dir = Path(backup_dir)
+    b_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        norm_str = os.path.normcase(str(src_p.resolve()))
+    except Exception:
+        norm_str = os.path.normcase(str(src_p))
+
+    path_hash = hashlib.sha256(norm_str.encode("utf-8")).hexdigest()[:8]
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    candidate = b_dir / f"{src_p.stem}.{tag}_{ts}_{path_hash}{src_p.suffix}"
+    counter = 1
+    while candidate.exists():
+        candidate = b_dir / f"{src_p.stem}.{tag}_{ts}_{path_hash}_{counter}{src_p.suffix}"
+        counter += 1
+    return candidate
+
+
 def _get_box_uid(box: Any) -> Optional[int]:
     """Get runtime UID from a Box, falling back to its primary segment record UID (S06 / BUG-12)."""
     if box is None:
@@ -8830,8 +8861,7 @@ class MisoraApp(tk.Tk):
 
             if not self.is_bundle_file and not self.current_doc:
                 if self.current_file_path.is_file() and backup_dir:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
+                    bak_path = make_collision_resistant_backup_path(self.current_file_path, backup_dir, tag="bak")
                     shutil.copy2(self.current_file_path, bak_path)
                 if not getattr(self, "var_preview_compiled", None) or not self.var_preview_compiled.get():
                     content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
@@ -8884,12 +8914,15 @@ class MisoraApp(tk.Tk):
                         self._modified_box_uids.add(b_uid)
 
             if self.is_bundle_file:
+                if self.current_file_path.is_file() and backup_dir:
+                    bak_path = make_collision_resistant_backup_path(self.current_file_path, backup_dir, tag="bak")
+                    shutil.copy2(self.current_file_path, bak_path)
                 written_size = save_bundle_story(
                     self.current_unity_env,
                     self.current_text_obj,
                     self.current_doc,
                     self.current_file_path,
-                    backup_dir=backup_dir
+                    backup_dir=None
                 )
                 if cur_p in self.open_documents:
                     self.open_documents[cur_p]["dirty"] = False
@@ -8901,8 +8934,7 @@ class MisoraApp(tk.Tk):
                 self.logger.info("File I/O", f"Patched bundle '{self.current_file_path}' ({written_size} bytes)")
             else:
                 if self.current_file_path.is_file() and backup_dir:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
+                    bak_path = make_collision_resistant_backup_path(self.current_file_path, backup_dir, tag="bak")
                     shutil.copy2(self.current_file_path, bak_path)
                 v2_text = self.current_doc.to_v2_text()
                 doc_entry = self.open_documents.get(cur_p, {})
@@ -9001,17 +9033,35 @@ class MisoraApp(tk.Tk):
             entry["plain_text"] = getattr(self, "_plain_text_content", "")
         entry["dirty"] = getattr(self, "is_dirty", False)
 
+    def _find_open_doc_key(self, path: Union[str, Path]) -> Optional[Path]:
+        """Find matching canonical Path key in open_documents normalized for Windows path casing (BUG-24)."""
+        if not path or not hasattr(self, "open_documents") or not self.open_documents:
+            return None
+        try:
+            target_norm = os.path.normcase(str(Path(path).resolve()))
+        except Exception:
+            target_norm = os.path.normcase(str(path))
+        for k in self.open_documents.keys():
+            try:
+                k_norm = os.path.normcase(str(Path(k).resolve()))
+            except Exception:
+                k_norm = os.path.normcase(str(k))
+            if k_norm == target_norm:
+                return k if isinstance(k, Path) else Path(k)
+        return None
+
     def _save_document_entry(self, path: Union[str, Path]) -> bool:
         """Save an open document entry to disk without switching active UI context (S06 / BUG-12)."""
         cur_p = Path(path).resolve()
         if cur_p == (Path(self.current_file_path).resolve() if self.current_file_path else None):
             return self.on_save()
 
-        if cur_p not in self.open_documents:
+        matched_k = self._find_open_doc_key(cur_p)
+        if matched_k is None or matched_k not in self.open_documents:
             self.logger.warning("File I/O", f"Cannot save non-open document: {cur_p}")
             return False
 
-        entry = self.open_documents[cur_p]
+        entry = self.open_documents[matched_k]
         backup_dir = self._get_backup_dir()
         modified_uids = set(entry.get("modified_box_uids", set()))
 
@@ -9022,8 +9072,11 @@ class MisoraApp(tk.Tk):
                 doc = entry.get("doc")
                 if not doc:
                     return False
+                if cur_p.is_file() and backup_dir:
+                    bak_path = make_collision_resistant_backup_path(cur_p, backup_dir, tag="bak")
+                    shutil.copy2(cur_p, bak_path)
                 written_size = save_bundle_story(
-                    env, obj, doc, cur_p, backup_dir=backup_dir
+                    env, obj, doc, cur_p, backup_dir=None
                 )
                 entry["dirty"] = False
                 entry["modified_box_uids"] = set()
@@ -9033,8 +9086,7 @@ class MisoraApp(tk.Tk):
             elif entry.get("doc") is not None:
                 doc = entry.get("doc")
                 if cur_p.is_file() and backup_dir:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    bak_path = backup_dir / f"{cur_p.stem}.bak_{ts}{cur_p.suffix}"
+                    bak_path = make_collision_resistant_backup_path(cur_p, backup_dir, tag="bak")
                     shutil.copy2(cur_p, bak_path)
                 v2_text = doc.to_v2_text()
                 enc = entry.get("encoding", "utf-8")
@@ -9048,8 +9100,7 @@ class MisoraApp(tk.Tk):
                 self.logger.info("File I/O", f"Saved inactive v2 script '{cur_p}'")
             else:
                 if cur_p.is_file() and backup_dir:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    bak_path = backup_dir / f"{cur_p.stem}.bak_{ts}{cur_p.suffix}"
+                    bak_path = make_collision_resistant_backup_path(cur_p, backup_dir, tag="bak")
                     shutil.copy2(cur_p, bak_path)
                 content = entry.get("plain_text", "")
                 enc = entry.get("encoding", "utf-8")
@@ -9764,6 +9815,93 @@ class MisoraApp(tk.Tk):
             target = self.txt_continuous if self.var_continuous_view.get() else self.txt_dialogue
             target.focus_set()
 
+    def _apply_compiled_replacement(
+        self,
+        text: str,
+        matcher: Callable[[str], List[Any]],
+        replacement: str,
+        is_regex: bool = False,
+        ignore_ws: bool = False,
+        count: int = 0,
+        regex_pattern: Optional[re.Pattern] = None,
+    ) -> Tuple[str, int]:
+        """Apply replacement across text honoring Match Case, Regex, and Ignore Whitespace (BUG-24 / QW-R06).
+
+        Replaces non-overlapping spans returned by matcher in reverse order to preserve indexing.
+        When is_regex is True, supports group backreferences via regex substitution.
+        Returns (new_text, occurrences_replaced).
+        """
+        if not text:
+            return text, 0
+
+        if is_regex:
+            rx = regex_pattern
+            if rx is None:
+                if hasattr(matcher, "__closure__") and matcher.__closure__:
+                    for cell in matcher.__closure__:
+                        if isinstance(cell.cell_contents, re.Pattern):
+                            rx = cell.cell_contents
+                            break
+            if rx is None:
+                q = getattr(self, "search_var", None).get() if getattr(self, "search_var", None) else ""
+                flags = 0 if getattr(self, "var_case", None) and self.var_case.get() else re.IGNORECASE
+                rx = re.compile(q, flags)
+            new_text, num = rx.subn(replacement, text, count=count)
+            return new_text, num
+
+        matches = matcher(text)
+        if not matches:
+            return text, 0
+
+        if count > 0:
+            matches = matches[:count]
+
+        res = text
+        for item in reversed(matches):
+            start, end = item[0], item[1]
+            res = res[:start] + replacement + res[end:]
+        return res, len(matches)
+
+    def _confirm_closed_files_for_op(self, op: Any, is_undo: bool = True) -> bool:
+        """Prompt before modifying closed files on disk during Undo/Redo (BUG-24 / AGENTS.md §16)."""
+        if not op or not hasattr(op, "deltas"):
+            return True
+
+        closed_paths: List[Path] = []
+        all_paths: List[Path] = []
+        for delta in op.deltas:
+            if isinstance(delta, BulkFileDelta):
+                for item in delta.per_file:
+                    fp = Path(item[0]).resolve()
+                    all_paths.append(fp)
+                    if self._find_open_doc_key(fp) is None:
+                        closed_paths.append(fp)
+
+        if not closed_paths:
+            return True
+
+        action = "Undo" if is_undo else "Redo"
+        file_lines = []
+        for p in all_paths:
+            status = " (closed - will touch disk)" if p in closed_paths else " (open tab)"
+            file_lines.append(f"  • {p.name}{status}")
+
+        msg = (
+            f"{action} across multiple files:\n\n"
+            f"Operation: {getattr(op, 'label', 'Bulk Operation')}\n\n"
+            f"The following {len(all_paths)} file(s) will be modified on disk,\n"
+            f"including {len(closed_paths)} file(s) not currently open:\n\n"
+            + "\n".join(file_lines)
+            + f"\n\nProceed with {action} across these files?"
+        )
+        ans = messagebox.askyesno(
+            f"Confirm Multi-File {action}",
+            msg,
+            default=messagebox.NO,
+            icon=messagebox.WARNING,
+        )
+        return bool(ans)
+
     def on_replace_next(self) -> None:
         """Find and replace the next occurrence in the active file."""
         find_text = self.search_var.get()
@@ -9775,9 +9913,29 @@ class MisoraApp(tk.Tk):
             messagebox.showinfo("Replace", "No active file open to replace in.")
             return
 
+        match_case = bool(getattr(self, "var_case", None) and self.var_case.get())
+        use_regex = bool(getattr(self, "var_regex", None) and self.var_regex.get())
+        ignore_ws = bool(getattr(self, "var_ignore_ws", None) and self.var_ignore_ws.get()) if getattr(self, "var_ignore_ws", None) is not None else False
+
+        try:
+            opts = SearchOptions(
+                query=find_text,
+                match_case=match_case,
+                use_regex=use_regex,
+                ignore_whitespace=ignore_ws,
+            )
+            search_engine = getattr(self, "search_engine", None)
+            compile_fn = search_engine._compile_matcher if search_engine else ProjectSearchEngine._compile_matcher
+            matcher = compile_fn(opts)
+        except Exception as e:
+            self.set_status(f"Invalid search pattern: {e}", is_error=True)
+            messagebox.showerror("Search Error", f"Invalid search pattern:\n{e}")
+            return
+
         if self.current_doc and self.current_doc.boxes:
             box = self.current_doc.boxes[self.current_box_idx]
-            if find_text in box.clean_text:
+            matches = matcher(box.clean_text)
+            if matches:
                 if self.is_box_locked(self.current_box_idx):
                     self.show_toast(f"🔒 Box {self.current_box_idx + 1} is locked against edits.")
                 else:
@@ -9785,7 +9943,9 @@ class MisoraApp(tk.Tk):
                     old_tx = box.clean_text
                     box_uid = box.uid
                     old_segs = [s.text for s in box.segs] if len(box.segs) > 1 else None
-                    new_tx = box.clean_text.replace(find_text, replace_text, 1)
+                    new_tx, _ = self._apply_compiled_replacement(
+                        box.clean_text, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=1
+                    )
                     try:
                         self.current_doc.inject_box(self.current_box_idx, None, new_tx)
                     except Exception as e:
@@ -9824,7 +9984,9 @@ class MisoraApp(tk.Tk):
             total = len(self.current_doc.boxes)
             for i in range(1, total):
                 next_idx = (self.current_box_idx + i) % total
-                if find_text in self.current_doc.boxes[next_idx].clean_text:
+                if self.is_box_locked(next_idx):
+                    continue
+                if matcher(self.current_doc.boxes[next_idx].clean_text):
                     self.current_box_idx = next_idx
                     self._update_views()
                     self.lbl_status.config(text=f"Found match in Box #{next_idx + 1}. Press Replace again to replace.")
@@ -9832,8 +9994,11 @@ class MisoraApp(tk.Tk):
             messagebox.showinfo("Replace", f"No more occurrences of '{find_text}' found.")
         elif not self.current_doc and self.current_file_path:
             cur_tx = self._plain_text_content
-            if find_text in cur_tx:
-                new_tx = cur_tx.replace(find_text, replace_text, 1)
+            matches = matcher(cur_tx)
+            if matches:
+                new_tx, _ = self._apply_compiled_replacement(
+                    cur_tx, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=1
+                )
                 self.undo_journal.record(
                     PlainTextDelta(
                         file_path=str(self.current_file_path),
@@ -9843,8 +10008,9 @@ class MisoraApp(tk.Tk):
                     label=f"Replace in {self.current_file_path.name}"
                 )
                 self._plain_text_content = new_tx
-                if self.current_file_path and self.current_file_path in self.open_documents:
-                    self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                matched_k = self._find_open_doc_key(self.current_file_path)
+                if matched_k and matched_k in self.open_documents:
+                    self.open_documents[matched_k]["plain_text"] = new_tx
                 self._mark_document_dirty(self.current_file_path)
                 self._dirty_state_changed()
                 self._update_views()
@@ -9853,10 +10019,29 @@ class MisoraApp(tk.Tk):
                 messagebox.showinfo("Replace", f"'{find_text}' not found in current file.")
 
     def on_replace_all(self) -> None:
-        """Replace all occurrences in current file or across project/folder."""
+        """Replace all occurrences in current file or across project/folder (BUG-24)."""
         find_text = self.search_var.get()
         replace_text = self.replace_var.get()
         if not find_text:
+            return
+
+        match_case = bool(getattr(self, "var_case", None) and self.var_case.get())
+        use_regex = bool(getattr(self, "var_regex", None) and self.var_regex.get())
+        ignore_ws = bool(getattr(self, "var_ignore_ws", None) and self.var_ignore_ws.get()) if getattr(self, "var_ignore_ws", None) is not None else False
+
+        try:
+            opts = SearchOptions(
+                query=find_text,
+                match_case=match_case,
+                use_regex=use_regex,
+                ignore_whitespace=ignore_ws,
+            )
+            search_engine = getattr(self, "search_engine", None)
+            compile_fn = search_engine._compile_matcher if search_engine else ProjectSearchEngine._compile_matcher
+            matcher = compile_fn(opts)
+        except Exception as e:
+            self.set_status(f"Invalid search pattern: {e}", is_error=True)
+            messagebox.showerror("Search Error", f"Invalid search pattern:\n{e}")
             return
 
         scope = self.scope_var.get()
@@ -9869,13 +10054,16 @@ class MisoraApp(tk.Tk):
                 skipped_locked = 0
                 self.undo_journal.begin_batch(f"Replace All '{find_text}' in {self.current_file_path.name}")
                 for idx, box in enumerate(self.current_doc.boxes):
-                    if find_text in box.clean_text:
+                    matches = matcher(box.clean_text)
+                    if matches:
                         if self.is_box_locked(idx):
                             skipped_locked += 1
                             continue
                         old_sp = box.speaker
                         old_tx = box.clean_text
-                        new_tx = box.clean_text.replace(find_text, replace_text)
+                        new_tx, _ = self._apply_compiled_replacement(
+                            box.clean_text, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=0
+                        )
                         self.undo_journal.record(
                             BoxEditDelta(
                                 box_index=idx,
@@ -9909,9 +10097,12 @@ class MisoraApp(tk.Tk):
                     messagebox.showinfo("Replace All", f"'{find_text}' not found in current file.")
             elif not self.current_doc and self.current_file_path:
                 cur_tx = self._plain_text_content
-                if find_text in cur_tx:
-                    occurrences = cur_tx.count(find_text)
-                    new_tx = cur_tx.replace(find_text, replace_text)
+                matches = matcher(cur_tx)
+                if matches:
+                    occurrences = len(matches)
+                    new_tx, _ = self._apply_compiled_replacement(
+                        cur_tx, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=0
+                    )
                     self.undo_journal.record(
                         PlainTextDelta(
                             file_path=str(self.current_file_path),
@@ -9921,8 +10112,9 @@ class MisoraApp(tk.Tk):
                         label=f"Replace All in {self.current_file_path.name}"
                     )
                     self._plain_text_content = new_tx
-                    if self.current_file_path and self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                    matched_k = self._find_open_doc_key(self.current_file_path)
+                    if matched_k and matched_k in self.open_documents:
+                        self.open_documents[matched_k]["plain_text"] = new_tx
                     self._mark_document_dirty(self.current_file_path)
                     self._dirty_state_changed()
                     self._update_views()
@@ -9948,33 +10140,54 @@ class MisoraApp(tk.Tk):
                     if root not in target_roots:
                         target_roots.insert(0, root)
 
-            inc_bdl = self.var_inc_bundles.get()
-            inc_txt = self.var_inc_text.get()
+            inc_bdl = bool(getattr(self, "var_inc_bundles", None) and self.var_inc_bundles.get())
+            inc_txt = bool(getattr(self, "var_inc_text", None) and self.var_inc_text.get()) if getattr(self, "var_inc_text", None) is not None else True
+
+            seen_paths: Set[Path] = set()
+            candidate_files: List[Path] = []
+            for root in target_roots:
+                root_p = Path(root).resolve()
+                if root_p.is_file():
+                    if root_p not in seen_paths:
+                        seen_paths.add(root_p)
+                        candidate_files.append(root_p)
+                elif root_p.is_dir():
+                    if inc_bdl:
+                        for pat in ("*.unity3d", "*.asset"):
+                            for f in root_p.rglob(pat):
+                                fp = f.resolve()
+                                if fp not in seen_paths and fp.is_file():
+                                    seen_paths.add(fp)
+                                    candidate_files.append(fp)
+                    if inc_txt:
+                        for f in root_p.rglob("*.txt"):
+                            fp = f.resolve()
+                            if fp not in seen_paths and fp.is_file():
+                                seen_paths.add(fp)
+                                candidate_files.append(fp)
 
             matching_files: Dict[Path, int] = {}
             total_matches = 0
-            candidate_files: List[Path] = []
-            for root in target_roots:
-                if root.is_file():
-                    candidate_files.append(root)
-                elif root.is_dir():
-                    if inc_bdl:
-                        candidate_files.extend(root.rglob("*.unity3d"))
-                        candidate_files.extend(root.rglob("*.asset"))
-                    if inc_txt:
-                        candidate_files.extend(root.rglob("*.txt"))
 
             for cf in candidate_files:
                 try:
                     if cf.suffix.lower() in (".unity3d", ".asset"):
-                        # Decode structured story TextAsset rather than scanning raw compressed bytes (S9b)
                         bundle_env = None
                         try:
                             b_doc, bundle_env, _, _ = load_bundle_story(cf)
+                            open_k = self._find_open_doc_key(cf)
+                            locked_uids: Set[int] = set()
+                            if open_k and open_k in self.open_documents:
+                                locked_uids = set(self.open_documents[open_k].get("locked_box_uids", set()))
+                            elif open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                locked_uids = set(getattr(self, "_locked_box_uids", set()))
+
                             c = 0
                             for box in b_doc.boxes:
-                                if find_text in box.clean_text:
-                                    c += box.clean_text.count(find_text)
+                                b_uid = _get_box_uid(box)
+                                if b_uid is not None and b_uid in locked_uids:
+                                    continue
+                                c += len(matcher(box.clean_text))
                             if c > 0:
                                 matching_files[cf] = c
                                 total_matches += c
@@ -9983,7 +10196,7 @@ class MisoraApp(tk.Tk):
                                 dispose_unity_env(bundle_env)
                     else:
                         decoded = read_text_file_strictly(cf)
-                        c = decoded.text.count(find_text)
+                        c = len(matcher(decoded.text))
                         if c > 0:
                             matching_files[cf] = c
                             total_matches += c
@@ -9993,6 +10206,29 @@ class MisoraApp(tk.Tk):
             if not matching_files:
                 messagebox.showinfo("Replace All", f"No matches for '{find_text}' found across {len(candidate_files)} files.")
                 return
+
+            # Refuse/prompt before overwriting dirty open documents (BUG-24)
+            dirty_open: List[Path] = []
+            for fp in matching_files:
+                open_k = self._find_open_doc_key(fp)
+                if open_k and open_k in self.open_documents:
+                    is_active_dirty = (open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None) and getattr(self, "is_dirty", False))
+                    if self.open_documents[open_k].get("dirty", False) or is_active_dirty:
+                        dirty_open.append(open_k)
+
+            if dirty_open:
+                dirty_list = "\n".join(f"  • {p.name} ({p})" for p in dirty_open)
+                ans = messagebox.askyesno(
+                    "Unsaved Changes in Open Files",
+                    f"The following {len(dirty_open)} open document(s) have unsaved changes that would be overwritten by Replace All:\n\n"
+                    f"{dirty_list}\n\n"
+                    f"Proceed and overwrite these unsaved changes?",
+                    default=messagebox.NO,
+                    icon=messagebox.WARNING,
+                )
+                if not ans:
+                    self.lbl_status.config(text="Replace All cancelled: open documents have unsaved changes.")
+                    return
 
             confirm_msg = (
                 f"Replace All across multiple files:\n\n"
@@ -10019,41 +10255,48 @@ class MisoraApp(tk.Tk):
                         bundle_env = None
                         try:
                             doc, bundle_env, obj, _ = load_bundle_story(fpath)
+                            open_k = self._find_open_doc_key(fpath)
+                            locked_uids = set()
+                            if open_k and open_k in self.open_documents:
+                                locked_uids = set(self.open_documents[open_k].get("locked_box_uids", set()))
+                            elif open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                locked_uids = set(getattr(self, "_locked_box_uids", set()))
+
                             modified = False
                             for idx, box in enumerate(doc.boxes):
-                                if find_text in box.clean_text:
-                                    new_box_tx = box.clean_text.replace(find_text, replace_text)
+                                b_uid = _get_box_uid(box)
+                                if b_uid is not None and b_uid in locked_uids:
+                                    continue
+                                if matcher(box.clean_text):
+                                    new_box_tx, _ = self._apply_compiled_replacement(
+                                        box.clean_text, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=0
+                                    )
                                     doc.inject_box(idx, None, new_box_tx)
                                     modified = True
                             if modified:
                                 bak_dir = self._get_backup_dir()
-                                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                                orig_bak_path = bak_dir / f"{fpath.stem}.orig_{ts}{fpath.suffix}"
+                                orig_bak_path = make_collision_resistant_backup_path(fpath, bak_dir, tag="orig")
                                 shutil.copy2(fpath, orig_bak_path)
 
-                                save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=bak_dir)
+                                save_bundle_story(bundle_env, obj, doc, fpath, backup_dir=None)
 
-                                mod_bak_path = bak_dir / f"{fpath.stem}.mod_{ts}{fpath.suffix}"
+                                mod_bak_path = make_collision_resistant_backup_path(fpath, bak_dir, tag="mod")
                                 shutil.copy2(fpath, mod_bak_path)
 
                                 per_file_deltas.append((str(fpath), str(orig_bak_path), str(mod_bak_path), True))
                                 replaced_files_count += 1
-                                # S9b: Synchronize in-memory open_documents cache & checkpoint
-                                f_res = fpath.resolve()
-                                if f_res in self.open_documents:
-                                    self._record_saved_checkpoint(f_res, doc)
-                                    self._mark_document_dirty(f_res)
                         finally:
                             if bundle_env is not None:
                                 dispose_unity_env(bundle_env)
                     else:
                         decoded = read_text_file_strictly(fpath)
                         old_txt = decoded.text
-                        if find_text in old_txt:
-                            new_txt = old_txt.replace(find_text, replace_text)
+                        if matcher(old_txt):
+                            new_txt, _ = self._apply_compiled_replacement(
+                                old_txt, matcher, replace_text, is_regex=use_regex, ignore_ws=ignore_ws, count=0
+                            )
                             bak_dir = self._get_backup_dir()
-                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            bak_path = bak_dir / f"{fpath.stem}.bak_{ts}{fpath.suffix}"
+                            bak_path = make_collision_resistant_backup_path(fpath, bak_dir, tag="bak")
                             shutil.copy2(fpath, bak_path)
                             if decoded.has_bom or (decoded.newline and decoded.newline != "\n"):
                                 write_atomic_utf8(
@@ -10067,17 +10310,43 @@ class MisoraApp(tk.Tk):
                                 write_atomic_utf8(fpath, new_txt, encoding=decoded.encoding)
                             per_file_deltas.append((str(fpath), old_txt, new_txt))
                             replaced_files_count += 1
-                            # S5: Synchronize in-memory open_documents cache & checkpoint
-                            f_res = fpath.resolve()
-                            if f_res in self.open_documents:
-                                self.open_documents[f_res]["plain_text"] = new_txt
-                                self.open_documents[f_res]["encoding"] = decoded.encoding
-                                self.open_documents[f_res]["has_bom"] = decoded.has_bom
-                                self.open_documents[f_res]["newline"] = decoded.newline
-                                self._record_saved_checkpoint(f_res, None, plain_text=new_txt)
-                                self._mark_document_dirty(f_res)
                 except Exception as ex:
                     self.logger.error("Search", f"Failed replacing in {fpath}: {ex}")
+
+            # Refresh ALL affected open document caches (including inactive tabs) & do NOT mark disk-saved files dirty
+            for item in per_file_deltas:
+                fpath_str = item[0]
+                fp = Path(fpath_str).resolve()
+                open_k = self._find_open_doc_key(fp)
+                if open_k and open_k in self.open_documents:
+                    entry = self.open_documents[open_k]
+                    is_bdl = len(item) >= 4 and bool(item[3])
+                    if is_bdl:
+                        try:
+                            b_doc, b_env, b_obj, _ = load_bundle_story(fp)
+                            old_env = entry.get("env")
+                            if old_env is not None and old_env is not b_env:
+                                dispose_unity_env(old_env)
+                            entry["doc"] = b_doc
+                            entry["env"] = b_env
+                            entry["obj"] = b_obj
+                            entry["dirty"] = False
+                            self._record_saved_checkpoint(open_k, b_doc)
+                            if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                self.current_doc = b_doc
+                                self.current_unity_env = b_env
+                                self.current_text_obj = b_obj
+                                self.is_dirty = False
+                        except Exception as ex_refresh:
+                            self.logger.error("Search", f"Failed refreshing bundle cache for {fp}: {ex_refresh}")
+                    else:
+                        new_txt = item[2]
+                        entry["plain_text"] = new_txt
+                        entry["dirty"] = False
+                        self._record_saved_checkpoint(open_k, None, plain_text=new_txt)
+                        if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                            self._plain_text_content = new_txt
+                            self.is_dirty = False
 
             if per_file_deltas:
                 self.undo_journal.record(
@@ -10087,8 +10356,10 @@ class MisoraApp(tk.Tk):
                     )
                 )
 
-            if self.current_file_path and self.current_file_path in matching_files:
-                self.open_file(self.current_file_path, reload_from_disk=True)
+            active_k = self._find_open_doc_key(self.current_file_path) if self.current_file_path else None
+            if active_k and any(Path(it[0]).resolve() == active_k for it in per_file_deltas):
+                self._update_views()
+                self._dirty_state_changed()
 
             self.lbl_status.config(text=f"Bulk Replace Complete: Updated {replaced_files_count} file(s).")
             self.logger.info("Search", f"Bulk replaced '{find_text}' -> '{replace_text}' in {replaced_files_count} file(s)")
@@ -10101,6 +10372,16 @@ class MisoraApp(tk.Tk):
         """Undo the most recent operation from MasterUndoJournal (Rule 13, Part B.6)."""
         self._commit_widget_edit()
         cur_fp = str(self.current_file_path) if self.current_file_path else None
+
+        # Inspect next undo op before popping to avoid corrupting undo/redo stack on cancellation (BUG-24)
+        with self.undo_journal._lock:
+            state = self.undo_journal._get_state(cur_fp)
+            next_op = state.undo_stack[-1] if state.undo_stack else None
+
+        if next_op and not self._confirm_closed_files_for_op(next_op, is_undo=True):
+            self.lbl_status.config(text="Undo cancelled.")
+            return
+
         op = self.undo_journal.pop_undo(cur_fp)
         if not op:
             self.lbl_status.config(text="Nothing to undo.")
@@ -10119,6 +10400,16 @@ class MisoraApp(tk.Tk):
         """Redo the most recent undone operation from MasterUndoJournal (Rule 13, Part B.6)."""
         self._commit_widget_edit()
         cur_fp = str(self.current_file_path) if self.current_file_path else None
+
+        # Inspect next redo op before popping to avoid corrupting undo/redo stack on cancellation (BUG-24)
+        with self.undo_journal._lock:
+            state = self.undo_journal._get_state(cur_fp)
+            next_op = state.redo_stack[-1] if state.redo_stack else None
+
+        if next_op and not self._confirm_closed_files_for_op(next_op, is_undo=False):
+            self.lbl_status.config(text="Redo cancelled.")
+            return
+
         op = self.undo_journal.pop_redo(cur_fp)
         if not op:
             self.lbl_status.config(text="Nothing to redo.")
@@ -10270,26 +10561,33 @@ class MisoraApp(tk.Tk):
                         self._restore_bundle_atomic(src_bak, fp)
                         applied_files.append((fp, True, prev_bak, None, False, None))
 
-                        # S9b: Synchronize in-memory cache and checkpoints if open
-                        if fp in self.open_documents:
+                        # S9b & S09: Synchronize in-memory cache using canonical keys 'env' and 'obj'
+                        open_k = self._find_open_doc_key(fp)
+                        if open_k and open_k in self.open_documents:
                             try:
                                 b_doc, b_env, b_obj, _ = load_bundle_story(fp)
-                                old_env = self.open_documents[fp].get("bundle_env")
+                                old_env = self.open_documents[open_k].get("env")
                                 if old_env is not None and old_env is not b_env:
                                     dispose_unity_env(old_env)
-                                self.open_documents[fp]["doc"] = b_doc
-                                self.open_documents[fp]["bundle_env"] = b_env
-                                self.open_documents[fp]["target_object"] = b_obj
-                                self._record_saved_checkpoint(fp, b_doc)
-                            except Exception:
-                                pass
-                            self._mark_document_dirty(fp)
+                                self.open_documents[open_k]["doc"] = b_doc
+                                self.open_documents[open_k]["env"] = b_env
+                                self.open_documents[open_k]["obj"] = b_obj
+                                self.open_documents[open_k]["dirty"] = False
+                                self._record_saved_checkpoint(open_k, b_doc)
+                                if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                    self.current_doc = b_doc
+                                    self.current_unity_env = b_env
+                                    self.current_text_obj = b_obj
+                                    self.is_dirty = False
+                            except Exception as ex_load:
+                                self.logger.error("File I/O", f"Failed reloading bundle cache for {fp}: {ex_load}")
                     else:
                         old_tx = item[1]
                         new_tx = item[2]
                         text_to_set = old_tx if reverse else new_tx
                         prev_text = new_tx if reverse else old_tx
-                        doc_entry = self.open_documents.get(fp, {})
+                        open_k = self._find_open_doc_key(fp)
+                        doc_entry = self.open_documents.get(open_k, {}) if open_k else {}
                         enc = doc_entry.get("encoding")
                         has_bom = doc_entry.get("has_bom")
                         nl = doc_entry.get("newline")
@@ -10309,28 +10607,38 @@ class MisoraApp(tk.Tk):
                             write_atomic_utf8(fp, text_to_set, encoding=enc)
                         applied_files.append((fp, False, prev_text, enc, has_bom, nl))
 
-                        # S5: Synchronize in-memory cache and checkpoints if open
-                        if fp in self.open_documents:
-                            self.open_documents[fp]["plain_text"] = text_to_set
-                            self._record_saved_checkpoint(fp, None, plain_text=text_to_set)
-                            self._mark_document_dirty(fp)
+                        # S5 & S09: Synchronize in-memory cache and checkpoints if open
+                        if open_k and open_k in self.open_documents:
+                            self.open_documents[open_k]["plain_text"] = text_to_set
+                            self.open_documents[open_k]["dirty"] = False
+                            self._record_saved_checkpoint(open_k, None, plain_text=text_to_set)
+                            if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                self._plain_text_content = text_to_set
+                                self.is_dirty = False
             except Exception as ex:
                 self.logger.error("File I/O", f"Failed applying bulk delta: {ex}")
                 # S5/S9b: Rollback applied files in reverse order to ensure all-or-nothing transaction safety
                 for rolled_fp, is_bdl, prev_val, r_enc, r_bom, r_nl in reversed(applied_files):
                     try:
+                        open_k = self._find_open_doc_key(rolled_fp)
                         if is_bdl:
                             self._restore_bundle_atomic(prev_val, rolled_fp)
-                            if rolled_fp in self.open_documents:
+                            if open_k and open_k in self.open_documents:
                                 try:
                                     rb_doc, rb_env, rb_obj, _ = load_bundle_story(rolled_fp)
-                                    old_env = self.open_documents[rolled_fp].get("bundle_env")
+                                    old_env = self.open_documents[open_k].get("env")
                                     if old_env is not None and old_env is not rb_env:
                                         dispose_unity_env(old_env)
-                                    self.open_documents[rolled_fp]["doc"] = rb_doc
-                                    self.open_documents[rolled_fp]["bundle_env"] = rb_env
-                                    self.open_documents[rolled_fp]["target_object"] = rb_obj
-                                    self._record_saved_checkpoint(rolled_fp, rb_doc)
+                                    self.open_documents[open_k]["doc"] = rb_doc
+                                    self.open_documents[open_k]["env"] = rb_env
+                                    self.open_documents[open_k]["obj"] = rb_obj
+                                    self.open_documents[open_k]["dirty"] = False
+                                    self._record_saved_checkpoint(open_k, rb_doc)
+                                    if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                        self.current_doc = rb_doc
+                                        self.current_unity_env = rb_env
+                                        self.current_text_obj = rb_obj
+                                        self.is_dirty = False
                                 except Exception:
                                     pass
                         else:
@@ -10338,9 +10646,13 @@ class MisoraApp(tk.Tk):
                                 write_atomic_utf8(rolled_fp, prev_val, encoding=r_enc, has_bom=r_bom, newline=r_nl)
                             else:
                                 write_atomic_utf8(rolled_fp, prev_val, encoding=r_enc)
-                            if rolled_fp in self.open_documents:
-                                self.open_documents[rolled_fp]["plain_text"] = prev_val
-                                self._record_saved_checkpoint(rolled_fp, None, plain_text=prev_val)
+                            if open_k and open_k in self.open_documents:
+                                self.open_documents[open_k]["plain_text"] = prev_val
+                                self.open_documents[open_k]["dirty"] = False
+                                self._record_saved_checkpoint(open_k, None, plain_text=prev_val)
+                                if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                    self._plain_text_content = prev_val
+                                    self.is_dirty = False
                     except Exception as rb_ex:
                         self.logger.critical("File I/O", f"Rollback failed for '{rolled_fp}': {rb_ex}")
                 messagebox.showerror(
@@ -10349,7 +10661,7 @@ class MisoraApp(tk.Tk):
                 )
                 raise
 
-            if self.current_file_path:
+            if self.current_file_path and self._find_open_doc_key(self.current_file_path) is not None:
                 self.open_file(self.current_file_path, reload_from_disk=True)
 
         if prev_caret:

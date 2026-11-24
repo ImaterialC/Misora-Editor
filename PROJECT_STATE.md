@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S08 Verification Baseline — 2026-11-24):
+Unit Test Suite (S09 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 275 tests across 30 modules (235 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 284 tests across 31 modules (244 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 275 tests (exact disk discovery):
+Test suites included in the 284 tests (exact disk discovery):
+  tests/test_p3_s09_replace_all_backups.py  — 9 S09 multi-file replace-all cache keys, shared matcher, closed-file undo & collision-resistant backups tests (all pass)
   tests/test_p3_s08_search_roots_focus.py   — 6 S08 search match-case/errors/snapshots/spans, bounded project roots & search focus/gutter/no-op keyrelease tests (all pass)
   tests/test_p3_s07_undo_locks_raw.py       — 6 S07 caret paste dirty/lock, mutate-before-undo, non-contiguous cut undo, lock enforcement & read-only raw tests (all pass)
   tests/test_p3_s06_doc_state_save.py       — 5 S06 per-document state/locks, plain-text preview save, LF writes & 0-box save tests (all pass)
@@ -89,6 +90,23 @@ Test suites included in the 275 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S09 Multi-File Replace-All Cache Keys/Shared Matcher/Closed-File Undo & Collision-Resistant Backups (2026-11-24)
+- **Session Scope:** BUG-24, BUG-20 (Track 1 · Group D2).
+- **BUG-24 (`misora.py`):**
+  - Fixed `_apply_delta(BulkFileDelta)` and its rollback error handler to use canonical `open_documents` cache keys `'env'` and `'obj'` (never legacy `'bundle_env'` / `'target_object'`), and disposed old Unity environments via `dispose_unity_env()` to break circular references (`weakref`).
+  - Implemented `_find_open_doc_key()` normalizing path casing and resolution (`os.path.normcase(str(Path(k).resolve()))`) for Windows case-insensitive lookups across all cache lookups, dirty checks, and lock verifications.
+  - In `on_replace_all()`, refreshed in-memory caches across ALL affected open documents (active and inactive tabs), refusing/prompting via `messagebox.askyesno` before overwriting dirty open documents from disk, while ensuring disk-saved files are NOT falsely marked dirty (`entry["dirty"] = False`). Deduplicated candidate paths across multiple search roots.
+  - Implemented shared `_apply_compiled_replacement()` helper operating on match spans from `ProjectSearchEngine._compile_matcher()`, cleanly honoring `Match Case`, `Regex`, and `Ignore Whitespace & {playername}` across Find, `on_replace_next()`, and `on_replace_all()` while preserving `break_char` formatting (`QW-R06`).
+  - Fixed `on_replace_next()` to skip locked boxes in its advance loop and display toast warnings. Enforced Translation Lock on bundle files in multi-file `on_replace_all()`.
+  - Added `_confirm_closed_files_for_op()` and invoked it in `on_undo()` and `on_redo()` BEFORE popping operations from `MasterUndoJournal`, displaying an explicit confirmation dialog listing all affected paths (highlighting closed disk files) and returning `False` on cancellation to preserve undo/redo stack integrity without silent reopening (`AGENTS.md` §16).
+- **BUG-20 (`misora.py` — `QW-B17` + `Grok-N03`):**
+  - Created shared collision-resistant backup helper `make_collision_resistant_backup_path()` combining microsecond timestamp (`%Y%m%d_%H%M%S_%f`), 8-character deterministic SHA-256 hash prefix of the normalized source path, and an existence loop (`<stem>.<tag>_<timestamp_microseconds>_<sha256_path_prefix><suffix>`).
+  - Wired `make_collision_resistant_backup_path()` across all save paths in `on_save()` (text, v2, bundle), `_save_document_entry()`, and `on_replace_all()` (text, bundle original/modified), ensuring same-stem files in different folders saved within the same second/microsecond never collide or overwrite each other.
+- **New Test Suite:** Added `tests/test_p3_s09_replace_all_backups.py` with 7 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 284 tests across 31 modules (244 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s09_replace_all_backups.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/search_engine.py`, `core/xunity_sync.py`, `core/mtl_engine.py`, `core/bundle_io.py`.
 
 ### S08 Search Match-Case/Errors/Snapshots/Spans, Bounded Project Roots & Search Focus/Gutter/No-Op KeyRelease (2026-11-24)
 - **Session Scope:** BUG-21, BUG-22, BUG-23, BUG-30 (Track 1 · Group D1 / DEP-7 part 1).
