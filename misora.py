@@ -1477,6 +1477,7 @@ class MisoraApp(tk.Tk):
         _rpt(0.85, "Applying theme and fonts…")
         # Sync initial widget fonts & colors with saved preferences
         self._apply_theme_and_fonts_live(save=False)
+        self._update_empty_state_visibility()
 
         # Flush config on exit and unhook Win32 WNDPROC cleanly
         self.protocol("WM_DELETE_WINDOW", self._on_app_exit)
@@ -3969,6 +3970,7 @@ class MisoraApp(tk.Tk):
             command=lambda: self._switch_dock_tab("files"),
         )
         self.btn_tab_files.pack(side="left", padx=(2, 2))
+        self.btn_tab_files.bind("<Double-Button-1>", lambda e: self.on_open_file())
 
         self.btn_dock_pin = ttk.Button(
             self.dock_tab_bar,
@@ -4166,6 +4168,24 @@ class MisoraApp(tk.Tk):
             "label_accent"
         )
         self.lbl_gd_title.pack(side="left")
+
+        self.var_dialogue_box_sel = tk.BooleanVar(master=self, value=False)
+        self.cb_dialogue_select = self._tag_role(
+            tk.Checkbutton(
+                gd_header,
+                text="Select Box",
+                variable=self.var_dialogue_box_sel,
+                command=self._on_dialogue_box_sel_toggle,
+                font=("Segoe UI", max(8, u_sz - 2)),
+                bg=t["bg_panel"],
+                fg=t["fg_text"],
+                activebackground=t["bg_panel"],
+                selectcolor=t["bg_editor"],
+                bd=0,
+                cursor="hand2",
+            ),
+            "check_panel"
+        )
 
         self.lbl_box_counter = self._tag_role(
             tk.Label(gd_header, text="Box: 0 / 0", font=("Segoe UI", u_sz), bg=t["bg_panel"], fg=t["fg_muted"]),
@@ -4707,6 +4727,43 @@ class MisoraApp(tk.Tk):
 
         gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
+
+        # Empty State Frame (shown when 0 documents are open; auto-hidden when >=1 document opens)
+        self.empty_state_frame = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
+        empty_center = self._tag_role(tk.Frame(self.empty_state_frame, bg=t["bg_panel"]), "panel")
+        empty_center.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.btn_empty_open = self._tag_role(
+            tk.Button(
+                empty_center,
+                text="📂 Open Files",
+                font=("Segoe UI", max(11, u_sz + 2), "bold"),
+                bg=t["misora_pink"],
+                fg=best_contrast_fg(t["misora_pink"]),
+                activebackground=t["misora_pink_hover"],
+                activeforeground=best_contrast_fg(t["misora_pink"]),
+                relief="raised",
+                bd=2,
+                padx=18,
+                pady=8,
+                cursor="hand2",
+                command=self.on_open_file,
+            ),
+            "ribbon_primary_btn"
+        )
+        self.btn_empty_open.pack(pady=(0, 8))
+
+        self.lbl_empty_dnd_hint = self._tag_role(
+            tk.Label(
+                empty_center,
+                text="or drag & drop .unity3d / .misora workspace / .txt scripts here",
+                font=("Segoe UI", max(9, u_sz - 1)),
+                fg=t["fg_muted"],
+                bg=t["bg_panel"],
+            ),
+            "label_muted"
+        )
+        self.lbl_empty_dnd_hint.pack()
 
         # VIEW 1: Bounded Scrollable Page-by-Page Viewport
         self.gd_scroll_wrap = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
@@ -7031,7 +7088,7 @@ class MisoraApp(tk.Tk):
             pass
         return True
 
-    def open_file(self, file_path: Union[str, Path], reload_from_disk: bool = False) -> None:
+    def open_file(self, file_path: Union[str, Path], reload_from_disk: bool = False, refresh_ui: bool = True) -> None:
         """Open and display a .unity3d bundle or plain-text script file."""
         file_path = Path(file_path).resolve()
         if not file_path.is_file():
@@ -7234,10 +7291,11 @@ class MisoraApp(tk.Tk):
             # Record a fresh saved-state checkpoint for newly loaded documents
             self._record_saved_checkpoint(file_path, staged.get("doc"), staged.get("plain_text", ""))
 
-        self._update_views()
-        self._dirty_state_changed()
-        self._sync_edit_menu_states()
-        self.lbl_status.config(text=staged["status"])
+        if refresh_ui:
+            self._update_views()
+            self._dirty_state_changed()
+            self._sync_edit_menu_states()
+            self.lbl_status.config(text=staged["status"])
 
         if staged["kind"] == "bundle":
             self.logger.info(
@@ -7249,8 +7307,24 @@ class MisoraApp(tk.Tk):
         elif staged["kind"] == "text":
             self.logger.info("File I/O", f"Opened plain text file '{file_path}' ({len(plain_text)} chars)")
 
+    def _update_empty_state_visibility(self) -> None:
+        """Show centered empty-state frame when 0 documents are open; hide when >=1 document opens."""
+        has_docs = bool(self.open_documents) or bool(self.current_doc) or bool(self.current_file_path)
+        if not has_docs:
+            if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_ismapped():
+                self.gd_scroll_wrap.pack_forget()
+            if hasattr(self, "empty_state_frame") and not self.empty_state_frame.winfo_ismapped():
+                self.empty_state_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        else:
+            if hasattr(self, "empty_state_frame") and self.empty_state_frame.winfo_ismapped():
+                self.empty_state_frame.pack_forget()
+            if hasattr(self, "gd_scroll_wrap") and not self.gd_scroll_wrap.winfo_ismapped():
+                self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
     def _update_views(self) -> None:
         """Update Game Display View (Page or Continuous, Raw or Compiled Preview) and Raw AST View."""
+        self._update_empty_state_visibility()
+        self._update_dialogue_select_box_ui()
         compiled = self.var_preview_compiled.get()
 
         if not self.current_doc:
@@ -7733,13 +7807,43 @@ class MisoraApp(tk.Tk):
                 pass
 
     def _on_toggle_select_box_mode(self) -> None:
-        """Toggle multi-box selection mode in continuous view and update UI."""
+        """Toggle multi-box selection mode in both Dialogue and All Script views."""
         enabled = bool(self.var_select_box_mode.get())
         if not enabled:
             self._selected_boxes.clear()
         if self.var_continuous_view.get():
             self._render_continuous_view()
+            if hasattr(self, "cb_dialogue_select") and self.cb_dialogue_select.winfo_exists():
+                self.cb_dialogue_select.pack_forget()
+        else:
+            self._update_dialogue_select_box_ui()
         self.show_toast(f"Select Box mode {'enabled' if enabled else 'disabled'}")
+
+    def _update_dialogue_select_box_ui(self) -> None:
+        """Update inline Select Box checkbox in Dialogue view header."""
+        if not hasattr(self, "cb_dialogue_select") or not self.cb_dialogue_select.winfo_exists():
+            return
+        if not self.var_select_box_mode.get() or self.var_continuous_view.get() or not self.current_doc:
+            self.cb_dialogue_select.pack_forget()
+            return
+        is_box0 = getattr(self, "is_box0_active", False)
+        b_idx = -1 if is_box0 else self.current_box_idx
+        b_num = 0 if is_box0 else (self.current_box_idx + 1)
+        self.var_dialogue_box_sel.set(b_idx in self._selected_boxes)
+        sel_count = len(self._selected_boxes)
+        self.cb_dialogue_select.config(text=f"Select Box #{b_num} ({sel_count} selected)")
+        if not self.cb_dialogue_select.winfo_ismapped():
+            self.cb_dialogue_select.pack(side="left", padx=(10, 0))
+
+    def _on_dialogue_box_sel_toggle(self) -> None:
+        """Toggle selection of current box in Dialogue view."""
+        is_box0 = getattr(self, "is_box0_active", False)
+        b_idx = -1 if is_box0 else self.current_box_idx
+        if self.var_dialogue_box_sel.get():
+            self._selected_boxes.add(b_idx)
+        else:
+            self._selected_boxes.discard(b_idx)
+        self._update_dialogue_select_box_ui()
 
     def _on_toggle_pin_speaker(self) -> None:
         """Toggle persistent speaker pinning across box navigation."""
@@ -7959,6 +8063,7 @@ class MisoraApp(tk.Tk):
             self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
         if hasattr(self, "lbl_segs_badge"):
             self.lbl_segs_badge.config(text=f"{len(box.segs)} segs" if len(box.segs) > 1 else "")
+        self._update_dialogue_select_box_ui()
 
         if hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists() and not self.var_continuous_view.get():
             self.txt_dialogue.config(state="normal")
@@ -8077,7 +8182,7 @@ class MisoraApp(tk.Tk):
             self.current_box_idx = max(0, len(self.current_doc.boxes) - 1)
         self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
-        self._render_continuous_view()
+        self._update_views()
         self._sync_clean_view_to_current_box()
         self.show_toast(f"✂📦 Cut {len(targets)} box(es)")
 
@@ -8160,7 +8265,7 @@ class MisoraApp(tk.Tk):
         self.current_box_idx = ins_idx + len(snaps_to_ins) - 1
         self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
-        self._render_continuous_view()
+        self._update_views()
         self._sync_clean_view_to_current_box()
         self.show_toast(f"📥📦 Pasted {len(snaps_to_ins)} box(es)")
 
@@ -8386,6 +8491,37 @@ class MisoraApp(tk.Tk):
                 box0_border = "#bca0e8" if self._is_light_theme() else "#4a3556"
                 card_0 = tk.Frame(self.cont_stream_frame, bg=box0_bg, highlightbackground=box0_border, highlightthickness=1)
                 hdr_0 = tk.Frame(card_0, bg=box0_bg, padx=4, pady=1)
+
+                slot_cb_0 = tk.Frame(hdr_0, width=22, height=18, bg=box0_bg)
+                slot_cb_0.pack_propagate(False)
+                slot_cb_0.pack(side="left", padx=(0, 2))
+                cb_sel_0 = None
+                if self.var_select_box_mode.get():
+                    var_box0_sel = tk.BooleanVar(master=self, value=(-1 in self._selected_boxes))
+                    def _make_box0_sel_cmd(v):
+                        def _cmd():
+                            if v.get():
+                                self._selected_boxes.add(-1)
+                            else:
+                                self._selected_boxes.discard(-1)
+                        return _cmd
+                    cb_sel_0 = tk.Checkbutton(
+                        slot_cb_0,
+                        variable=var_box0_sel,
+                        command=_make_box0_sel_cmd(var_box0_sel),
+                        bg=box0_bg,
+                        activebackground=box0_bg,
+                        selectcolor=t["bg_panel"],
+                        bd=0,
+                        cursor="hand2",
+                    )
+                    cb_sel_0.pack(fill="both", expand=True)
+                    cb_sel_0.bind("<MouseWheel>", self._on_cont_mousewheel)
+
+                slot_lock_0 = tk.Frame(hdr_0, width=18, height=18, bg=box0_bg)
+                slot_lock_0.pack_propagate(False)
+                slot_lock_0.pack(side="left", padx=(0, 2))
+
                 lbl_badge_0 = tk.Label(hdr_0, text="◆ [BOX #000]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=box0_bg)
                 lbl_badge_0.pack(side="left")
                 lbl_title_0 = tk.Label(hdr_0, text="[STORY METADATA & SYNOPSIS]", font=(d_fam, max(8, d_sz - 3), "bold"), fg=t["fg_text"], bg=box0_bg)
@@ -8438,6 +8574,8 @@ class MisoraApp(tk.Tk):
                     "txt": txt_summary,
                     "lbl_badge": lbl_badge_0,
                     "lbl_title": lbl_title_0,
+                    "slot_cb": slot_cb_0,
+                    "cb_sel": cb_sel_0,
                 }
 
             # 2. Cards #1..N: Dialogue Box Cards
@@ -8447,7 +8585,11 @@ class MisoraApp(tk.Tk):
                 card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
                 hdr = tk.Frame(card_frame, bg=hdr_bg, padx=4, pady=0)
 
-                # Select Box Checkbox (when Select Box Mode is active)
+                # Fixed reserved checkbox slot (prevents header shift when Select Box toggles)
+                slot_cb = tk.Frame(hdr, width=22, height=18, bg=hdr_bg)
+                slot_cb.pack_propagate(False)
+                slot_cb.pack(side="left", padx=(0, 2))
+
                 if self.var_select_box_mode.get():
                     var_box_sel = tk.BooleanVar(master=self, value=(i in self._selected_boxes))
                     def _make_box_sel_cmd(b_idx, v):
@@ -8458,7 +8600,7 @@ class MisoraApp(tk.Tk):
                                 self._selected_boxes.discard(b_idx)
                         return _cmd
                     cb_sel = tk.Checkbutton(
-                        hdr,
+                        slot_cb,
                         variable=var_box_sel,
                         command=_make_box_sel_cmd(i, var_box_sel),
                         bg=hdr_bg,
@@ -8467,8 +8609,24 @@ class MisoraApp(tk.Tk):
                         bd=0,
                         cursor="hand2",
                     )
-                    cb_sel.pack(side="left", padx=(0, 2))
+                    cb_sel.pack(fill="both", expand=True)
                     cb_sel.bind("<MouseWheel>", self._on_cont_mousewheel)
+
+                # Translation Lock indicator immediately to the RIGHT of checkbox slot (fixed width=2)
+                is_locked = i in getattr(self, "_locked_boxes", set())
+                lbl_lock = tk.Label(
+                    hdr,
+                    text="🔒" if is_locked else "",
+                    font=("Segoe UI", max(7, d_sz - 4)),
+                    fg=t["accent_yellow"],
+                    bg=hdr_bg,
+                    width=2,
+                    cursor="hand2",
+                )
+                lbl_lock.pack(side="left", padx=(0, 2))
+                lbl_lock.bind("<Button-1>", lambda e, b_idx=i: self._on_toggle_card_lock(b_idx))
+                lbl_lock.bind("<MouseWheel>", self._on_cont_mousewheel)
+                create_tooltip(lbl_lock, "Click to toggle Translation Lock (Ctrl+L)")
 
                 lbl_badge = tk.Label(hdr, text=f"◆ [BOX #{i+1:03d}]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=hdr_bg)
                 lbl_badge.pack(side="left")
@@ -8482,11 +8640,6 @@ class MisoraApp(tk.Tk):
                 vc_text = f"♪ {box.voice_cue}" if box.voice_cue else ""
                 lbl_vc = tk.Label(hdr, text=vc_text, font=("Segoe UI", max(7, d_sz - 4)), fg=t["accent_blue"], bg=hdr_bg)
                 lbl_vc.pack(side="left", padx=(2, 4))
-
-                # Translation Lock indicator (Rule 20 D8)
-                is_locked = i in getattr(self, "_locked_boxes", set())
-                lbl_lock = tk.Label(hdr, text="🔒" if is_locked else "", font=("Segoe UI", max(7, d_sz - 4)), fg=t["accent_yellow"], bg=hdr_bg)
-                lbl_lock.pack(side="left", padx=(2, 4))
 
                 if len(box.segs) > 1:
                     lbl_segs = tk.Label(hdr, text=f"{len(box.segs)} segs", font=("Segoe UI", max(7, d_sz - 4), "bold"), fg=t["misora_pink"], bg=hdr_bg)
@@ -8588,6 +8741,8 @@ class MisoraApp(tk.Tk):
                     "lbl_badge": lbl_badge,
                     "lbl_sp": lbl_sp,
                     "lbl_vc": lbl_vc,
+                    "slot_cb": slot_cb,
+                    "lbl_lock": lbl_lock,
                 }
 
             self._highlight_continuous_matches()
@@ -9132,6 +9287,16 @@ class MisoraApp(tk.Tk):
             if b_uid is not None and b_uid in getattr(self, "_locked_box_uids", set()):
                 return True
         return box_idx in getattr(self, "_locked_boxes", set())
+
+    def _on_toggle_card_lock(self, box_idx: int) -> None:
+        """Toggle Translation Lock on a specific dialogue box card."""
+        if not self.current_doc or not self.current_doc.boxes:
+            return
+        if not (0 <= box_idx < len(self.current_doc.boxes)):
+            return
+        self.current_box_idx = box_idx
+        self.is_box0_active = False
+        self.on_toggle_lock_current_box()
 
     def on_toggle_lock_current_box(self) -> None:
         """Toggle Translation Lock on active dialogue box (Ctrl+L / Rule 20 D8 / S06)."""
@@ -10095,7 +10260,7 @@ class MisoraApp(tk.Tk):
 
     def on_open_file(self) -> None:
         init_dir = str(self.last_opened_dir) if getattr(self, "last_opened_dir", None) and self.last_opened_dir.exists() else None
-        f = filedialog.askopenfilename(
+        raw_files = filedialog.askopenfilenames(
             initialdir=init_dir,
             title="Open Story Asset or Script",
             filetypes=[
@@ -10105,9 +10270,30 @@ class MisoraApp(tk.Tk):
                 ("All Files", "*.*")
             ]
         )
-        if f:
-            self.last_opened_dir = Path(f).parent
-            self.open_file(f)
+        if not raw_files:
+            return
+        if isinstance(raw_files, str):
+            files = [raw_files] if raw_files else []
+        else:
+            files = [f for f in raw_files if f]
+        if not files:
+            return
+
+        opened_any = False
+        last_success: Optional[Path] = None
+        for f in files:
+            try:
+                p = Path(f).resolve()
+                self.open_file(p, refresh_ui=False)
+                if p in self.open_documents:
+                    opened_any = True
+                    last_success = p
+            except Exception as e:
+                self.logger.exception(f"Failed to open '{f}':", e)
+
+        if opened_any and last_success is not None:
+            self.last_opened_dir = last_success.parent
+            self.open_file(last_success, refresh_ui=True)
             self._save_user_prefs(silent=True)
 
     def on_open_folder(self) -> None:
@@ -11136,29 +11322,52 @@ class MisoraApp(tk.Tk):
             self.btn_tab_files.configure(bg=t["bg_panel"], fg=normal_fg)
 
     def _toggle_dock_collapse(self) -> None:
-        """Toggle left dock between collapsed and expanded width."""
+        """Toggle left dock between collapsed and expanded width strictly via h_paned."""
         if getattr(self, "_dock_collapsed", False):
             # Expand dock
             self._dock_collapsed = False
             target_w = getattr(self, "_left_dock_width", 340) or 340
-            self.h_paned.paneconfigure(self.left_frame, minsize=160)
-            self.h_paned.sash_place(0, target_w, 0)
             if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
+                self.btn_dock_pin.pack_forget()
+            if hasattr(self, "btn_tab_search") and self.btn_tab_search.winfo_exists():
+                self.btn_tab_search.pack(side="left", padx=(2, 2))
+            if hasattr(self, "btn_tab_files") and self.btn_tab_files.winfo_exists():
+                self.btn_tab_files.pack(side="left", padx=(2, 2))
+            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
+                self.btn_dock_pin.pack(side="right", padx=(2, 2))
                 self.btn_dock_pin.configure(text="📌")
             if hasattr(self, "_dock_pin_tooltip"):
                 self._dock_pin_tooltip.text = "Collapse Left Panel"
+            if getattr(self, "_left_dock_tab", "search") == "files":
+                if hasattr(self, "tab_files_frame") and not self.tab_files_frame.winfo_ismapped():
+                    self.tab_files_frame.pack(fill="both", expand=True)
+            else:
+                if hasattr(self, "tab_search_frame") and not self.tab_search_frame.winfo_ismapped():
+                    self.tab_search_frame.pack(fill="both", expand=True)
+            self.h_paned.paneconfigure(self.left_frame, minsize=160)
+            self.h_paned.sash_place(0, target_w, 0)
         else:
             # Collapse dock
             current_w = self.left_frame.winfo_width()
             if current_w >= 100:
                 self._left_dock_width = current_w
             self._dock_collapsed = True
-            self.h_paned.paneconfigure(self.left_frame, minsize=0)
-            self.h_paned.sash_place(0, 36, 0)
+            if hasattr(self, "btn_tab_search") and self.btn_tab_search.winfo_exists():
+                self.btn_tab_search.pack_forget()
+            if hasattr(self, "btn_tab_files") and self.btn_tab_files.winfo_exists():
+                self.btn_tab_files.pack_forget()
+            if hasattr(self, "tab_search_frame") and self.tab_search_frame.winfo_ismapped():
+                self.tab_search_frame.pack_forget()
+            if hasattr(self, "tab_files_frame") and self.tab_files_frame.winfo_ismapped():
+                self.tab_files_frame.pack_forget()
             if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
-                self.btn_dock_pin.configure(text="◀")
+                self.btn_dock_pin.pack_forget()
+                self.btn_dock_pin.pack(side="left", padx=2, pady=2)
+                self.btn_dock_pin.configure(text="▶")
             if hasattr(self, "_dock_pin_tooltip"):
                 self._dock_pin_tooltip.text = "Expand Left Panel"
+            self.h_paned.paneconfigure(self.left_frame, minsize=0)
+            self.h_paned.sash_place(0, 36, 0)
 
     def _refresh_opened_files_list(self) -> None:
         """Re-render the list of cached opened files in the Opened Files dock tab."""

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S15 — Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open
+- **Session Scope:** BUG-41, FEAT-05, FEAT-06, FEAT-07 (Track 2 · Group G2 (post-DEP-4, DEP-9)).
+- **BUG-41 & FEAT-05 (`misora.py` — U-B11, U-B12, U-B29):**
+  - Enabled `Select Box` mode in Dialogue view with inline header checkbutton (`cb_dialogue_select`: `Select Box #N (X selected)`), synced across box navigation, Copy/Cut operations, and view switches.
+  - Restored Box 0 (`-1`) Select Box checkbutton on Card #0 (`hdr_0`) in All Script view.
+  - Enclosed per-card Select Box checkbuttons inside a fixed-width `slot_cb` container (`width=22`, `pack_propagate(False)`) and relocated the Translation Lock indicator (`lbl_lock`, fixed `width=2`, clickable to toggle lock) immediately to the right of `slot_cb`, eliminating horizontal header shifting when toggling `Select Box` mode or Translation Lock.
+- **FEAT-06 (`misora.py` — U-B15):**
+  - Extended `_toggle_dock_collapse()` into a clean pane-based collapsible left drawer inside `h_paned` (zero `place()` overlays): hides tab buttons and body frames on collapse, places expand toggle (`▶`) cleanly at `x < 36` within the collapsed width, and restores tabs and content on expand.
+- **FEAT-07 (`misora.py` — U-B16, U-B19, U-B20):**
+  - Added `empty_state_frame` with centered `"📂 Open Files"` button and drag-and-drop workspace hint shown when 0 documents are open and auto-hidden when >=1 document is opened.
+  - Bound `<Double-Button-1>` on `btn_tab_files` (`Opened Files` tab) to `on_open_file()`.
+  - Updated `on_open_file()` to `filedialog.askopenfilenames()`, preserving S1 staged semantics and performing ONE batched UI refresh (`_update_views()`) at the end.
+- **Test Suite:** Added `tests/test_p3_s15_selection_drawer_open.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing).
+- **Files Modified:** `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s15_selection_drawer_open.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/*.py`.
+
 ### S14 — Search Bar 5-Col Grid, Hide Current Dir, Player Icon/No `[-]`, VIEW Group, Toggle NGUI Ribbon & `Raw Commands`
 - **Session Scope:** BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04 (Track 2 · Group G1 (post-DEP-3)).
 - **BUG-38 (`misora.py` — U-B1, U-B2):**

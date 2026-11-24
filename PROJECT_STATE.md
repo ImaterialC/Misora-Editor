@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S14 Verification Baseline — 2026-11-25):
+Unit Test Suite (S15 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 313 tests across 36 modules (273 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 317 tests across 37 modules (277 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 313 tests (exact disk discovery):
+Test suites included in the 317 tests (exact disk discovery):
+  tests/test_p3_s15_selection_drawer_open.py — 4 S15 select box both views, reserved lock slot, collapsible left drawer, empty state & batched multi-open tests (all pass)
   tests/test_p3_s14_toolbar_search_ui.py    — 5 S14 search grid 5-col alignment, scope current widget hiding, player icon / ribbon cleanup, and responsive toolbars tests (all pass)
   tests/test_p3_s13_ribbon_shortcuts.py     — 4 S13 continuous ribbon/size/dirty sync, shortcut conflicts, complete tooltips & Ctrl+H hygiene tests (all pass)
   tests/test_p3_s12_lifecycle_security.py   — 7 S12 logger flush barrier, DPAPI fail-closed, reload env disposal, deferred startup & splash safety tests (all pass)
@@ -101,9 +102,23 @@ Test suites included in the 313 tests (exact disk discovery):
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
 
-### Track 2 Progress: Group G1 (S14) COMPLETE
-- **Status:** S14 is 100% COMPLETE (BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04).
-- **Next Session:** S15 (CSIF Roundtrip & Sparse Addressing).
+### Track 2 Progress: Group G2 (S15) COMPLETE
+- **Status:** S15 is 100% COMPLETE (BUG-41, FEAT-05, FEAT-06, FEAT-07).
+- **Next Session:** S16 (`.misora` Workspace Serialization & Schema).
+
+### S15 Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open (2026-11-25)
+- **Session Scope:** BUG-41, FEAT-05, FEAT-06, FEAT-07 (Track 2 · Group G2 (post-DEP-4, DEP-9)).
+- **BUG-41 & FEAT-05 (`misora.py` — U-B11, U-B12, U-B29):**
+  - Enabled `Select Box` mode in Dialogue view with inline header checkbutton (`cb_dialogue_select`: `Select Box #N (X selected)`), synced across box navigation, Copy/Cut, and view switches.
+  - Restored Box 0 (`-1`) Select Box checkbutton on Card #0 (`hdr_0`) in All Script view.
+  - Enclosed per-card Select Box checkbuttons inside a fixed-width `slot_cb` container (`width=22`, `pack_propagate(False)`) and relocated `lbl_lock` (fixed `width=2`, clickable to toggle lock) immediately to the right of `slot_cb`, eliminating horizontal header shifting on toggles.
+- **FEAT-06 (`misora.py` — U-B15):**
+  - Extended `_toggle_dock_collapse()` into a clean pane-based collapsible left drawer inside `h_paned` (zero `place()` overlays): hides tab buttons and body frames on collapse, places expand toggle (`▶`) cleanly at `x < 36`, and restores tabs/content on expand.
+- **FEAT-07 (`misora.py` — U-B16, U-B19, U-B20):**
+  - Added `empty_state_frame` with centered `"📂 Open Files"` button and drag-and-drop hint shown when 0 documents are open and auto-hidden when >=1 document is opened.
+  - Bound `<Double-Button-1>` on `btn_tab_files` to `on_open_file()`.
+  - Updated `on_open_file()` to `filedialog.askopenfilenames()`, preserving S1 staged semantics and performing ONE batched UI refresh (`_update_views()`) at the end.
+- **New Test Suite:** Added `tests/test_p3_s15_selection_drawer_open.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 317 tests across 37 modules (277 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### S14 Search Bar 5-Col Grid, Hide Current Dir, Player Icon/No `[-]`, VIEW Group, Toggle NGUI Ribbon & `Raw Commands` (2026-11-25)
 - **Session Scope:** BUG-38, BUG-39, FEAT-01, FEAT-02, FEAT-03, FEAT-04 (Track 2 · Group G1 (post-DEP-3)).
