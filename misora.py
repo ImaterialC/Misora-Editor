@@ -2554,6 +2554,14 @@ class MisoraApp(tk.Tk):
         except Exception:
             self._toast_active = False
 
+    def _sweep_cstyle_tags(self, widget: Optional[tk.Text]) -> None:
+        """Delete all cached compiled NGUI style tags (`cstyle_*`) from `widget` (GEM-E03)."""
+        if not widget or not widget.winfo_exists():
+            return
+        for tag_name in list(widget.tag_names()):
+            if tag_name.startswith("cstyle_"):
+                widget.tag_delete(tag_name)
+
     def _configure_editor_rich_tags(self, widget: tk.Text, d_fam: str, d_sz: int) -> None:
         """Configure syntax highlight & compiled NGUI preview tags on a dialogue text widget."""
         t = self.theme
@@ -2598,9 +2606,7 @@ class MisoraApp(tk.Tk):
             foreground=hl_fg,
             underline=True,
         )
-        for tag_name in list(widget.tag_names()):
-            if tag_name.startswith("cstyle_"):
-                widget.tag_delete(tag_name)
+        self._sweep_cstyle_tags(widget)
         widget.tag_raise("line_overflow")
         widget.tag_raise("ngui_tag")
         widget.tag_raise("search_hit")
@@ -5013,6 +5019,38 @@ class MisoraApp(tk.Tk):
         self.txt_dialogue.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
         self.txt_dialogue.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
 
+        # Code-Drawn Game-Style Dialogue Preview (S18 / FEAT-10, NO-02, NO-12)
+        self.dialogue_preview_canvas = self._tag_role(
+            tk.Canvas(text_container, bg=t["bg_panel"], highlightthickness=0, bd=0),
+            "panel",
+        )
+        self.txt_dialogue_preview = tk.Text(
+            self.dialogue_preview_canvas,
+            wrap="none",
+            height=3,
+            font=(d_fam, d_sz),
+            bg="#fffcf4",
+            fg=best_contrast_fg("#fffcf4", "#2b2118", "#1a1a1a"),
+            insertbackground=t["misora_pink"],
+            selectbackground=t["highlight_bg"],
+            selectforeground=t["misora_pink"],
+            bd=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
+            spacing1=2,
+            spacing3=2,
+            undo=False,
+            state="disabled",
+        )
+        self._dialogue_preview_win = self.dialogue_preview_canvas.create_window(
+            0, 0, window=self.txt_dialogue_preview, anchor="nw"
+        )
+        self.dialogue_preview_canvas.bind("<MouseWheel>", self._on_gd_mousewheel)
+        self.txt_dialogue_preview.bind("<MouseWheel>", self._on_gd_mousewheel)
+        self.dialogue_preview_canvas.bind("<Configure>", self._on_dialogue_preview_configure)
+        self._preview_saved_editor_state = None
+
         # Dedicated Box 0 Story Metadata Panel (Option 1)
         self.panel_box0_metadata = self._tag_role(tk.Frame(text_container, bg=t["bg_panel"]), "panel")
 
@@ -5700,9 +5738,156 @@ class MisoraApp(tk.Tk):
             self.ribbon_frame.pack_forget()
         self._save_user_prefs(silent=True)
 
+    def _on_dialogue_preview_configure(self, event: Optional[tk.Event] = None) -> None:
+        """Keep Dialogue Preview scrollregion synced on resize without accumulating canvas items."""
+        if not hasattr(self, "dialogue_preview_canvas") or not self.dialogue_preview_canvas.winfo_exists():
+            return
+        try:
+            bbox = self.dialogue_preview_canvas.bbox("all")
+            if bbox:
+                self.dialogue_preview_canvas.configure(scrollregion=bbox)
+        except Exception:
+            pass
+
+    def _hide_dialogue_preview_and_restore_editor(self) -> None:
+        """Hide Dialogue Preview canvas and restore ruler_clean above clean_editor_row in exact pack order."""
+        if hasattr(self, "dialogue_preview_canvas") and self._is_widget_packed(self.dialogue_preview_canvas):
+            self.dialogue_preview_canvas.pack_forget()
+        if hasattr(self, "clean_editor_row") and not self._is_widget_packed(self.clean_editor_row):
+            if self.show_column_ruler and hasattr(self, "ruler_clean"):
+                if self._is_widget_packed(self.ruler_clean):
+                    self.ruler_clean.pack_forget()
+                self.ruler_clean.pack(side="top", fill="x", pady=(0, 2))
+            self.clean_editor_row.pack(fill="both", expand=True)
+
+    def _render_dialogue_preview_frame(self, speaker: str, raw_text: str) -> None:
+        """Render code-drawn Priconne-style dialogue frame on single Canvas + embedded read-only Text."""
+        if not hasattr(self, "dialogue_preview_canvas") or not self.dialogue_preview_canvas.winfo_exists():
+            return
+
+        canvas = self.dialogue_preview_canvas
+        txt_w = self.txt_dialogue_preview
+        t = self.theme
+        d_fam = getattr(self, "dialogue_font_family", self.prefs.get("dialogue_font_family", "Consolas"))
+        d_sz = int(getattr(self, "dialogue_font_size", self.prefs.get("dialogue_font_size", 11)))
+
+        canvas.configure(bg=t["bg_panel"])
+        canvas.delete("preview_frame")
+
+        metrics = self._measure_dialogue_metrics(raw_text)
+        f = self._get_dialogue_measure_font()
+        safe_w = metrics["safe_w"]
+        line_h = max(16, int(f.metrics("linespace") or 18) + 4)
+        safe_h = line_h * 3
+
+        pad_x = 14
+        pad_y = 10
+        frame_x = 12
+        frame_y = 26
+        frame_w = safe_w + pad_x * 2
+        frame_h = safe_h + pad_y * 2
+
+        cream_bg = "#fffcf4"
+        outer_gold = "#d4af37"
+        inner_gold = "#e6c875"
+        plate_bg = "#3b2c4e"
+        plate_fg = best_contrast_fg(plate_bg, "#ffffff", "#fffcf4")
+        text_fg = best_contrast_fg(cream_bg, "#2b2118", "#1a1a1a")
+        arrow_fg = "#ff5c93"
+
+        # Priconne-style double border (pure Tk Canvas primitives, zero AtlasAdv sprites)
+        canvas.create_rectangle(
+            frame_x, frame_y, frame_x + frame_w, frame_y + frame_h,
+            fill=cream_bg, outline=outer_gold, width=2, tags="preview_frame",
+        )
+        canvas.create_rectangle(
+            frame_x + 4, frame_y + 4, frame_x + frame_w - 4, frame_y + frame_h - 4,
+            fill="", outline=inner_gold, width=1, tags="preview_frame",
+        )
+
+        # Name plate
+        sp_label = speaker.strip() if speaker and speaker.strip() else "(Narration)"
+        plate_w = max(96, int(f.measure(sp_label)) + 24)
+        plate_x1 = frame_x + 12
+        plate_y1 = frame_y - 14
+        plate_x2 = plate_x1 + plate_w
+        plate_y2 = frame_y + 10
+        canvas.create_rectangle(
+            plate_x1, plate_y1, plate_x2, plate_y2,
+            fill=plate_bg, outline=outer_gold, width=1, tags="preview_frame",
+        )
+        canvas.create_text(
+            (plate_x1 + plate_x2) // 2, (plate_y1 + plate_y2) // 2,
+            text=sp_label, fill=plate_fg, font=(d_fam, max(8, d_sz - 1), "bold"),
+            tags="preview_frame",
+        )
+
+        # Static pink ▼ indicator at bottom-right of calibrated safe frame
+        canvas.create_text(
+            frame_x + frame_w - 14, frame_y + frame_h - 12,
+            text="▼", fill=arrow_fg, font=(d_fam, max(8, d_sz - 2), "bold"),
+            tags="preview_frame",
+        )
+
+        # Size embedded Text so >50d lines and 4+ lines visibly bleed past the calibrated frame
+        max_px = max(safe_w, max((ln["pixel_width"] for ln in metrics["lines"]), default=0))
+        line_cnt = max(3, metrics["line_count"])
+        win_w = max_px + 24
+        txt_x = frame_x + pad_x
+        txt_y = frame_y + pad_y
+
+        txt_w.config(state="normal")
+        txt_w.configure(
+            wrap="none",
+            height=line_cnt,
+            font=(d_fam, d_sz),
+            bg=cream_bg,
+            fg=text_fg,
+            selectbackground=t["highlight_bg"],
+            selectforeground=t["misora_pink"],
+        )
+        txt_w.delete("1.0", tk.END)
+        self._configure_editor_rich_tags(txt_w, d_fam, d_sz)
+        self._insert_compiled_ngui_text(txt_w, "1.0", raw_text)
+        self._apply_overflow_highlights(txt_w)
+        txt_w.config(state="disabled")
+
+        canvas.coords(self._dialogue_preview_win, txt_x, txt_y)
+        canvas.itemconfigure(self._dialogue_preview_win, width=win_w)
+        canvas.tag_raise(self._dialogue_preview_win)
+        canvas.tag_raise("preview_frame")
+
+        total_w = max(frame_x + frame_w + 16, txt_x + win_w + 12)
+        total_h = max(frame_y + frame_h + 16, txt_y + line_cnt * line_h + 16)
+        canvas.configure(width=total_w, height=total_h, scrollregion=(0, 0, total_w, total_h))
+
     def _on_toggle_preview_compiled(self) -> None:
         """Toggle between editable raw NGUI tags and compiled visual preview."""
         if self.var_preview_compiled.get():
+            if hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists():
+                try:
+                    caret = self.txt_dialogue.index("insert")
+                except tk.TclError:
+                    caret = "1.0"
+                try:
+                    sel_range = (
+                        self.txt_dialogue.index("sel.first"),
+                        self.txt_dialogue.index("sel.last"),
+                    )
+                except tk.TclError:
+                    sel_range = None
+                try:
+                    y_top = float(self.txt_dialogue.yview()[0])
+                except Exception:
+                    y_top = 0.0
+                self._preview_saved_editor_state = (
+                    self.current_file_path,
+                    self.current_box_idx,
+                    getattr(self, "is_box0_active", False),
+                    caret,
+                    sel_range,
+                    y_top,
+                )
             self.lbl_status.config(
                 text="Compiled Attribute Preview ON (read-only) — uncheck 'Compiled' to edit raw tags."
             )
@@ -5712,6 +5897,27 @@ class MisoraApp(tk.Tk):
             )
         self._update_top_header_title()
         self._update_views()
+
+        if not self.var_preview_compiled.get():
+            saved = getattr(self, "_preview_saved_editor_state", None)
+            self._preview_saved_editor_state = None
+            if (
+                saved
+                and hasattr(self, "txt_dialogue")
+                and self.txt_dialogue.winfo_exists()
+                and saved[0] == self.current_file_path
+                and saved[1] == self.current_box_idx
+                and saved[2] == getattr(self, "is_box0_active", False)
+            ):
+                _, _, _, caret, sel_range, y_top = saved
+                try:
+                    self.txt_dialogue.mark_set("insert", caret)
+                    if sel_range:
+                        self.txt_dialogue.tag_remove("sel", "1.0", tk.END)
+                        self.txt_dialogue.tag_add("sel", sel_range[0], sel_range[1])
+                    self.txt_dialogue.yview_moveto(y_top)
+                except tk.TclError:
+                    pass
 
     def _get_or_create_compiled_style_tag(
         self,
@@ -5725,8 +5931,8 @@ class MisoraApp(tk.Tk):
         font_scale: float = 1.0,
     ) -> str:
         """Return a cached Tkinter tag name configured with the requested compiled NGUI style."""
-        d_fam = self.prefs.get("dialogue_font_family", "Segoe UI")
-        d_sz = int(self.prefs.get("dialogue_font_size", 12))
+        d_fam = getattr(self, "dialogue_font_family", self.prefs.get("dialogue_font_family", "Consolas"))
+        d_sz = int(getattr(self, "dialogue_font_size", self.prefs.get("dialogue_font_size", 11)))
         eff_sz = max(7, d_sz - 2) if sub_mode != 0 else d_sz
         if font_scale != 1.0:
             eff_sz = max(7, int(round(eff_sz * font_scale)))
@@ -7466,6 +7672,7 @@ class MisoraApp(tk.Tk):
         compiled = self.var_preview_compiled.get()
 
         if not self.current_doc:
+            self._hide_dialogue_preview_and_restore_editor()
             self._clear_card_registry()  # S4: prune stale card refs on plain-text / empty state
             self.speaker_var.set("")
             self.lbl_box_counter.config(text="Box: 0 / 0")
@@ -7502,6 +7709,7 @@ class MisoraApp(tk.Tk):
             return
 
         if not self.current_doc.boxes:
+            self._hide_dialogue_preview_and_restore_editor()
             self.speaker_var.set("")
             self.lbl_voice_cue.config(text="")
             self.txt_dialogue.config(state="normal")
@@ -7538,6 +7746,8 @@ class MisoraApp(tk.Tk):
                     self._render_continuous_view()
                     self._focus_continuous_box(-1, move_cursor=True)
                 else:
+                    if hasattr(self, "dialogue_preview_canvas") and self._is_widget_packed(self.dialogue_preview_canvas):
+                        self.dialogue_preview_canvas.pack_forget()
                     if hasattr(self, "clean_editor_row") and self._is_widget_packed(self.clean_editor_row):
                         self.clean_editor_row.pack_forget()
                     if hasattr(self, "ruler_clean") and self._is_widget_packed(self.ruler_clean):
@@ -7560,13 +7770,15 @@ class MisoraApp(tk.Tk):
 
         if hasattr(self, "panel_box0_metadata") and self._is_widget_packed(self.panel_box0_metadata):
             self.panel_box0_metadata.pack_forget()
-        if hasattr(self, "clean_editor_row") and not self._is_widget_packed(self.clean_editor_row):
-            if self.show_column_ruler and hasattr(self, "ruler_clean") and not self._is_widget_packed(self.ruler_clean):
-                try:
-                    self.ruler_clean.pack(before=self.clean_editor_row, side="top", fill="x", pady=(0, 2))
-                except Exception:
-                    self.ruler_clean.pack(side="top", fill="x", pady=(0, 2))
-            self.clean_editor_row.pack(fill="both", expand=True)
+        if compiled and not self.var_continuous_view.get():
+            if hasattr(self, "clean_editor_row") and self._is_widget_packed(self.clean_editor_row):
+                self.clean_editor_row.pack_forget()
+            if hasattr(self, "ruler_clean") and self._is_widget_packed(self.ruler_clean):
+                self.ruler_clean.pack_forget()
+            if hasattr(self, "dialogue_preview_canvas") and not self._is_widget_packed(self.dialogue_preview_canvas):
+                self.dialogue_preview_canvas.pack(fill="both", expand=True)
+        else:
+            self._hide_dialogue_preview_and_restore_editor()
 
         total_boxes = len(self.current_doc.boxes)
         self.current_box_idx = max(0, min(self.current_box_idx, total_boxes - 1))
@@ -7596,18 +7808,18 @@ class MisoraApp(tk.Tk):
         if self.var_continuous_view.get():
             self._render_continuous_view()
             self._focus_continuous_box(self.current_box_idx, move_cursor=True)
+        elif compiled:
+            self._render_dialogue_preview_frame(box.speaker, box.clean_text)
+            self.gd_canvas.yview_moveto(0.0)
+            self.gd_inner.update_idletasks()
+            self._sync_gd_scroll_bounds()
         else:
             self.txt_dialogue.config(state="normal")
             self.txt_dialogue.delete("1.0", tk.END)
-            if compiled:
-                self._insert_compiled_ngui_text(self.txt_dialogue, "1.0", box.clean_text)
-                self._apply_overflow_highlights(self.txt_dialogue)
-                self.txt_dialogue.config(state="disabled")
-            else:
-                self.txt_dialogue.insert("1.0", box.clean_text)
-                self._highlight_ngui_tags()
-                self._highlight_dialogue_matches()
-                self._highlight_secret_whitespace(self.txt_dialogue)
+            self.txt_dialogue.insert("1.0", box.clean_text)
+            self._highlight_ngui_tags()
+            self._highlight_dialogue_matches()
+            self._highlight_secret_whitespace(self.txt_dialogue)
             self._update_gutter_clean()
             self.gd_canvas.yview_moveto(0.0)
             self._auto_resize_dialogue_box()
@@ -8580,8 +8792,9 @@ class MisoraApp(tk.Tk):
         compiled = self.var_preview_compiled.get()
         self._suppress_continuous_events = True
         t = self.theme
-        d_fam = self.var_font_family.get() if hasattr(self, "var_font_family") else "Segoe UI"
-        d_sz = int(self.prefs.get("dialogue_font_size", 12))
+        d_fam = getattr(self, "dialogue_font_family", self.prefs.get("dialogue_font_family", "Consolas"))
+        d_sz = int(getattr(self, "dialogue_font_size", self.prefs.get("dialogue_font_size", 11)))
+        safe_w = self._measure_dialogue_metrics("")["safe_w"] if compiled else 0
 
         try:
             self._card_widgets.clear()
@@ -8720,11 +8933,34 @@ class MisoraApp(tk.Tk):
                 }
 
             # 2. Cards #1..N: Dialogue Box Cards
+            cream_bg = "#fffcf4"
+            outer_gold = "#d4af37"
+            inner_gold = "#e6c875"
+            plate_bg = "#3b2c4e"
+            plate_fg = best_contrast_fg(plate_bg, "#ffffff", "#fffcf4")
+            preview_fg = best_contrast_fg(cream_bg, "#2b2118", "#1a1a1a")
+            arrow_fg = "#ff5c93"
+
             for i, box in enumerate(self.current_doc.boxes):
                 is_active = (not getattr(self, "is_box0_active", False) and i == self.current_box_idx)
-                hdr_bg = t["highlight_bg"] if is_active else t["bg_panel"]
-                card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
-                hdr = tk.Frame(card_frame, bg=hdr_bg, padx=4, pady=0)
+                if compiled:
+                    hdr_bg = "#f4e7c3" if is_active else cream_bg
+                    card_frame = tk.Frame(self.cont_stream_frame, bg=outer_gold, padx=2, pady=2)
+                    inner_card = tk.Frame(
+                        card_frame,
+                        bg=cream_bg,
+                        highlightbackground=inner_gold,
+                        highlightthickness=1,
+                        padx=6,
+                        pady=4,
+                    )
+                    inner_card.pack(fill="both", expand=True)
+                    hdr = tk.Frame(inner_card, bg=hdr_bg, padx=4, pady=2)
+                else:
+                    hdr_bg = t["highlight_bg"] if is_active else t["bg_panel"]
+                    card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
+                    inner_card = card_frame
+                    hdr = tk.Frame(card_frame, bg=hdr_bg, padx=4, pady=0)
 
                 # Fixed reserved checkbox slot (prevents header shift when Select Box toggles)
                 slot_cb = tk.Frame(hdr, width=22, height=18, bg=hdr_bg)
@@ -8769,13 +9005,30 @@ class MisoraApp(tk.Tk):
                 lbl_lock.bind("<MouseWheel>", self._on_cont_mousewheel)
                 create_tooltip(lbl_lock, "Click to toggle Translation Lock (Ctrl+L)")
 
-                lbl_badge = tk.Label(hdr, text=f"◆ [BOX #{i+1:03d}]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=hdr_bg)
+                lbl_badge = tk.Label(
+                    hdr,
+                    text=f"◆ [BOX #{i+1:03d}]",
+                    font=("Consolas", max(8, d_sz - 3), "bold"),
+                    fg=best_contrast_fg(hdr_bg, t["misora_pink"], "#7a1c4b") if compiled else t["misora_pink"],
+                    bg=hdr_bg,
+                )
                 lbl_badge.pack(side="left")
 
                 sp_text = box.speaker if box.speaker else "(Narration)"
-                sp_fg = t["fg_text"] if box.speaker else t["fg_muted"]
-                sp_font = (d_fam, max(8, d_sz - 3), "bold" if box.speaker else "italic")
-                lbl_sp = tk.Label(hdr, text=sp_text, font=sp_font, fg=sp_fg, bg=hdr_bg)
+                if compiled:
+                    lbl_sp = tk.Label(
+                        hdr,
+                        text=sp_text,
+                        font=(d_fam, max(8, d_sz - 2), "bold" if box.speaker else "italic"),
+                        fg=plate_fg,
+                        bg=plate_bg,
+                        padx=6,
+                        pady=1,
+                    )
+                else:
+                    sp_fg = t["fg_text"] if box.speaker else t["fg_muted"]
+                    sp_font = (d_fam, max(8, d_sz - 3), "bold" if box.speaker else "italic")
+                    lbl_sp = tk.Label(hdr, text=sp_text, font=sp_font, fg=sp_fg, bg=hdr_bg)
                 lbl_sp.pack(side="left", padx=(6, 4))
 
                 vc_text = f"♪ {box.voice_cue}" if box.voice_cue else ""
@@ -8788,12 +9041,12 @@ class MisoraApp(tk.Tk):
 
                 hdr.pack(fill="x", pady=0)
 
-                # Editor Row with dynamic line-number gutter
-                editor_row = tk.Frame(card_frame, bg=t["bg_panel"])
+                # Editor Row with dynamic line-number gutter (or lightweight Game-Style Preview body)
+                editor_row = tk.Frame(inner_card, bg=cream_bg if compiled else t["bg_panel"])
                 editor_row.pack(fill="x", padx=0, pady=0)
 
                 line_count = max(1, box.clean_text.count("\n") + 1)
-                eff_height = max(2, min(10, line_count))
+                eff_height = max(3, line_count) if compiled else max(2, min(10, line_count))
 
                 gutter = tk.Text(
                     editor_row,
@@ -8815,22 +9068,22 @@ class MisoraApp(tk.Tk):
                 gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
                 self._apply_gutter_overflow_tag(gutter)
                 gutter.config(state="disabled")
-                if self.show_line_numbers:
+                if self.show_line_numbers and not compiled:
                     gutter.pack(side="left", fill="y", padx=(0, 2))
 
                 txt = tk.Text(
                     editor_row,
-                    wrap="word",
+                    wrap="none" if compiled else "word",
                     undo=False,
                     height=eff_height,
                     font=(d_fam, d_sz),
-                    bg=t["bg_editor"],
-                    fg=t["fg_text"],
+                    bg=cream_bg if compiled else t["bg_editor"],
+                    fg=preview_fg if compiled else t["fg_text"],
                     insertbackground=t["misora_pink"],
                     selectbackground=t["highlight_bg"],
                     selectforeground=t["misora_pink"],
-                    bd=1,
-                    relief="solid",
+                    bd=0 if compiled else 1,
+                    relief="flat" if compiled else "solid",
                     highlightthickness=0,
                     padx=8,
                     pady=3,
@@ -8847,6 +9100,22 @@ class MisoraApp(tk.Tk):
                     self._highlight_ngui_tags_for_widget(txt)
 
                 txt.pack(side="left", fill="x", expand=True)
+
+                if compiled:
+                    footer_row = tk.Frame(inner_card, bg=cream_bg)
+                    footer_row.pack(fill="x", pady=(2, 0))
+                    safe_bar = tk.Frame(footer_row, width=safe_w, height=2, bg=inner_gold)
+                    safe_bar.pack(side="left", anchor="w")
+                    lbl_arrow = tk.Label(
+                        footer_row,
+                        text="▼",
+                        font=(d_fam, max(8, d_sz - 2), "bold"),
+                        fg=arrow_fg,
+                        bg=cream_bg,
+                    )
+                    lbl_arrow.pack(side="right", padx=(4, 2))
+                    for fw in (inner_card, footer_row, safe_bar, lbl_arrow):
+                        fw.bind("<MouseWheel>", self._on_cont_mousewheel)
 
                 # Bindings on card widgets
                 for w in (card_frame, hdr, lbl_badge, lbl_sp, lbl_vc, editor_row, gutter, txt):

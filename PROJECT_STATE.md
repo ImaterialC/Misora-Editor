@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S17 Verification Baseline — 2026-11-25):
+Unit Test Suite (S18 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 323 tests across 39 modules (283 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 326 tests across 40 modules (286 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 323 tests (exact disk discovery):
+Test suites included in the 326 tests (exact disk discovery):
+  tests/test_p3_s18_game_preview.py         — 3 S18 code-drawn Dialogue Preview & All Script Preview (wrap='none', bleed, cstyle_* sweep, no AtlasAdv) tests (all pass)
   tests/test_p3_s17_pixel_rulers.py         — 2 S17 pixel-measure helper, Canvas rulers, line 4+ red gutter & char counter removal tests (all pass)
   tests/test_p3_s16_misora_workspace.py     — 4 S16 .misora v1 workspace, stable lock matching & U-B18 overwrite diff tests (all pass)
   tests/test_p3_s15_selection_drawer_open.py — 4 S15 select box both views, reserved lock slot, collapsible left drawer, empty state & batched multi-open tests (all pass)
@@ -103,6 +104,20 @@ Test suites included in the 323 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G4b (S18) COMPLETE
+- **Status:** S18 is 100% COMPLETE (FEAT-10).
+- **Next Session:** S19.
+
+### S18 Code-Drawn Game-Style `Dialogue Preview` & `All Script Preview` (2026-11-25)
+- **Session Scope:** FEAT-10 (`U-B27`, `U-B28` — Lead Ruling #4, `NO-02`, `NO-12`) — Track 2 · Group G4b (post-DEP-2, DEP-8).
+- **Dialogue Preview (`misora.py`):**
+  - Added single `tk.Canvas` (`dialogue_preview_canvas`) + one embedded read-only `tk.Text` (`txt_dialogue_preview`) drawing native Priconne-style double borders, speaker name plate with `best_contrast_fg()`, and static pink `▼` (ZERO `AtlasAdv` sprites).
+  - Consumes S17's `_measure_dialogue_metrics()` (`safe_w` = 50 digit-widths × 3-line safe area) and enforces `wrap="none"` with no font auto-shrinking so >50d lines and 4+ lines visibly bleed past the calibrated frame.
+  - Extracted `_sweep_cstyle_tags()` (`GEM-E03`) to clear `cstyle_*` tags on every render/box switch; preserves caret/selection/`yview` on Preview OFF (guarded by file/box identity), restores `ruler_clean` above `clean_editor_row`, and keeps Box 0 / plain-text / 0-box fallbacks safe (`DEF-04`, `BUG-11`).
+- **All Script Preview (`misora.py`):**
+  - Updated `_render_continuous_view()` compiled mode to render lightweight styled `tk.Frame` cards (zero per-card `tk.Canvas` widgets) with `wrap="none"`, no auto-shrinking, `safe_w` boundary bar, and static pink `▼`.
+- **Tests:** Added `tests/test_p3_s18_game_preview.py` (2 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 326 tests across 40 modules (286 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G4a (S17) COMPLETE
 - **Status:** S17 is 100% COMPLETE (BUG-40, FEAT-09).

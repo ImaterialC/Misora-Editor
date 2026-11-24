@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S18 — Code-Drawn Game-Style `Dialogue Preview` & `All Script Preview`
+- **Session Scope:** FEAT-10 (`U-B27`, `U-B28` — Lead Ruling #4, `NO-02`, `NO-12`) — Track 2 · Group G4b (post-DEP-2, DEP-8).
+- **Code-Drawn Priconne-Style Dialogue Preview (`misora.py`):**
+  - Added single `tk.Canvas` (`dialogue_preview_canvas`) + one embedded read-only `tk.Text` (`txt_dialogue_preview`) drawing native Tk Priconne-style double borders (`#d4af37`/`#e6c875`/`#fffcf4`), speaker name plate with `best_contrast_fg()`, and static pink `▼`, with ZERO copyrighted `AtlasAdv` sprites (`NO-02`).
+  - Consumes S17's `_measure_dialogue_metrics()` (`safe_w` = 50 digit-widths × 3-line safe area) and enforces `wrap="none"` with NO font auto-shrinking (`NO-12`) so >50d lines and 4+ lines visibly bleed past the calibrated frame.
+  - Extracted `_sweep_cstyle_tags()` (`GEM-E03`) to sweep `cstyle_*` tags on every render/box switch; preserves caret, selection, and `yview` on Preview OFF (guarded by file/box identity), restores `ruler_clean` above `clean_editor_row`, and keeps Box 0 / plain-text / 0-box fallbacks safe (`DEF-04`, `BUG-11`).
+- **All Script Preview (`misora.py`):**
+  - Updated `_render_continuous_view()` compiled mode to render lightweight styled `tk.Frame` cards (zero per-card `tk.Canvas` widgets) with `wrap="none"`, no auto-shrinking, `safe_w` boundary bar, and static pink `▼`.
+- **Tests:** Added `tests/test_p3_s18_game_preview.py` (2 failing-first Defect Probes + 1 Regression Guard).
+- **Files Created:** `tests/test_p3_s18_game_preview.py`.
+- **Files Modified:** `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/`.
+
 ### S17 — Shared Pixel-Measure Helper, Calibrated Rulers (50 Digit-Widths / Line 4+) & Remove Char Counter
 - **Session Scope:** BUG-40, FEAT-09 (`U-B22..U-B26`, `DEP-8` — Lead Ruling #4) — Track 2 · Group G4a.
 - **Pixel-Calibrated Measurement & Overflow Highlighting (`misora.py`):**
