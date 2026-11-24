@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S03 — Strict Binary Parse, Lossless v2 + \b64:, Command Map/Breakers & Fixture-Gated Bundle Verify
+- **Session Scope:** BUG-01, BUG-03, BUG-04, BUG-09 (Track 1 · Group B1 (DEP-5 part 1)).
+- **BUG-01 (`core/story_ast.py:from_binary()`, `core/bundle_io.py:load_bundle_story()`):**
+  - Enforced strict binary validation on every 2-byte command header, 4-byte argument length, payload byte slice, and terminating length-0 argument marker.
+  - Replaced silent `break` with explicit `ValueError` on truncated headers, partial length markers, payload overruns, and missing length-0 terminators.
+  - Wrapped `ValueError` as `BundleIOError` in `load_bundle_story()`, ensuring corrupt or truncated files never produce incomplete documents.
+- **BUG-03 (`core/story_ast.py`, `misora.py:_update_raw_view()`):**
+  - Removed legacy `cmd_id == 0` remapping branch in `to_binary()`, ensuring `cmd_id == 0` titles serialize strictly as `cmd_id == 0` (not 30).
+  - Enhanced `escape_arg()` to detect non-UTF-8 surrogate-escaped bytes (`0xDC80..0xDCFF`) and emit `\b64:<base64>`, prefix a backslash on category collisions (`\<Cat>`), escape backslashes first, and escape trailing/whitespace-only spaces (`\s` for ASCII space, `\S` for `U+3000`).
+  - Updated `unescape_arg()` to reverse `\b64:` via base64 surrogateescape decoding, reverse category collision prefixes, and restore `\s`/`\S`.
+  - Fixed dead `if self.cmd_name in _CMD_MAP:` condition in `Record.render_v2()` so ambiguous and unknown commands consistently emit unambiguous `name#id` headers (`touch#10` vs `touch#12`).
+  - Fixed Box 0 active highlight condition in `misora.py:_update_raw_view()` line 6825 to check `len(r.args) > 0 and r.args[0]` (matching `get_metadata()`), properly highlighting 1-arg title records.
+- **BUG-04 (`core/story_ast.py`):**
+  - Decoupled `_CMD_MAP` display labels from canonical inverse mapping `_INV_CMD_MAP`, resolving ambiguous names to canonical IDs (`"touch": 10`, `"wait": 11`, `"motion": 4`, `"effect": 20`, `"fade": 0`) instead of dictionary-comprehension last-wins (`touch` no longer maps to voice cue 12).
+  - Maintained permanent invariant (Lead Ruling (a)): `cmd_id == 35` (`tag` narration) and `cmd_id == 32` (`cmd_32` subtitle) preserved byte-exact across all serialization paths.
+  - Preserved backward compatibility for `DEFAULT_BREAKERS = ("touch", "page", "next_page")` while defining dedicated `DEFAULT_BREAKER_IDS = frozenset({0, 1, 4, 10, 36})` (`0=title`, `1=outline`, `4=type`, `10=goto`, `36=situation`).
+  - Updated `_rebuild_boxes()` to classify breakers by numeric ID `r.cmd_id in DEFAULT_BREAKER_IDS`, never splitting on voice cue `cmd_id == 12` and cleanly preserving dialogue projection `cmd_id == 6`.
+- **BUG-09 (`core/bundle_io.py:save_bundle_story()`):**
+  - Implemented pre-save non-target object SHA-256 hash capture keyed by `(assets_file_name, path_id)` (or `path_id`).
+  - Enforced verification check in `env_check` comparing raw data hashes and tracking `seen_non_target_keys`. Raises `BundleIOError` if any non-target object is modified, missing, or unexpectedly present before `os.replace()`.
+  - Production Bundle Fixture Status: **`BLOCKED (no local production .unity3d fixture)`** (retained honestly, never fabricated).
+- **Test Suite:** Added `tests/test_p3_s03_binary_v2.py` with 6 Defect Probes (failing-first) and 3 Regression Guards (passing). Full test suite discovered count: 248 tests across 25 modules (208 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/bundle_io.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s03_binary_v2.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/script_codec.py`, `core/undo_journal.py`, `core/search_engine.py`, `assets/*.py`.
+
 ### S02 — Test `backups/` Isolation, `search_engine.py` `Any` Import & Single-Version DeepL User-Agent
 - **Session Scope:** HYG-02, HYG-05, HYG-06 (Track 1 · Group A).
 - **HYG-05 (`core/search_engine.py`):** Added `Any` and `Dict` to `from typing import ...` so runtime `typing.get_type_hints(ProjectSearchEngine.search_directory)` resolves cleanly without `NameError`.

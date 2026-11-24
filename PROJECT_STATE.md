@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S02 Verification Baseline — 2026-11-24):
+Unit Test Suite (S03 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 239 tests across 24 modules (199 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 248 tests across 25 modules (208 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 239 tests (exact disk discovery):
+Test suites included in the 248 tests (exact disk discovery):
+  tests/test_p3_s03_binary_v2.py            — 9 S03 strict binary parse, lossless v2, command map/breakers, and synthetic bundle verify tests (all pass)
   tests/test_p3_s02_hygiene.py              — 5 S02 hygiene, single-version User-Agent, and backup isolation tests (all pass)
   tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (18 pass, 2 skipped)
   tests/test_misora_ui_integration.py       — 27 UI integration, Box 0, DnD, and editing tests (15 pass, 12 skipped)
@@ -83,6 +84,17 @@ Test suites included in the 239 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S03 Strict Binary Parse, Lossless v2, Command Map/Breakers & Bundle Verify (2026-11-24)
+- **Session Scope:** BUG-01, BUG-03, BUG-04, BUG-09 (Track 1 · Group B1 / DEP-5 part 1).
+- **BUG-01 (`core/story_ast.py:from_binary()`, `core/bundle_io.py:load_bundle_story()`):** Enforced strict binary validation on 2-byte header, 4-byte length, payload bytes, and terminating length-0 argument marker; replaced silent `break` with explicit `ValueError` (wrapped as `BundleIOError` in `load_bundle_story()`).
+- **BUG-03 (`core/story_ast.py`, `misora.py:_update_raw_view()`):** Removed legacy `cmd_id == 0` remapping in `to_binary()`. Added surrogateescape `\b64:<base64>` emission, category collision prefixing (`\<Cat>`), backslash-first escaping, and trailing/whitespace-only space escaping (`\s` for ASCII space, `\S` for `U+3000`) in `escape_arg()` with lossless reversal in `unescape_arg()`. Fixed dead `Record.render_v2()` check to emit unambiguous `name#id` headers (`touch#10` vs `touch#12`). Fixed `_update_raw_view()` line 6825 to check `len(r.args) > 0 and r.args[0]` matching `get_metadata()`.
+- **BUG-04 (`core/story_ast.py`):** Decoupled `_CMD_MAP` display labels from canonical inverse mapping `_INV_CMD_MAP` (resolving `"touch": 10`, `"wait": 11`, `"motion": 4`, `"effect": 20`, `"fade": 0` without last-wins corruption). Maintained permanent invariant (Lead Ruling (a)): `cmd_id == 35` and `cmd_id == 32` untouched byte-exact. Preserved `DEFAULT_BREAKERS = ("touch", "page", "next_page")` for backward compatibility while defining `DEFAULT_BREAKER_IDS = frozenset({0, 1, 4, 10, 36})` (`0=title`, `1=outline`, `4=type`, `10=goto`, `36=situation`); `_rebuild_boxes()` classifies breakers strictly by numeric ID, never splitting on voice cue `cmd_id == 12` and cleanly projecting dialogue `cmd_id == 6`.
+- **BUG-09 (`core/bundle_io.py:save_bundle_story()`):** Pre-save SHA-256 capture of non-target objects keyed by `(assets_file_name, path_id)` (or `path_id`) and verified in `env_check` tracking `seen_non_target_keys` to detect modified, dropped, or unexpected objects before `os.replace()`. Production `.unity3d` bundle compatibility status: `BLOCKED (no local production .unity3d fixture)`.
+- **New Test Suite:** Added `tests/test_p3_s03_binary_v2.py` with 6 Defect Probes (failing-first) and 3 Regression Guards (passing). Full test suite discovered count: 248 tests across 25 modules (208 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/story_ast.py`, `core/bundle_io.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s03_binary_v2.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/script_codec.py`, `core/undo_journal.py`, `core/search_engine.py`, `assets/*.py`.
 
 ### S02 Hygiene & Single-Source Verification (2026-11-24)
 - **Session Scope:** HYG-02, HYG-05, HYG-06 (Track 1 · Group A).
@@ -532,16 +544,16 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **BOX-PASTE-DEAD** | RESOLVED | `misora.py` | Missing helpers `_push_undo`, `_dirty_state_changed`, and `_sync_clean_view_to_current_box` implemented. Covered by `test_28`. | 2 |
 | **BUNDLE-SAVE-WRITES-BEFORE-VERIFY** | RESOLVED | `core/bundle_io.py:117-128` | Staged `.tmp` save with target `path_id` verification, fingerprint validation, and `os.replace`. Covered by `test_17, test_18`. | 1 |
 | **BOX0-SAVE-CORRUPTION** | RESOLVED | `misora.py` | Dedicated Box 0 metadata flush/save path. Prevents dialogue injection while Box 0 is active. Covered by `test_33`. | 2 |
-| **V2-ROUNDTRIP-LOSS** | REOPENED (2026-11-24: BUG-03) | `core/story_ast.py` | Historically preserved numeric command IDs, categories, and line breaks (test_16). Reopened for full lossless roundtrip and whitespace preservation audit under BUG-03. | 1 |
+| **V2-ROUNDTRIP-LOSS** | RESOLVED (2026-11-24: S03 / BUG-03) | `core/story_ast.py` | Lossless v2 text roundtrip with `\b64:<base64>` surrogateescape, category collision prefixing (`\<Cat>`), backslash-first escaping, and `\s`/`\S` trailing/whitespace-only space escaping. Covered by `test_p3_s03_binary_v2:test_probe_3`. | 1 |
 | **XUAT-SYNC-LINE-CORRUPTION** | RESOLVED | `core/xunity_sync.py` | Strict UTF-8 with BOM preservation, multiline `\n` escaping in values, CRLF/LF line ending preservation. Covered by `test_19`. | 1 |
 | **EMPTY-ARG-ARITY** | RESOLVED | `core/story_ast.py` | Binary serialization retains empty string arguments, preventing arity reduction. Covered by `test_15`. | 1 |
 | **NARRATION-EMPTY-PHANTOM** | RESOLVED | `core/story_ast.py` | Narration emits `tag` records instead of `print` with empty speaker. Covered by `test_15`. | 1 |
-| **PAGE-BREAK-NOT-SPLIT** | RESOLVED | `core/story_ast.py` | Breaker tokens aligned (`page` / `next_page`). Covered by `test_13`. | 1 |
+| **PAGE-BREAK-NOT-SPLIT** | RESOLVED (2026-11-24: S03 / BUG-04) | `core/story_ast.py` | Breakers classified strictly by numeric `DEFAULT_BREAKER_IDS = frozenset({0, 1, 4, 10, 36})`. Covered by `test_p3_s03_binary_v2:test_probe_4`. | 1 |
 | **RAW-TAIL-FROZEN** | RESOLVED | `core/story_ast.py` | `inject_box` updates `seg.raw` alongside `seg.text`. | 1 |
-| **CMD0-SPECIAL-CASE** | REOPENED (2026-11-24: BUG-03) | `core/story_ast.py` | Historically removed `cmd_id == 0` special case in `to_binary`. Reopened for complete roundtrip command map relabeling safety under BUG-03. | 1 |
+| **CMD0-SPECIAL-CASE** | RESOLVED (2026-11-24: S03 / BUG-03) | `core/story_ast.py` | Removed legacy `cmd_id == 0` remapping in `to_binary()`. `cmd_id == 0` titles serialize strictly as 0 (not 30). Covered by `test_p3_s03_binary_v2:test_probe_2`. | 1 |
 | **SHORTCUT-BINDTAG-ORDER** | RESOLVED | `misora.py` | Installed first-position `MisoraShortcuts` bindtag router. Ctrl+H opens replace dialog without mutating dialogue text. Covered by `test_31`. | 2 |
 | **RIBBON-CUT-PASTE-NO-COMMIT** | RESOLVED | `misora.py` | Virtual `<<Cut>>` and `<<Paste>>` explicitly invoke central `_commit_widget_edit`. Covered by `test_30`. | 2 |
-| **MULTI-TEXTASSET-TARGET** | REOPENED (2026-11-24: BUG-09 / DEF-03) | `core/bundle_io.py` | Historically locked target TextAsset by `path_id`. Reopened for multi-story asset safety and non-target asset preservation under BUG-09 / DEF-03. | 1 |
+| **MULTI-TEXTASSET-TARGET** | PARTIALLY RESOLVED (2026-11-24: S03 / BUG-09) | `core/bundle_io.py` | Pre-save SHA-256 non-target object verification in `save_bundle_story` detects modified or dropped non-target objects. Covered by `test_p3_s03_binary_v2:test_probe_5`; production fixture compatibility remains BLOCKED. | 1 |
 | **INJECT-EXTRA-ARGS** | RESOLVED | `core/story_ast.py` | `inject_box` and `set_metadata` preserve unmanaged trailing args. | 1 |
 
 ### P0 (new, from manual testing 2026-11-20)

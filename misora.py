@@ -6822,7 +6822,7 @@ class MisoraApp(tk.Tk):
         active_rec_indices = set()
         if getattr(self, "is_box0_active", False) and self.current_doc:
             for idx, r in enumerate(self.current_doc.records):
-                if (r.cmd_id == 0 and len(r.args) > 1 and r.args[1]) or \
+                if (r.cmd_id == 0 and len(r.args) > 0 and r.args[0]) or \
                    (r.cmd_id == 32 and len(r.args) > 0 and r.args[0]) or \
                    (r.cmd_id == 1 and len(r.args) > 0 and r.args[0]):
                     active_rec_indices.add(idx)

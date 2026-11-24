@@ -31,6 +31,7 @@ BREAK_TAIL_RE = re.compile(r"(?:\r\n|[\r\n\v\f\x85\u2028\u2029])+$")
 DEFAULT_TEXT_CMDS = ("print", "tag")
 NO_SPEAKER_CMDS = ("tag",)
 DEFAULT_BREAKERS = ("touch", "page", "next_page")
+DEFAULT_BREAKER_IDS = frozenset({0, 1, 4, 10, 36})
 DEFAULT_CATEGORIES = (
     "System", "Foreground", "Background", "Screen", "Sound",
     "Movie", "Motion", "Effect", "Camera", "Face", "Animation",
@@ -55,7 +56,24 @@ _CMD_MAP = {
     110: "speed", 120: "flag_set", 121: "flag_check", 122: "flag_jump",
     125: "end"
 }
-_INV_CMD_MAP = {v: k for k, v in _CMD_MAP.items()}
+# Canonical inverse mapping from command names to numeric IDs for v2 text resolution.
+# Ambiguous names explicitly resolve to canonical IDs rather than dict-comprehension last-wins.
+_INV_CMD_MAP = {
+    "fade": 0, "log": 1, "bg": 2, "chara": 3, "motion": 4, "face": 5,
+    "print": 6, "bgm": 7, "se": 8, "voice": 9, "touch": 10, "wait": 11,
+    "movie": 14, "color": 16, "chara_motion": 17, "effect": 20,
+    "fade_in": 21, "fade_out": 22, "eye": 23, "lip": 24, "shake": 25, "flash": 26,
+    "title": 30, "outline": 31, "cmd_32": 32, "tag": 35, "situation": 36,
+    "shake_screen": 40, "bloom": 41, "blur": 42, "fade_bg": 43, "bust": 45,
+    "scale": 50, "depth": 51, "wipe": 52, "mask": 53, "play_se": 55, "stop_se": 56,
+    "play_bgm": 57, "stop_bgm": 58, "chara_visible": 60, "chara_color": 61,
+    "chara_layer": 62, "chara_flip": 63, "chara_scale": 64, "chara_pos": 65,
+    "chara_fade": 66, "chara_shake": 67, "unknown_68": 68, "camera_move": 70,
+    "camera_zoom": 71, "camera_rotate": 72, "camera_reset": 73, "window_visible": 80,
+    "window_size": 81, "window_pos": 82, "next_page": 90, "choice": 91,
+    "choice_jump": 92, "volume": 100, "speed": 110, "flag_set": 120,
+    "flag_check": 121, "flag_jump": 122, "end": 125,
+}
 
 # Monotonic atomic ID counter for runtime Record identity
 _next_rec_uid = itertools.count(1)
@@ -122,7 +140,17 @@ def norm_search(s: str) -> str:
 
 
 def escape_arg(s: str) -> str:
-    """Escape an argument for v2 text representation, preserving all Unicode line breaks."""
+    """Escape an argument for v2 text representation, preserving whitespace, categories, and non-UTF8 bytes."""
+    # 1. Non-UTF-8 surrogateescape bytes -> \b64:<base64>
+    if any(0xDC80 <= ord(c) <= 0xDCFF for c in s):
+        raw = s.encode("utf-8", "surrogateescape")
+        return f"\\b64:{base64.b64encode(raw).decode('ascii')}"
+
+    # 2. Collision with default category names -> prefix with \
+    if s in DEFAULT_CATEGORIES:
+        return f"\\{s}"
+
+    # 3. Escape backslashes first, then control and Unicode line breaks
     out = (
         s.replace("\\", "\\\\")
         .replace("\r\n", "\\r\\n")
@@ -135,6 +163,17 @@ def escape_arg(s: str) -> str:
         .replace("\x0c", "\\f")
         .replace("\x0b", "\\v")
     )
+
+    # 4. Escape trailing and whitespace-only spaces (\s for ASCII space, \S for U+3000)
+    trailing_len = 0
+    while trailing_len < len(out) and out[-(trailing_len + 1)] in (" ", "\u3000"):
+        trailing_len += 1
+    if trailing_len > 0:
+        head = out[:-trailing_len]
+        tail = out[-trailing_len:]
+        escaped_tail = "".join("\\s" if c == " " else "\\S" for c in tail)
+        out = head + escaped_tail
+
     return out
 
 
@@ -142,11 +181,13 @@ def unescape_arg(s: str) -> str:
     """Unescape an argument from v2 text representation."""
     if s.startswith("\\b64:"):
         return base64.b64decode(s[5:]).decode("utf-8", "surrogateescape")
+    if s.startswith("\\") and s[1:] in DEFAULT_CATEGORIES:
+        return s[1:]
     out = []
     i = 0
     m = {
         "n": "\n", "r": "\r", "t": "\t", "\\": "\\", "=": "=",
-        "f": "\x0c", "v": "\x0b"
+        "f": "\x0c", "v": "\x0b", "s": " ", "S": "\u3000"
     }
     while i < len(s):
         if s[i] == "\\" and i + 1 < len(s):
@@ -183,8 +224,12 @@ class Record:
     uid: int = field(default_factory=lambda: next(_next_rec_uid), init=True)
 
     def render_v2(self) -> List[str]:
-        # Include numeric command ID in header line if cmd_name is ambiguous or numeric
-        if self.cmd_name in _CMD_MAP and _CMD_MAP[self.cmd_id] == self.cmd_name:
+        # Include numeric command ID in header line if cmd_name is ambiguous, non-canonical, or unknown/numeric
+        if (
+            _INV_CMD_MAP.get(self.cmd_name) == self.cmd_id
+            and _CMD_MAP.get(self.cmd_id) == self.cmd_name
+            and list(_CMD_MAP.values()).count(self.cmd_name) == 1
+        ):
             header = self.cmd_name
         else:
             header = f"{self.cmd_name}#{self.cmd_id}"
@@ -328,7 +373,7 @@ class StoryDocument:
                     boxes.append(cur)
                     cur_voice = ""
                 cur.segs.append(Seg(record=r, text=tx, raw=tx))
-            elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:
+            elif r.cmd_id in DEFAULT_BREAKER_IDS:
                 cur = None
                 cur_voice = ""
 
@@ -674,22 +719,27 @@ class StoryDocument:
 
         while pos < n:
             if pos + 2 > n:
-                break
+                raise ValueError(f"Truncated command header at offset {pos} (expected 2 bytes, got {n - pos})")
             cid = struct.unpack_from(">H", raw, pos)[0]
             pos += 2
             args = []
+            terminated = False
             while True:
                 if pos + 4 > n:
-                    break
+                    raise ValueError(f"Partial argument length header at offset {pos} (expected 4 bytes, got {n - pos})")
                 ln = struct.unpack_from(">I", raw, pos)[0]
                 pos += 4
                 if ln == 0:
+                    terminated = True
                     break
                 if pos + ln > n:
-                    break
+                    raise ValueError(f"Argument payload overrun at offset {pos} (expected {ln} bytes, got {n - pos})")
                 arg_bytes = raw[pos:pos + ln]
                 pos += ln
                 args.append(decode_arg(arg_bytes))
+
+            if not terminated:
+                raise ValueError(f"Missing terminating length-0 argument marker for command {cid} at offset {pos}")
 
             cmd_name = _CMD_MAP.get(cid, f"cmd_{cid}")
             records.append(Record(cmd_id=cid, cmd_name=cmd_name, args=args))
@@ -706,10 +756,8 @@ class StoryDocument:
             if r.uid in self.removed_records:
                 continue
 
-            # Command ID resolution without legacy relabeling special-case bug
+            # Command ID resolution
             cid = r.cmd_id
-            if cid == 0 and r.cmd_name != "fade" and r.cmd_name in _INV_CMD_MAP:
-                cid = _INV_CMD_MAP[r.cmd_name]
 
             # Enforce narration: print with blank speaker must be serialized as tag (cmd 35)
             cmd_name = r.cmd_name

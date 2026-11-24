@@ -6,6 +6,7 @@ Self-contained module utilizing UnityPy for verified asset modification.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import threading
@@ -138,8 +139,34 @@ def load_bundle_story(path: Union[str, Path]) -> Tuple[StoryDocument, Any, Any, 
         raise BundleIOError(f"No TextAsset found inside bundle '{path.name}'.")
 
     raw_bytes = extract_raw_story_bytes(target_obj)
-    doc = StoryDocument.from_binary(raw_bytes)
+    try:
+        doc = StoryDocument.from_binary(raw_bytes)
+    except ValueError as ex:
+        raise BundleIOError(f"Corrupted or invalid binary story data: {ex}") from ex
     return doc, env, target_obj, target_name
+
+
+def _obj_key(o: Any) -> Any:
+    """Derive stable object identity key for bundle object verification."""
+    af = getattr(o, "assets_file", None)
+    af_name = getattr(af, "name", "") if af else ""
+    pid = getattr(o, "path_id", None)
+    return (af_name, pid) if af_name else pid
+
+
+def _get_raw_bytes(o: Any) -> bytes:
+    """Extract raw bytes from UnityPy object reader or mock container."""
+    if hasattr(o, "get_raw_data"):
+        try:
+            return bytes(o.get_raw_data())
+        except Exception:
+            pass
+    if hasattr(o, "raw_data"):
+        try:
+            return bytes(o.raw_data)
+        except Exception:
+            pass
+    return b""
 
 
 def save_bundle_story(
@@ -153,7 +180,7 @@ def save_bundle_story(
     Repack the modified StoryDocument back into the Unity3D bundle file in-place.
     Follows verified atomic save pipeline:
     same-dir .tmp -> reopen tmp -> verify exact target TextAsset by path_id/name ->
-    verify object count -> fingerprint check -> bounded retry os.replace.
+    verify object count and non-target bytes -> fingerprint check -> bounded retry os.replace.
     Never overwrites original before verification succeeds.
     """
     global _is_saving
@@ -173,6 +200,14 @@ def save_bundle_story(
         target_path_id = getattr(text_asset_obj, "path_id", None)
         target_name = getattr(text_asset_obj.read(), "m_Name", "")
         source_obj_count = len(list(env.objects))
+
+        # Record pre-save SHA-256 hashes of all non-target objects for integrity verification
+        non_target_hashes = {}
+        for o in env.objects:
+            pid = getattr(o, "path_id", None)
+            if pid is not None and pid != target_path_id:
+                key = _obj_key(o)
+                non_target_hashes[key] = hashlib.sha256(_get_raw_bytes(o)).hexdigest()
 
         new_data = doc.to_binary()
         d = text_asset_obj.read()
@@ -217,6 +252,23 @@ def save_bundle_story(
                         raise BundleIOError(
                             f"Verification failed: Object count mismatch ({len(list(env_check.objects))} != {source_obj_count})."
                         )
+
+                    # Verify all non-target objects are preserved identically without modifications or drops
+                    seen_non_target_keys = set()
+                    for o in env_check.objects:
+                        pid = getattr(o, "path_id", None)
+                        if pid is not None and pid != target_path_id:
+                            key = _obj_key(o)
+                            if key not in non_target_hashes:
+                                raise BundleIOError(f"Verification failed: Unexpected non-target object {key} in repacked bundle.")
+                            h = hashlib.sha256(_get_raw_bytes(o)).hexdigest()
+                            if h != non_target_hashes[key]:
+                                raise BundleIOError(f"Verification failed: Non-target object {key} raw data modified during save.")
+                            seen_non_target_keys.add(key)
+
+                    missing_keys = set(non_target_hashes.keys()) - seen_non_target_keys
+                    if missing_keys:
+                        raise BundleIOError(f"Verification failed: Non-target objects missing in repacked bundle: {missing_keys}")
 
                     success = True
                     break
