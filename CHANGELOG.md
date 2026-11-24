@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S13 — Continuous Ribbon/Size/Dirty Sync, Shortcut Conflicts, Complete Tooltips & `Ctrl+H` Hygiene
+- **Session Scope:** BUG-28, BUG-29, HYG-03, HYG-07 (Track 1 · Group F3 (DEP-3 — Completes all non-fixture Track 1 P0/P1 bugs)).
+- **Milestone Note:** **Track 1 Automated Stabilization Gate (S01..S13) COMPLETE** (unlocks Track 2 `S14..S23` and `AGENTS.md` §24 MTL Drawer gate).
+- **Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository).
+- **BUG-28 (`misora.py` — DEP-3):**
+  - Resolved active card editor via `_get_card_text_widget(self.current_box_idx)` inside `_insert_text_wrapper()` and `on_insert_ruby()` when `var_continuous_view.get()` is active with story cards, eliminating mutation of the hidden `txt_continuous` fallback widget.
+  - Removed redundant `_on_dialogue_edited()` call from `_insert_text_wrapper()` so that `apply_ngui_wrapper()`'s subsequent `_commit_widget_edit(target)` commits ONCE and triggers `_dirty_state_changed()`, fixing stale `*` title & Undo menu on first click in Page View.
+  - Added `self._commit_widget_edit(target)` inside `on_insert_font_size()` to flush font size tag insertions to AST with undo delta recording, while preserving exact `<size=...>` / `</size>` syntax.
+  - Added translation lock guards (`is_box_locked`) in `apply_ngui_wrapper()`, `on_insert_ruby()`, and `on_insert_font_size()` preventing ribbon formatting mutations on locked boxes.
+- **BUG-29 & HYG-07 (`misora.py`):**
+  - Reconciled canonical shortcut dispatch router on `MisoraShortcuts` bindtag:
+    - Fixed `Ctrl+T` conflict: `Ctrl+T` (no shift) dispatches `self.on_open_translator_assistant()`, while `Ctrl+Shift+T` dispatches `self.on_copy_ai_prompt()`, matching menu accelerators and root bindings.
+    - Removed rogue `<Control-C>` binding to `_toggle_continuous_shortcut()` from `_bind_shortcuts()`, eliminating collision with `<Control-Shift-C>` (`on_copy_script()`) and protecting native widget copy.
+    - Added missing `Ctrl+R` to `_on_misora_shortcut()` to invoke `self.on_insert_ruby()`.
+    - Whitelisted explicit `Ctrl+Alt+X` (Cut Box), `Ctrl+Alt+C` (Copy Box), `Ctrl+Alt+V` (Paste Box), and `Ctrl+Alt+A` (Select Whole Story) in `_on_misora_shortcut()` while returning `None` for all other keys, preserving international AltGr text composition (e.g. `AltGr+E` -> `€`).
+    - Added root bindings for `<Control-Alt-x/c/v/a>` (both lower and uppercase).
+  - Ensured `bind_all("<Control-h>", ...)` and `<Control-H>` route through dedicated handler `_on_ctrl_h()` returning `'break'` (`HYG-07`), preventing native Tk Text backspace deletion and double-dispatch. Also converted `<Control-f>` and `<Control-F>` to dedicated `'break'`-returning handlers.
+- **HYG-03 (`misora.py` — DEP-3):**
+  - Attached 350ms hover `ToolTip` and verified non-empty Unicode fallback text across all ribbon and toolbar controls:
+    - `btn_ruby`, `btn_dash`, `btn_player`, format buttons (`B`, `I`, `U`, `S`, `Sub`, `Sup`), `btn_size`, `cb_compiled` (Preview), `cb_cont` (Continuous View), `cb_sel_box` (Select Box), `btn_ai_prompt`, `btn_translate`, `btn_prev`, `btn_next`.
+    - Exposed controls cleanly as attributes on `MisoraApp` (`btn_ruby`, `btn_dash`, `btn_player`, `btn_format_buttons`, `btn_size`, `cb_compiled`, `cb_cont`, `cb_sel_box`, `btn_ai_prompt`, `btn_translate`).
+    - Verified 100% of shortcuts advertised in tooltip text are bound and functional on disk.
+- **Test Suite:** Added `tests/test_p3_s13_ribbon_shortcuts.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 308 tests across 35 modules (268 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s13_ribbon_shortcuts.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/*.py`.
+
 ### S12 — Logger Flush Barrier/Teardown, DPAPI Fail-Closed, Reload Env Disposal, Deferred Startup & Splash Safety
 - **Session Scope:** BUG-32, BUG-33, BUG-34, BUG-35, BUG-36 (Track 1 · Group F2 (DEP-9 part 1 — Split from Ribbon per Grok R2)).
 - **BUG-32 (`core/logger.py`, `misora.py`):**

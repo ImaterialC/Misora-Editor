@@ -4058,20 +4058,24 @@ class MisoraApp(tk.Tk):
         self.ico_next = self.get_icon("nav_next", (14, 14))
         self.btn_next = ttk.Button(gd_header, text="Next ", image=self.ico_next, compound="right", style="Nav.TButton", command=self.on_next_box)
         self.btn_next.pack(side="right", padx=(2, 0))
+        create_tooltip(self.btn_next, "Next Dialogue Box (Alt+Right / Alt+Down)")
 
         self.ico_prev = self.get_icon("nav_prev", (14, 14))
         self.btn_prev = ttk.Button(gd_header, text=" Prev", image=self.ico_prev, compound="left", style="Nav.TButton", command=self.on_prev_box)
         self.btn_prev.pack(side="right", padx=(4, 2))
+        create_tooltip(self.btn_prev, "Previous Dialogue Box (Alt+Left / Alt+Up)")
 
         self.ico_ai = self.get_icon("ai", (16, 16))
-        btn_ai_prompt = ttk.Button(gd_header, text=" AI Prompt", image=self.ico_ai, compound="left", style="Small.TButton", command=self.on_copy_ai_prompt)
-        btn_ai_prompt.pack(side="right", padx=(4, 2))
+        self.btn_ai_prompt = ttk.Button(gd_header, text=" AI Prompt", image=self.ico_ai, compound="left", style="Small.TButton", command=self.on_copy_ai_prompt)
+        self.btn_ai_prompt.pack(side="right", padx=(4, 2))
+        create_tooltip(self.btn_ai_prompt, "Copy AI Translation Prompt (Ctrl+Shift+T)")
 
         self.ico_mtl = self.get_icon("mtl", (16, 16))
-        btn_translate = ttk.Button(gd_header, text=" MTL", image=self.ico_mtl, compound="left", style="Small.TButton", command=self.on_open_translator_assistant)
-        btn_translate.pack(side="right", padx=(2, 2))
+        self.btn_translate = ttk.Button(gd_header, text=" MTL", image=self.ico_mtl, compound="left", style="Small.TButton", command=self.on_open_translator_assistant)
+        self.btn_translate.pack(side="right", padx=(2, 2))
+        create_tooltip(self.btn_translate, "Open Translator Assistant (Ctrl+T)")
 
-        cb_cont = ttk.Checkbutton(
+        self.cb_cont = ttk.Checkbutton(
             gd_header,
             text="Continuous View",
             variable=self.var_continuous_view,
@@ -4079,9 +4083,10 @@ class MisoraApp(tk.Tk):
             style="Accent.TCheckbutton",
             cursor="hand2"
         )
-        cb_cont.pack(side="right", padx=(4, 4))
+        self.cb_cont.pack(side="right", padx=(4, 4))
+        create_tooltip(self.cb_cont, "Toggle Continuous View / All Script")
 
-        cb_sel_box = ttk.Checkbutton(
+        self.cb_sel_box = ttk.Checkbutton(
             gd_header,
             text="Select Box",
             variable=self.var_select_box_mode,
@@ -4089,7 +4094,8 @@ class MisoraApp(tk.Tk):
             style="Accent.TCheckbutton",
             cursor="hand2"
         )
-        cb_sel_box.pack(side="right", padx=(4, 4))
+        self.cb_sel_box.pack(side="right", padx=(4, 4))
+        create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
 
         # Combined Row for Speaker + Compact NGUI Ribbon (#7 & #10)
         speaker_ribbon_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
@@ -4358,7 +4364,7 @@ class MisoraApp(tk.Tk):
         self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         # NGUI Formatting Buttons
-        btn_ruby = self._tag_role(
+        self.btn_ruby = self._tag_role(
             tk.Button(
                 ribbon,
                 text="Ruby",
@@ -4376,9 +4382,10 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_primary_btn",
         )
-        btn_ruby.pack(side="left", padx=1, pady=1)
+        self.btn_ruby.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_ruby, "Wrap Selection with Ruby / Furigana ([rub:...]...[/rub]) (Ctrl+R)")
 
-        btn_dash = self._tag_role(
+        self.btn_dash = self._tag_role(
             tk.Button(
                 ribbon,
                 text="[-]",
@@ -4396,10 +4403,11 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_btn",
         )
-        btn_dash.pack(side="left", padx=1, pady=1)
+        self.btn_dash.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_dash, "Reset Color to Default ([-])")
 
         self.ico_player = self.get_icon("player", (14, 14))
-        btn_player = self._tag_role(
+        self.btn_player = self._tag_role(
             tk.Button(
                 ribbon,
                 text=" {0}",
@@ -4419,17 +4427,19 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_btn",
         )
-        btn_player.pack(side="left", padx=1, pady=1)
+        self.btn_player.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_player, "Insert Player Name tag ({0}) (Ctrl+P)")
 
         mini_style_buttons = [
-            ("B", "[b]", "[/b]"),
-            ("I", "[i]", "[/i]"),
-            ("U", "[u]", "[/u]"),
-            ("S", "[s]", "[/s]"),
-            ("Sub", "[sub]", "[/sub]"),
-            ("Sup", "[sup]", "[/sup]"),
+            ("B", "[b]", "[/b]", "Bold Text ([b]...[/b]) (Ctrl+B)"),
+            ("I", "[i]", "[/i]", "Italic Text ([i]...[/i]) (Ctrl+I)"),
+            ("U", "[u]", "[/u]", "Underline Text ([u]...[/u]) (Ctrl+U)"),
+            ("S", "[s]", "[/s]", "Strikethrough Text ([s]...[/s])"),
+            ("Sub", "[sub]", "[/sub]", "Subscript Text ([sub]...[/sub])"),
+            ("Sup", "[sup]", "[/sup]", "Superscript Text ([sup]...[/sup])"),
         ]
-        for lbl, o_tag, c_tag in mini_style_buttons:
+        self.btn_format_buttons = {}
+        for lbl, o_tag, c_tag, tip_txt in mini_style_buttons:
             w_val = 2 if len(lbl) <= 2 else 3
             f_sz = 8 if len(lbl) <= 2 else 7
             b_mini = self._tag_role(
@@ -4452,8 +4462,10 @@ class MisoraApp(tk.Tk):
                 "ribbon_btn",
             )
             b_mini.pack(side="left", padx=1, pady=1)
+            create_tooltip(b_mini, tip_txt)
+            self.btn_format_buttons[lbl] = b_mini
 
-        btn_size = self._tag_role(
+        self.btn_size = self._tag_role(
             tk.Button(
                 ribbon,
                 text="Size",
@@ -4471,8 +4483,8 @@ class MisoraApp(tk.Tk):
             ),
             "ribbon_btn"
         )
-        btn_size.pack(side="left", padx=1, pady=1)
-        create_tooltip(btn_size, "Change Font Size (<size=...>)")
+        self.btn_size.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_size, "Change Font Size (<size=...>)")
 
         self._tag_role(tk.Label(ribbon, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
@@ -4518,7 +4530,7 @@ class MisoraApp(tk.Tk):
         create_tooltip(self.btn_ribbon_redo, "Redo (Ctrl+Y)")
 
         self.ico_preview = self.get_icon("preview", (16, 16))
-        cb_compiled = self._tag_role(
+        self.cb_compiled = self._tag_role(
             tk.Checkbutton(
                 actions_bar,
                 text=" Preview",
@@ -4536,7 +4548,8 @@ class MisoraApp(tk.Tk):
             ),
             "check_ribbon"
         )
-        cb_compiled.pack(side="left", padx=(2, 3), pady=1)
+        self.cb_compiled.pack(side="left", padx=(2, 3), pady=1)
+        create_tooltip(self.cb_compiled, "Toggle Compiled Attribute Preview (read-only)")
 
         gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
@@ -5301,6 +5314,10 @@ class MisoraApp(tk.Tk):
 
     def apply_ngui_wrapper(self, open_tag: str, close_tag: str, default_inner: str = "") -> None:
         """Ensure Raw Edit mode is active, then wrap selection or insert NGUI tags at caret."""
+        if not getattr(self, "is_box0_active", False) and self.current_doc and self.is_box_locked(self.current_box_idx):
+            self.show_toast(f"Box #{self.current_box_idx + 1} is locked.")
+            return
+
         if self.var_preview_compiled.get():
             self.var_preview_compiled.set(False)
             self._update_views()
@@ -6012,25 +6029,37 @@ class MisoraApp(tk.Tk):
                 return
 
             if self.var_continuous_view.get():
-                target = self.txt_continuous
-                box_idx = self._find_continuous_box_at_index("insert")
-                if box_idx is None:
-                    self._focus_continuous_box(self.current_box_idx, move_cursor=True)
-                try:
-                    sel_first = target.index("sel.first")
-                    sel_last = target.index("sel.last")
-                    b1 = self._find_continuous_box_at_index(sel_first)
-                    b2 = self._find_continuous_box_at_index(sel_last)
-                    if b1 is not None and b1 == b2:
+                if hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+                    target = self._get_card_text_widget(self.current_box_idx)
+                    try:
+                        sel_first = target.index("sel.first")
+                        sel_last = target.index("sel.last")
                         selected_txt = target.get(sel_first, sel_last)
                         target.delete(sel_first, sel_last)
                         target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
-                    else:
+                    except tk.TclError:
                         target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-                except tk.TclError:
-                    target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-                self._sync_continuous_box_from_widget()
-                target.focus_set()
+                    target.focus_set()
+                else:
+                    target = self.txt_continuous
+                    box_idx = self._find_continuous_box_at_index("insert")
+                    if box_idx is None:
+                        self._focus_continuous_box(self.current_box_idx, move_cursor=True)
+                    try:
+                        sel_first = target.index("sel.first")
+                        sel_last = target.index("sel.last")
+                        b1 = self._find_continuous_box_at_index(sel_first)
+                        b2 = self._find_continuous_box_at_index(sel_last)
+                        if b1 is not None and b1 == b2:
+                            selected_txt = target.get(sel_first, sel_last)
+                            target.delete(sel_first, sel_last)
+                            target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
+                        else:
+                            target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
+                    except tk.TclError:
+                        target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
+                    self._sync_continuous_box_from_widget()
+                    target.focus_set()
             else:
                 target = self.txt_dialogue
                 try:
@@ -6041,29 +6070,39 @@ class MisoraApp(tk.Tk):
                     target.insert(sel_first, f"{open_tag}{selected_txt}{close_tag}")
                 except tk.TclError:
                     target.insert(tk.INSERT, f"{open_tag}{default_inner}{close_tag}")
-                self._on_dialogue_edited()
                 target.focus_set()
         finally:
             self._current_edit_source = "keyboard"
 
     def on_insert_ruby(self) -> None:
         """Open a compact modal prompt to wrap base text with [rub:ruby]base[/rub]."""
+        if not getattr(self, "is_box0_active", False) and self.current_doc and self.is_box_locked(self.current_box_idx):
+            self.show_toast(f"Box #{self.current_box_idx + 1} is locked.")
+            return
+
         if self.var_preview_compiled.get():
             self.var_preview_compiled.set(False)
             self._update_views()
 
         selected_base = ""
         if self.var_continuous_view.get():
-            target = self.txt_continuous
-            try:
-                sel_first = target.index("sel.first")
-                sel_last = target.index("sel.last")
-                b1 = self._find_continuous_box_at_index(sel_first)
-                b2 = self._find_continuous_box_at_index(sel_last)
-                if b1 is not None and b1 == b2:
-                    selected_base = target.get(sel_first, sel_last)
-            except tk.TclError:
-                pass
+            if hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
+                target = self._get_card_text_widget(self.current_box_idx)
+                try:
+                    selected_base = target.get("sel.first", "sel.last")
+                except tk.TclError:
+                    pass
+            else:
+                target = self.txt_continuous
+                try:
+                    sel_first = target.index("sel.first")
+                    sel_last = target.index("sel.last")
+                    b1 = self._find_continuous_box_at_index(sel_first)
+                    b2 = self._find_continuous_box_at_index(sel_last)
+                    if b1 is not None and b1 == b2:
+                        selected_base = target.get(sel_first, sel_last)
+                except tk.TclError:
+                    pass
         else:
             target = self.txt_dialogue
             try:
@@ -6160,6 +6199,9 @@ class MisoraApp(tk.Tk):
                 self._insert_text_wrapper(f"[rub:{r_txt}]", "[/rub]")
             else:
                 self._insert_text_wrapper(f"[rub:{r_txt}]", "[/rub]", default_inner=b_txt)
+            target = self._get_active_text_widget()
+            if target:
+                self._commit_widget_edit(target)
 
         btn_row = tk.Frame(dlg, bg=t["bg_panel"])
         btn_row.pack(fill="x", padx=14, pady=(0, 12))
@@ -6419,8 +6461,21 @@ class MisoraApp(tk.Tk):
         is_ctrl = bool(state & 0x0004)
         is_alt = bool((state & 0x0008) or (state & 0x0020))
 
-        # 3. Protect against AltGr (Ctrl+Alt)
+        # 3. Handle explicit Ctrl+Alt application accelerators (X/C/V/A), protect all other keys for AltGr
         if is_ctrl and is_alt:
+            if not is_shift:
+                if key_lower == "x":
+                    self.on_box_cut()
+                    return "break"
+                elif key_lower == "c":
+                    self.on_box_copy()
+                    return "break"
+                elif key_lower == "v":
+                    self.on_box_paste()
+                    return "break"
+                elif key_lower == "a":
+                    self.on_select_whole_story()
+                    return "break"
             return None
 
         # 4. Standard Ctrl+C / Ctrl+X / Ctrl+A: let native widget handlers process them
@@ -6462,7 +6517,10 @@ class MisoraApp(tk.Tk):
                     self.on_redo()
                     return "break"
                 elif key_lower == "t":
-                    self.on_copy_ai_prompt()
+                    self.on_open_translator_assistant()
+                    return "break"
+                elif key_lower == "r":
+                    self.on_insert_ruby()
                     return "break"
                 elif key_lower == "b":
                     self._shortcut_wrap("[b]", "[/b]")
@@ -6678,15 +6736,16 @@ class MisoraApp(tk.Tk):
         self.bind("<Control-s>", lambda e: self.on_save())
         self.bind("<Control-q>", lambda e: self._on_app_exit())
         self.bind("<Control-r>", lambda e: self.on_insert_ruby())
+        self.bind("<Control-R>", lambda e: self.on_insert_ruby())
         self.bind("<Control-p>", lambda e: self.on_insert_playername())
-        self.bind_all("<Control-f>", lambda e: self.on_show_find())
-        self.bind_all("<Control-F>", lambda e: self.on_show_find_in_files())
-        self.bind_all("<Control-h>", lambda e: self.on_show_replace())
+        self.bind_all("<Control-f>", self._on_ctrl_f)
+        self.bind_all("<Control-F>", self._on_ctrl_shift_f)
+        self.bind_all("<Control-h>", self._on_ctrl_h)
+        self.bind_all("<Control-H>", self._on_ctrl_h)
         self.bind("<Control-z>", lambda e: self.on_undo())
         self.bind("<Control-y>", lambda e: self.on_redo())
         self.bind("<Control-Shift-Z>", lambda e: self.on_redo())
         self.bind("<Control-Shift-z>", lambda e: self.on_redo())
-        self.bind("<Control-C>", lambda e: self._toggle_continuous_shortcut())
         self.bind("<Control-comma>", lambda e: self._toggle_side_drawer("customize"))
         self.bind("<F1>", lambda e: self._toggle_side_drawer("glossary"))
         self.bind("<F5>", lambda e: self.on_reload())
@@ -6697,7 +6756,6 @@ class MisoraApp(tk.Tk):
         self.bind("<Alt-Up>", lambda e: self.on_prev_box())
         self.bind("<Alt-Down>", lambda e: self.on_next_box())
         self.bind("<Control-t>", lambda e: self.on_open_translator_assistant())
-        self.bind("<Control-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-T>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-t>", lambda e: self.on_copy_ai_prompt())
         self.bind("<Control-Shift-C>", lambda e: self.on_copy_script())
@@ -6710,11 +6768,34 @@ class MisoraApp(tk.Tk):
         self.bind("<Control-Shift-e>", lambda e: self.on_export_script())
         self.bind("<Control-l>", lambda e: self.on_toggle_lock_current_box())
         self.bind("<Control-L>", lambda e: self.on_toggle_lock_current_box())
+        self.bind("<Control-Alt-x>", lambda e: self.on_box_cut())
+        self.bind("<Control-Alt-X>", lambda e: self.on_box_cut())
+        self.bind("<Control-Alt-c>", lambda e: self.on_box_copy())
+        self.bind("<Control-Alt-C>", lambda e: self.on_box_copy())
+        self.bind("<Control-Alt-v>", lambda e: self.on_box_paste())
+        self.bind("<Control-Alt-V>", lambda e: self.on_box_paste())
+        self.bind("<Control-Alt-a>", lambda e: self.on_select_whole_story())
+        self.bind("<Control-Alt-A>", lambda e: self.on_select_whole_story())
         self.bind("<F8>", lambda e: self.on_translate_current_box())
 
     def _toggle_continuous_shortcut(self) -> None:
         self.var_continuous_view.set(not self.var_continuous_view.get())
         self._on_toggle_continuous_view()
+
+    def _on_ctrl_h(self, _e: Optional[tk.Event] = None) -> str:
+        """Bind_all handler for Ctrl+H (Find & Replace bar) returning 'break' (HYG-07)."""
+        self.on_show_replace()
+        return "break"
+
+    def _on_ctrl_f(self, _e: Optional[tk.Event] = None) -> str:
+        """Bind_all handler for Ctrl+F (Find bar) returning 'break'."""
+        self.on_show_find()
+        return "break"
+
+    def _on_ctrl_shift_f(self, _e: Optional[tk.Event] = None) -> str:
+        """Bind_all handler for Ctrl+Shift+F (Find in files) returning 'break'."""
+        self.on_show_find_in_files()
+        return "break"
 
     # -------------------------------------------------------------------------
     # Document Loading & Box Display (Page Mode + Continuous Stream Mode)
@@ -8041,9 +8122,13 @@ class MisoraApp(tk.Tk):
 
     def on_insert_font_size(self, size_val: Optional[str]) -> None:
         """Insert font size tags (<size=...>...</size>) around selection or at caret."""
+        if not getattr(self, "is_box0_active", False) and self.current_doc and self.is_box_locked(self.current_box_idx):
+            self.show_toast(f"Box #{self.current_box_idx + 1} is locked.")
+            return
+
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
-            target = self._card_widgets[self.current_box_idx].get("txt", self.txt_dialogue)
+            target = self._get_card_text_widget(self.current_box_idx)
 
         if size_val:
             open_t = f"<size={size_val}>"
@@ -8059,6 +8144,9 @@ class MisoraApp(tk.Tk):
                 target.mark_set(tk.INSERT, f"{tk.INSERT} - {len(close_t)}c")
         else:
             target.insert(tk.INSERT, "</size>")
+
+        target.focus_set()
+        self._commit_widget_edit(target)
 
     def _render_continuous_view(self) -> None:
         """Render all dialogue boxes sequentially as a Box Card Stream."""

@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S12 Verification Baseline — 2026-11-24):
+Unit Test Suite (S13 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 304 tests across 34 modules (264 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 308 tests across 35 modules (268 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 304 tests (exact disk discovery):
+Test suites included in the 308 tests (exact disk discovery):
+  tests/test_p3_s13_ribbon_shortcuts.py     — 4 S13 continuous ribbon/size/dirty sync, shortcut conflicts, complete tooltips & Ctrl+H hygiene tests (all pass)
   tests/test_p3_s12_lifecycle_security.py   — 7 S12 logger flush barrier, DPAPI fail-closed, reload env disposal, deferred startup & splash safety tests (all pass)
   tests/test_p3_s11_mtl_threading.py        — 9 S11 main-thread queue-only async MTL, stale-result identity guard & safe batch cancel tests (all pass)
   tests/test_p3_s10_xuat_integrity.py       — 4 S10 immutable box.uid XUAT JP keys, save conflict preview gate & atomic XUAT dictionary writes tests (all pass)
@@ -93,6 +94,36 @@ Test suites included in the 304 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### Track 1 Automated Stabilization Gate: COMPLETE (S01..S13)
+- **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
+- **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
+- **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### S13 Continuous Ribbon/Size/Dirty Sync, Shortcut Conflicts, Complete Tooltips & `Ctrl+H` Hygiene (2026-11-24)
+- **Session Scope:** BUG-28, BUG-29, HYG-03, HYG-07 (Track 1 · Group F3 / DEP-3 — Track 1 Final Gate).
+- **BUG-28 (`misora.py` — DEP-3):**
+  - Resolved active card editor via `_get_card_text_widget(self.current_box_idx)` inside `_insert_text_wrapper()` and `on_insert_ruby()` when `var_continuous_view.get()` is active with story cards, eliminating mutation of the hidden `txt_continuous` fallback widget.
+  - Removed redundant `_on_dialogue_edited()` call from `_insert_text_wrapper()` so that `apply_ngui_wrapper()`'s subsequent `_commit_widget_edit(target)` commits ONCE and triggers `_dirty_state_changed()`, fixing stale `*` title & Undo menu on first click in Page View.
+  - Added `self._commit_widget_edit(target)` inside `on_insert_font_size()` to flush font size tag insertions to AST with undo delta recording, while preserving exact `<size=...>` / `</size>` syntax.
+  - Added translation lock guards (`is_box_locked`) in `apply_ngui_wrapper()`, `on_insert_ruby()`, and `on_insert_font_size()` preventing ribbon formatting mutations on locked boxes.
+- **BUG-29 & HYG-07 (`misora.py`):**
+  - Reconciled canonical shortcut dispatch router on `MisoraShortcuts` bindtag:
+    - Fixed `Ctrl+T` conflict: `Ctrl+T` (no shift) dispatches `self.on_open_translator_assistant()`, while `Ctrl+Shift+T` dispatches `self.on_copy_ai_prompt()`, matching menu accelerators and root bindings.
+    - Removed rogue `<Control-C>` binding to `_toggle_continuous_shortcut()` from `_bind_shortcuts()`, eliminating collision with `<Control-Shift-C>` (`on_copy_script()`) and protecting native widget copy.
+    - Added missing `Ctrl+R` to `_on_misora_shortcut()` to invoke `self.on_insert_ruby()`.
+    - Whitelisted explicit `Ctrl+Alt+X` (Cut Box), `Ctrl+Alt+C` (Copy Box), `Ctrl+Alt+V` (Paste Box), and `Ctrl+Alt+A` (Select Whole Story) in `_on_misora_shortcut()` while returning `None` for all other keys, preserving international AltGr text composition (e.g. `AltGr+E` -> `€`).
+    - Added root bindings for `<Control-Alt-x/c/v/a>` (both lower and uppercase).
+  - Ensured `bind_all("<Control-h>", ...)` and `<Control-H>` route through dedicated handler `_on_ctrl_h()` returning `'break'` (`HYG-07`), preventing native Tk Text backspace deletion and double-dispatch. Also converted `<Control-f>` and `<Control-F>` to dedicated `'break'`-returning handlers.
+- **HYG-03 (`misora.py` — DEP-3):**
+  - Attached 350ms hover `ToolTip` and verified non-empty Unicode fallback text across all ribbon and toolbar controls:
+    - `btn_ruby`, `btn_dash`, `btn_player`, format buttons (`B`, `I`, `U`, `S`, `Sub`, `Sup`), `btn_size`, `cb_compiled` (Preview), `cb_cont` (Continuous View), `cb_sel_box` (Select Box), `btn_ai_prompt`, `btn_translate`, `btn_prev`, `btn_next`.
+    - Exposed controls cleanly as attributes on `MisoraApp` (`btn_ruby`, `btn_dash`, `btn_player`, `btn_format_buttons`, `btn_size`, `cb_compiled`, `cb_cont`, `cb_sel_box`, `btn_ai_prompt`, `btn_translate`).
+    - Verified 100% of shortcuts advertised in tooltip text are bound and functional on disk.
+- **New Test Suite:** Added `tests/test_p3_s13_ribbon_shortcuts.py` with 3 Defect Probes (failing-first) and 1 Regression Guard (passing). Full test suite discovered count: 308 tests across 35 modules (268 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s13_ribbon_shortcuts.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/*.py`, `assets/*.py`.
 
 ### S12 Logger Flush Barrier/Teardown, DPAPI Fail-Closed, Reload Env Disposal, Deferred Startup & Splash Safety (2026-11-24)
 - **Session Scope:** BUG-32, BUG-33, BUG-34, BUG-35, BUG-36 (Track 1 · Group F2 / DEP-9 part 1 — Split from Ribbon per Grok R2).
@@ -777,7 +808,7 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 |---|---|---|---|---|
 | **BOX0-NO-SELECT-CHECKBOX** | REOPENED (2026-11-24: BUG-41) | `misora.py:_render_continuous_view` | Historically added Checkbutton to Box 0 card header (`hdr_0`). Reopened for selection mode routing and Box 0 copy integrity under BUG-41. | 2 |
 | **BOX1-COPIES-BOX0-METADATA** | RESOLVED | `core/script_codec.py:serialize()` | Removed `0 in box_indices` auto-emission branch in `serialize()`. Auto-emission now only emits metadata when `scope in ("all", "metadata")` or when Box 0 (`-1`) is explicitly selected. | 2 |
-| **CTRL-ALT-HOTKEYS-BLOCKED** | REOPENED (2026-11-24: BUG-29) | `misora.py:_on_misora_shortcut()` | Historically fixed Windows Alt modifier bitmask. Reopened for AltGr/Ctrl+Alt keyboard shortcut router resolution under BUG-29. | 2 |
+| **CTRL-ALT-HOTKEYS-BLOCKED** | RESOLVED (2026-11-24: S13 / BUG-29) | `misora.py:_on_misora_shortcut(), _bind_shortcuts()` | Whitelisted explicit Ctrl+Alt+X/C/V/A app accelerators in `_on_misora_shortcut()` and root bindings; all other Ctrl+Alt keys pass through to preserve international AltGr text composition. Covered by `test_p3_s13:test_probe_02`. | 2 |
 | **CONTINUOUS-EDIT-NO-COMMIT** | RESOLVED | `misora.py:_commit_widget_edit()` | Decoupled Page View Box 0 widgets and Continuous View Card -1 from `is_box0_active` boolean guard. Edits to continuous cards and Box 0 synopsis now commit directly to AST document. | 2 |
 | **BOX0-SWITCH-LOCKS-EDITOR** | RESOLVED | `misora.py:_on_toggle_continuous_view`, `on_prev_box`, `on_next_box` | Restores caret and keyboard focus immediately and via `after_idle` upon view toggles and box navigation. Guarded `_cont_focus_job` against stale cross-view firing. | 2 |
 | **VOICE-CUE-DISPLAY-MISSING** | RESOLVED | `core/story_ast.py:_rebuild_boxes` | Captured `cmd_id == 12` voice cues with `"vo_"` prefix; guarded breaker loop `elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:` so voice cues are never skipped or discarded. | 2 |
@@ -794,8 +825,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **TLS-VERIFICATION-DISABLED** | RESOLVED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests strictly enforce valid TLS certificate and hostname verification. Covered by `test_phase5_mtl_security_preview.py:test_03`. | 5 |
 | **API-KEYS-PLAINTEXT** | RESOLVED (2026-11-24: S12 / BUG-33) | `core/security.py`, `core/mtl_engine.py`, `misora.py` | DPAPISecurityError fail-closed encryption, non-truncating in-memory serialization before save, ciphertext preservation and RuntimeWarning on decryption failure. Covered by `test_p3_s12:test_02`. | 5 |
 | **TAGMASKER-INCOMPLETE** | RESOLVED | `core/ngui_tags.py:15-161` | Central single source of truth for NGUI markup, hyphen gradients, multiline ruby, placeholders, and full shielding/unshielding. Covered by `test_phase5:test_01`. | 5 |
-| **SIZE-RIBBON-NO-COMMIT** | REOPENED (2026-11-24: BUG-28) | `misora.py:6374-6394` | Historically routed font size insertion to central commit (test_37). Reopened for Continuous View ribbon commit target desync under BUG-28. | 2 |
-| **CONTINUOUS-RIBBON-TARGET-STALE** | REOPENED (2026-11-24: BUG-28) | `misora.py` | Historically resolved active card dynamically. Reopened for Continuous View ribbon formatting desync under BUG-28. | 2 |
+| **SIZE-RIBBON-NO-COMMIT** | RESOLVED (2026-11-24: S13 / BUG-28) | `misora.py:on_insert_font_size()` | Wired `_commit_widget_edit(target)` in `on_insert_font_size()`, flushing size tag insertion to AST and recording undo delta. Covered by `test_p3_s13:test_probe_01`. | 2 |
+| **CONTINUOUS-RIBBON-TARGET-STALE** | RESOLVED (2026-11-24: S13 / BUG-28) | `misora.py:_insert_text_wrapper(), on_insert_ruby()` | Resolved active card widget via `_get_card_text_widget(self.current_box_idx)` in Continuous View with cards, eliminating hidden `txt_continuous` pollution; removed redundant `_on_dialogue_edited()` in `_insert_text_wrapper()` restoring Page View dirty `*` title update. Covered by `test_p3_s13:test_probe_01`. | 2 |
 | **UNDO-STORM** | RESOLVED | `misora.py` | Batch undo applies all deltas to model first, then refreshes UI once in `finally`. | 2 |
 | **SEARCH-RACE** | RESOLVED | `misora.py` | UI thread snapshot isolation via `on_start_search()`; covered by `test_s6_threading_decoupling`. | 2 |
 | **CLIP-SHADOW** | RESOLVED | `misora.py` | If system clipboard differs from internal box snapshot text, internal snapshot is discarded. Covered by `test_35`. | 2 |
