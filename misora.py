@@ -6845,11 +6845,14 @@ class MisoraApp(tk.Tk):
             self.current_box_idx = max(0, min(self.current_box_idx, len(doc.boxes) - 1))
             self._locked_boxes = {i for i, b in enumerate(doc.boxes) if _get_box_uid(b) in self._locked_box_uids}
             self._modified_boxes = {i for i, b in enumerate(doc.boxes) if _get_box_uid(b) in self._modified_box_uids}
-            self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), b.clean_text) for i, b in enumerate(doc.boxes)}
+            self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), "") for i, b in enumerate(doc.boxes)}
             for b in doc.boxes:
                 b_uid = _get_box_uid(b)
-                if b_uid is not None and b_uid not in self._original_jp_by_uid:
-                    self._original_jp_by_uid[b_uid] = b.clean_text
+                if b_uid is not None:
+                    if b_uid not in self._original_jp_by_uid:
+                        self._original_jp_by_uid[b_uid] = b.clean_text
+                    if hasattr(self, "sync_manager"):
+                        self.sync_manager.register_jp_key(b_uid, self._original_jp_by_uid[b_uid])
         else:
             self.current_box_idx = 0
             self._locked_boxes = set()
@@ -8810,7 +8813,7 @@ class MisoraApp(tk.Tk):
             if hasattr(self, "_modified_box_uids"):
                 self._modified_boxes = {i for i, b in enumerate(self.current_doc.boxes) if _get_box_uid(b) in self._modified_box_uids}
             if hasattr(self, "_original_jp_by_uid"):
-                self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), b.clean_text) for i, b in enumerate(self.current_doc.boxes)}
+                self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), "") for i, b in enumerate(self.current_doc.boxes)}
         else:
             self._locked_boxes = set()
             self._modified_boxes = set()
@@ -8841,6 +8844,77 @@ class MisoraApp(tk.Tk):
 
     def on_insert_playername(self) -> None:
         self.apply_ngui_wrapper("{playername}", "")
+
+    def _sync_modified_boxes_to_xuat(
+        self,
+        doc: Any,
+        boxes_or_indices: Iterable[Any],
+        orig_jp_map: Dict[int, str],
+        backup_dir: Optional[Path] = None,
+    ) -> Set[str]:
+        """
+        Synchronize modified boxes to XUAT dictionaries with immutable b_uid JP key resolution
+        and conflict preview gate (BUG-25 / DEP-7).
+        Returns set of synced file names.
+        """
+        if not self.var_sync_xuat.get() or not self.xuat_search_roots or not doc or not getattr(doc, "boxes", None):
+            return set()
+
+        synced_files: Set[str] = set()
+        for item in boxes_or_indices:
+            if isinstance(item, int):
+                if not (0 <= item < len(doc.boxes)):
+                    continue
+                box_obj = doc.boxes[item]
+                b_idx = item
+            else:
+                box_obj = item
+                b_idx = getattr(box_obj, "index", -1)
+
+            b_uid = _get_box_uid(box_obj)
+            orig_key = ""
+            if b_uid is not None:
+                # Prefer document's orig_jp_map before global sync_manager cache
+                orig_key = orig_jp_map.get(b_uid, "") or self.sync_manager.get_jp_key(b_uid, "")
+                if not orig_key:
+                    # Newly inserted or untracked box with b_uid: skip XUAT sync, NO positional fallback!
+                    continue
+            else:
+                # b_uid is None: only then fall back to positional lookup
+                if hasattr(self, "_original_box_texts") and 0 <= b_idx < len(doc.boxes):
+                    orig_key = self._original_box_texts.get(b_idx, "")
+                if not orig_key:
+                    continue
+
+            # Preview matches and gate with conflict confirmation
+            previews = self.sync_manager.preview_matches(
+                japanese_key=orig_key,
+                search_roots=self.xuat_search_roots,
+            )
+            has_conflict = any(p.is_conflict for p in previews)
+            if has_conflict:
+                conflict_files = ", ".join(sorted({p.file_path.name for p in previews if p.is_conflict}))
+                prompt_msg = (
+                    f"Conflicting translations found in XUAT dictionaries for:\n"
+                    f"'{orig_key}'\n\n"
+                    f"Conflicting file(s): {conflict_files}\n\n"
+                    f"Do you want to overwrite all occurrences with:\n"
+                    f"'{box_obj.clean_text}'?"
+                )
+                if not messagebox.askyesno("XUAT Translation Conflict", prompt_msg):
+                    continue
+
+            matches = self.sync_manager.find_and_update(
+                japanese_key=orig_key,
+                new_english_text=box_obj.clean_text,
+                search_roots=self.xuat_search_roots,
+                backup=True,
+                backup_dir=backup_dir,
+            )
+            for m in matches:
+                synced_files.add(m.file_path.name)
+
+        return synced_files
 
     # -------------------------------------------------------------------------
     # Save & Patch Actions (Byte-Exact In-Place Repack)
@@ -8953,24 +9027,20 @@ class MisoraApp(tk.Tk):
 
             if self.var_sync_xuat.get() and self.xuat_search_roots:
                 try:
-                    boxes_to_sync = sorted(self._modified_boxes) if self._modified_boxes else [self.current_box_idx]
-                    synced_files: Set[str] = set()
-                    for b_idx in boxes_to_sync:
-                        if not (0 <= b_idx < len(self.current_doc.boxes)):
-                            continue
-                        box_obj = self.current_doc.boxes[b_idx]
-                        orig_key = self._original_box_texts.get(b_idx, box_obj.clean_text)
-                        matches = self.sync_manager.find_and_update(
-                            japanese_key=orig_key,
-                            new_english_text=box_obj.clean_text,
-                            search_roots=self.xuat_search_roots,
-                            backup=True,
-                            backup_dir=backup_dir
-                        )
-                        for m in matches:
-                            synced_files.add(m.file_path.name)
-                        self._original_box_texts[b_idx] = box_obj.clean_text
+                    if self.current_doc and getattr(self.current_doc, "boxes", None) and not getattr(self, "_original_jp_by_uid", None):
+                        self._original_jp_by_uid = {
+                            _get_box_uid(b): b.clean_text for b in self.current_doc.boxes if _get_box_uid(b) is not None
+                        }
+                        for b_uid, jp in self._original_jp_by_uid.items():
+                            self.sync_manager.register_jp_key(b_uid, jp)
 
+                    boxes_to_sync = sorted(self._modified_boxes) if self._modified_boxes else [self.current_box_idx]
+                    synced_files = self._sync_modified_boxes_to_xuat(
+                        doc=self.current_doc,
+                        boxes_or_indices=boxes_to_sync,
+                        orig_jp_map=getattr(self, "_original_jp_by_uid", {}),
+                        backup_dir=backup_dir,
+                    )
                     if synced_files:
                         files_str = ", ".join(sorted(synced_files))
                         self.lbl_status.config(text=self.lbl_status.cget("text") + f" | Synced XUAT file(s): {files_str}")
@@ -9116,18 +9186,13 @@ class MisoraApp(tk.Tk):
                 doc = entry.get("doc")
                 orig_by_uid = entry.get("original_jp_by_uid", {})
                 try:
-                    for box_obj in doc.boxes:
-                        b_uid = _get_box_uid(box_obj)
-                        if b_uid not in modified_uids:
-                            continue
-                        orig_key = orig_by_uid.get(b_uid, box_obj.clean_text)
-                        self.sync_manager.find_and_update(
-                            japanese_key=orig_key,
-                            new_english_text=box_obj.clean_text,
-                            search_roots=self.xuat_search_roots,
-                            backup=True,
-                            backup_dir=backup_dir,
-                        )
+                    boxes_to_sync = [b for b in doc.boxes if _get_box_uid(b) in modified_uids]
+                    self._sync_modified_boxes_to_xuat(
+                        doc=doc,
+                        boxes_or_indices=boxes_to_sync,
+                        orig_jp_map=orig_by_uid,
+                        backup_dir=backup_dir,
+                    )
                 except Exception as e:
                     self.logger.warning("UI / Theme / Config", f"Secondary XUAT sync failed for inactive doc: {e}")
 

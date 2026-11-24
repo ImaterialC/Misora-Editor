@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .story_ast import norm_search
-from .text_encoding import detect_encoding_and_decode, encode_with_metadata
+from .text_encoding import detect_encoding_and_decode, encode_with_metadata, write_atomic_encoded
 
 
 @dataclass
@@ -77,14 +77,29 @@ class XUnitySyncManager:
         # Cache of immutable Japanese source keys per box uid / identity
         self.jp_source_cache: Dict[int, str] = {}
 
-    def register_jp_key(self, box_uid: int, jp_text: str) -> None:
+    def register_jp_key(self, box_uid: Optional[int], jp_text: str) -> None:
         """Register an immutable Japanese source key for a box to prevent English overwrite."""
-        if box_uid not in self.jp_source_cache and jp_text:
+        if box_uid is not None and box_uid not in self.jp_source_cache and jp_text:
             self.jp_source_cache[box_uid] = jp_text
 
-    def get_jp_key(self, box_uid: int, fallback: str = "") -> str:
+    def register_jp_keys(self, keys: Dict[int, str]) -> None:
+        """Bulk register immutable Japanese source keys by box UID."""
+        for uid, text in keys.items():
+            self.register_jp_key(uid, text)
+
+    def get_jp_key(self, box_uid: Optional[int], fallback: str = "") -> str:
         """Retrieve original Japanese source key, falling back to current text if untracked."""
+        if box_uid is None:
+            return fallback
         return self.jp_source_cache.get(box_uid, fallback)
+
+    def has_jp_key(self, box_uid: Optional[int]) -> bool:
+        """Check if an immutable Japanese source key is registered for box_uid."""
+        return box_uid is not None and box_uid in self.jp_source_cache
+
+    def clear_jp_keys(self) -> None:
+        """Clear cached Japanese source keys."""
+        self.jp_source_cache.clear()
 
     def preview_matches(
         self,
@@ -95,6 +110,9 @@ class XUnitySyncManager:
         Preview matching lines across search_roots without writing any changes to disk.
         Flags duplicate or conflicting translations for user inspection.
         """
+        if not japanese_key:
+            return []
+
         norm_target = norm_search(japanese_key)
         matches: List[SyncMatch] = []
         seen_translations: Set[str] = set()
@@ -138,6 +156,10 @@ class XUnitySyncManager:
                         )
                         matches.append(m)
 
+        if len(seen_translations) > 1:
+            for m in matches:
+                m.is_conflict = True
+
         return matches
 
     def find_and_update(
@@ -152,6 +174,9 @@ class XUnitySyncManager:
         Search for matching translation entries and update them with atomic write.
         Strictly preserves BOM, CRLF/LF line endings, key whitespace, and escapes newlines.
         """
+        if not japanese_key:
+            return []
+
         norm_target = norm_search(japanese_key)
         matches: List[SyncMatch] = []
         escaped_new_val = escape_xuat_value(new_english_text)
@@ -209,25 +234,14 @@ class XUnitySyncManager:
                             bak_path = tf.with_suffix(f".bak_{ts}")
                         shutil.copy2(tf, bak_path)
 
-                    # Reassemble with preserved BOM, encoding, and native line endings
+                    # Reassemble with preserved BOM, encoding, and native line endings via atomic write (BUG-26)
                     updated_text = newline.join(new_lines)
-                    out_bytes = encode_with_metadata(
+                    write_atomic_encoded(
+                        tf,
                         updated_text,
                         encoding=decoded.encoding,
                         has_bom=decoded.has_bom,
                         newline=decoded.newline,
                     )
-
-                    # Atomic write via same-directory tmp file
-                    tmp_file = tf.with_name(f"{tf.name}.{os.getpid()}.tmp")
-                    try:
-                        tmp_file.write_bytes(out_bytes)
-                        os.replace(tmp_file, tf)
-                    finally:
-                        if tmp_file.exists():
-                            try:
-                                tmp_file.unlink()
-                            except Exception:
-                                pass
 
         return matches

@@ -91,6 +91,21 @@ Test suites included in the 284 tests (exact disk discovery):
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
 
+### S10 Immutable box.uid XUAT JP Keys, Save Conflict Preview Gate & Atomic XUAT Dictionary Writes (2026-11-24)
+- **Session Scope:** BUG-25, BUG-26 (Track 1 · Group E / DEP-7 part 2 — Split from MTL per Grok R1).
+- **BUG-25 (`misora.py`, `core/xunity_sync.py`):**
+  - Registered immutable Japanese source keys by `box.uid` backed by per-document `_original_jp_by_uid` and `XUnitySyncManager.register_jp_key()`/`get_jp_key()`; updated `open_file()` to populate both caches upon story load and eliminated fallback to current/edited English text.
+  - Eliminated the destructive English overwrite in `on_save()` (`self._original_box_texts[b_idx] = box_obj.clean_text`), guaranteeing repeated saves of the same box (`EN1 -> EN2`) continue matching the immutable original Japanese source key across edits and structural mutations.
+  - Implemented shared helper `_sync_modified_boxes_to_xuat()` used across both `on_save()` and `_save_document_entry()`: strictly resolves immutable JP keys by `b_uid` without positional fallback when `b_uid is not None`, checks `preview_matches()`, and prompts the user via `messagebox.askyesno` ONLY when genuine `is_conflict=True` duplicate translations exist in the XUAT dictionary file, proceeding without modal friction on clean matches.
+  - In `core/xunity_sync.py`, updated `register_jp_key()` and `get_jp_key()` to support `Optional[int]` box UIDs, added `has_jp_key()`, `clear_jp_keys()`, and `register_jp_keys()`, ensured `preview_matches()` propagates `is_conflict`, and added empty-key guards.
+- **BUG-26 (`core/xunity_sync.py:find_and_update()`):**
+  - Replaced non-unique `f'{tf.name}.{os.getpid()}.tmp'` and bare `os.replace` in `find_and_update()` with `core.text_encoding.write_atomic_encoded()`.
+  - Preserves UTF-8 BOM, encoding, and exact CRLF/LF line endings without double newlines, backed by bounded 5-attempt retry loop for Windows sharing violations.
+- **New Test Suite:** Added `tests/test_p3_s10_xuat_integrity.py` with 2 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 288 tests across 32 modules (248 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/xunity_sync.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s10_xuat_integrity.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/search_engine.py`, `core/mtl_engine.py`, `core/bundle_io.py`.
+
 ### S09 Multi-File Replace-All Cache Keys/Shared Matcher/Closed-File Undo & Collision-Resistant Backups (2026-11-24)
 - **Session Scope:** BUG-24, BUG-20 (Track 1 · Group D2).
 - **BUG-24 (`misora.py`):**
@@ -763,6 +778,10 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **SEARCH-ERRORS-SNAPSHOT-ISOLATION** | RESOLVED (2026-11-24: S08 / BUG-22) | `core/search_engine.py`, `misora.py` | Structured `on_error` and `skipped_entries`; `Grok-E02` snapshot failure isolation (never live doc); monotonic `_search_seq` guard; accurate raw spans (`QW-E06`). Covered by `test_p3_s08:test_probe_2`. | 2 |
 | **PROJECT-ROOTS-BOUNDED-REPLACEMENT** | RESOLVED (2026-11-24: S08 / BUG-23) | `misora.py` | Bounded root resolution to `[Text, RedirectedResources]` (never `plugins/`/`config/`); clean project replacement (`GEM-N01`); no auto-injected `input`/`output`. Covered by `test_p3_s08:test_probe_3`. | 2 |
 | **SEARCH-FOCUS-GUTTER-NOOP-KEYS** | RESOLVED (2026-11-24: S08 / BUG-30) | `misora.py` | Continuous search jump focuses active card dialogue widget; gutter updates on dialogue edit; no-op navigation keys skip dirty marking. Covered by `test_p3_s08:test_probe_4`. | 2 |
+| **REPLACE-ALL-CANONICAL-KEYS-AND-UNDO** | RESOLVED (2026-11-24: S09 / BUG-24) | `misora.py` | Canonical `open_documents` keys `'env'`/`'obj'`, `dispose_unity_env()`, path case normalization, in-memory cache sync, shared matcher spans, closed-file undo confirmation dialog. Covered by `test_p3_s09:test_probe_1-5`. | 2 |
+| **COLLISION-RESISTANT-BACKUPS** | RESOLVED (2026-11-24: S09 / BUG-20) | `misora.py` | Microsecond timestamp + 8-char SHA-256 hash prefix + collision loop across `on_save`, `_save_document_entry`, and `on_replace_all`. Covered by `test_p3_s09:test_probe_6-7`. | 2 |
+| **XUAT-JP-KEY-OVERWRITE** | RESOLVED (2026-11-24: S10 / BUG-25) | `misora.py`, `core/xunity_sync.py` | Register immutable Japanese source keys by `box.uid` backed by per-doc `_original_jp_by_uid`; never overwrite JP keys with saved English text; `preview_matches()` conflict gate prompts user only when duplicate translations exist. Covered by `test_p3_s10_xuat_integrity:test_probe_1`. | 2 |
+| **XUAT-ATOMIC-WRITES** | RESOLVED (2026-11-24: S10 / BUG-26) | `core/xunity_sync.py:find_and_update()` | `write_atomic_encoded()` replaces PID temp file and bare `os.replace`; unique timestamped temp name, bounded Windows retry, UTF-8 BOM, encoding and CRLF/LF preservation. Covered by `test_p3_s10_xuat_integrity:test_probe_2`. | 1 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 
