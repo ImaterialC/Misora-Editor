@@ -8,6 +8,7 @@ and local XUAT dictionary caching using Python standard library only (urllib.req
 from __future__ import annotations
 
 import json
+import queue
 import re
 import ssl
 import sys
@@ -355,18 +356,27 @@ class MTLEngine:
 def translate_async(
     text: str,
     config: MTLConfig,
-    on_success: Callable[[str], None],
-    on_error: Callable[[str], None],
+    on_success: Optional[Callable[[str], None]] = None,
+    on_error: Optional[Callable[[str], None]] = None,
     xuat_cache: Optional[Dict[str, str]] = None,
+    *,
+    out_queue: Optional[queue.Queue] = None,
+    metadata: Optional[Any] = None,
 ) -> threading.Thread:
-    """Run translation in a background worker thread."""
+    """Run translation in a background worker thread (Rule 15 Tk-free contract)."""
     def worker():
         try:
             engine = MTLEngine(config)
             result = engine.translate(text, config=config, xuat_cache=xuat_cache)
-            on_success(result)
+            if out_queue is not None:
+                out_queue.put(("success", metadata, result))
+            if on_success is not None:
+                on_success(result)
         except Exception as exc:
-            on_error(str(exc))
+            if out_queue is not None:
+                out_queue.put(("error", metadata, str(exc)))
+            if on_error is not None:
+                on_error(str(exc))
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()

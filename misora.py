@@ -1201,6 +1201,11 @@ def _get_box_uid(box: Any) -> Optional[int]:
     return uid
 
 
+def _hash_mtl_source(text: str) -> str:
+    """Canonical SHA-256 hash helper for MTL source text identity matching (BUG-27)."""
+    return hashlib.sha256((text or "").strip().encode("utf-8")).hexdigest()
+
+
 def compute_stable_lock_key(box_ordinal: int, original_jp_text: str) -> Tuple[int, str]:
     """Compute stable lock identity (box_ordinal, sha256(original_jp_text)) (S06 / BUG-12 / Invariant 6)."""
     return (box_ordinal, hashlib.sha256(original_jp_text.encode("utf-8")).hexdigest())
@@ -1412,6 +1417,14 @@ class MisoraApp(tk.Tk):
         self._result_idx_to_line: Dict[int, int] = {}
         self._selected_result_idx: Optional[int] = None
 
+        # Background MTL worker queue and request sequencing (Rule 15 / BUG-27)
+        self._mtl_queue: queue.Queue = queue.Queue()
+        self._mtl_request_seq: int = 0
+        self._latest_applied_mtl_seq: Dict[Any, int] = {}
+        self._mtl_poll_job: Optional[str] = None
+        self._hash_mtl_source = _hash_mtl_source
+        self._get_box_uid = _get_box_uid
+
         # Auto-detect project paths
         self._detect_environment()
 
@@ -1441,6 +1454,7 @@ class MisoraApp(tk.Tk):
 
         # Start periodic poll for background tasks
         self._search_poll_job = self.after(100, self._process_search_queue)
+        self._mtl_poll_job = self.after(50, self._poll_mtl_queue)
 
         # Restore saved window geometry and view toggles (Bug #2 / S9c)
         if hasattr(self, "_saved_geometry") and self._saved_geometry:
@@ -1586,6 +1600,12 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
                 self._search_poll_job = None
+            if hasattr(self, "_mtl_poll_job") and self._mtl_poll_job:
+                try:
+                    self.after_cancel(self._mtl_poll_job)
+                except Exception:
+                    pass
+                self._mtl_poll_job = None
             if hasattr(self, "_toast_after_id") and self._toast_after_id:
                 try:
                     self.after_cancel(self._toast_after_id)
@@ -1608,6 +1628,12 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._search_poll_job = None
+        if hasattr(self, "_mtl_poll_job") and self._mtl_poll_job:
+            try:
+                self.after_cancel(self._mtl_poll_job)
+            except Exception:
+                pass
+            self._mtl_poll_job = None
         if hasattr(self, "_toast_after_id") and self._toast_after_id:
             try:
                 self.after_cancel(self._toast_after_id)
@@ -11483,7 +11509,7 @@ class MisoraApp(tk.Tk):
         self._translator_dialog = TranslatorAssistantDialog(self)
 
     def on_translate_current_box(self) -> None:
-        """Translate the dialogue in the active box using configured active engine (F8)."""
+        """Translate the dialogue in the active box using configured active engine (F8 / Rule 15 / BUG-27)."""
         if not self.current_doc or not self.current_doc.boxes:
             self.show_toast("No story document loaded")
             return
@@ -11503,38 +11529,21 @@ class MisoraApp(tk.Tk):
         self.show_toast(f"Translating Box {b_idx + 1} with {engine_name}...")
         self.lbl_status.config(text=f"Translating Box {b_idx + 1} with {engine_name}...")
 
+        b_uid = _get_box_uid(box)
+        doc_id = id(self.current_doc)
+        file_path_str = str(self.current_file_path or "")
+        src_hash = _hash_mtl_source(orig_text)
+        self._mtl_request_seq += 1
+        req_seq = self._mtl_request_seq
+        req_meta = (file_path_str, doc_id, b_uid, src_hash, req_seq)
+
+        mtl_q = self._mtl_queue
+
         def on_success(result: str):
-            def update_ui():
-                if not self.current_doc or b_idx >= len(self.current_doc.boxes):
-                    return
-                old_b = self.current_doc.boxes[b_idx]
-                self.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=b_idx,
-                        old_speaker=old_b.speaker,
-                        new_speaker=old_b.speaker,
-                        old_text=old_b.clean_text,
-                        new_text=result,
-                        file_path=str(self.current_file_path) if self.current_file_path else "",
-                        box_uid=old_b.uid,
-                        source="mtl",
-                    )
-                )
-                self.current_doc.inject_box(b_idx, old_b.speaker, result)
-                self._modified_boxes.add(b_idx)
-                self._mark_document_dirty(self.current_file_path)
-                self._dirty_state_changed()
-                self._update_views()
-                self.show_toast(f"✓ Translated Box {b_idx + 1} via {engine_name}")
-                self.lbl_status.config(text=f"Box {b_idx + 1} translated via {engine_name}")
-            self.after_idle(update_ui)
+            mtl_q.put(("box_success", req_meta, result, engine_name))
 
         def on_error(err: str):
-            def show_err():
-                self.logger.error("MTL", f"Translation failed for Box {b_idx + 1}: {err}")
-                self.show_toast(f"❌ Translation failed: {err}")
-                self.lbl_status.config(text=f"Translation failed: {err}")
-            self.after_idle(show_err)
+            mtl_q.put(("box_error", req_meta, str(err), engine_name))
 
         translate_async(
             orig_text,
@@ -11543,6 +11552,108 @@ class MisoraApp(tk.Tk):
             on_error=on_error,
             xuat_cache=getattr(self, "xuat_entries", None),
         )
+
+    def _poll_mtl_queue(self) -> None:
+        """Poll queued machine translation results on the main UI thread (Rule 15 / BUG-27)."""
+        if not self.winfo_exists():
+            return
+
+        try:
+            while True:
+                msg = self._mtl_queue.get_nowait()
+                kind = msg[0]
+                if kind in ("box_success", "success"):
+                    if kind == "box_success":
+                        _, req_meta, result, engine_name = msg
+                    else:
+                        _, req_meta, result = msg
+                        engine_name = self.mtl_config.active_engine
+                    file_path_str, doc_id, b_uid, src_hash, req_seq = req_meta
+
+                    # Identity guard 1: Verify active document has not changed
+                    if not self.current_doc or id(self.current_doc) != doc_id:
+                        self.logger.info("MTL", f"Discarded stale MTL result for doc_id {doc_id} (active doc switched)")
+                        continue
+                    if str(self.current_file_path or "") != file_path_str:
+                        self.logger.info("MTL", f"Discarded stale MTL result for path {file_path_str} (path changed)")
+                        continue
+
+                    # Identity guard 2: Re-resolve target box by box_uid
+                    found_idx = None
+                    if b_uid is not None:
+                        for idx, b in enumerate(self.current_doc.boxes):
+                            if _get_box_uid(b) == b_uid:
+                                found_idx = idx
+                                break
+                    if found_idx is None:
+                        self.logger.info("MTL", f"Discarded stale MTL result: box_uid {b_uid} not found in document")
+                        continue
+
+                    # Identity guard 3: Re-verify source text has not changed in flight
+                    target_box = self.current_doc.boxes[found_idx]
+                    curr_hash = _hash_mtl_source(target_box.clean_text)
+                    if curr_hash != src_hash:
+                        self.logger.info("MTL", f"Discarded stale MTL result: source text for box {found_idx + 1} changed in flight")
+                        continue
+
+                    # Identity guard 4: Re-verify box is not locked against edits
+                    if self.is_box_locked(found_idx):
+                        self.logger.info("MTL", f"Discarded MTL result: box {found_idx + 1} is locked")
+                        continue
+
+                    # Identity guard 5: Re-verify monotonic request sequence
+                    latest_seq = self._latest_applied_mtl_seq.get(b_uid, 0)
+                    if req_seq < latest_seq:
+                        self.logger.info("MTL", f"Discarded superseded MTL seq {req_seq} < {latest_seq} for box {b_uid}")
+                        continue
+                    self._latest_applied_mtl_seq[b_uid] = req_seq
+
+                    # Mutate AST first (S07 / BUG-13 mutate-before-undo)
+                    old_speaker = target_box.speaker
+                    old_text = target_box.clean_text
+                    old_segs = [s.text for s in target_box.segs]
+                    self.current_doc.inject_box(found_idx, old_speaker, result)
+                    new_box = self.current_doc.boxes[found_idx]
+                    new_segs = [s.text for s in new_box.segs]
+
+                    self.undo_journal.record(
+                        BoxEditDelta(
+                            box_index=found_idx,
+                            old_speaker=old_speaker,
+                            new_speaker=old_speaker,
+                            old_text=old_text,
+                            new_text=result,
+                            file_path=str(self.current_file_path) if self.current_file_path else "",
+                            box_uid=b_uid,
+                            source="mtl",
+                            old_seg_texts=old_segs,
+                            new_seg_texts=new_segs,
+                        )
+                    )
+                    self._modified_boxes.add(found_idx)
+                    self._mark_document_dirty(self.current_file_path)
+                    self._dirty_state_changed()
+                    self._update_views()
+                    self.show_toast(f"✓ Translated Box {found_idx + 1} via {engine_name}")
+                    self.lbl_status.config(text=f"Box {found_idx + 1} translated via {engine_name}")
+
+                elif kind in ("box_error", "error"):
+                    if kind == "box_error":
+                        _, req_meta, err_str, engine_name = msg
+                    else:
+                        _, req_meta, err_str = msg
+                        engine_name = self.mtl_config.active_engine
+                    file_path_str, doc_id, b_uid, src_hash, req_seq = req_meta
+                    if self.current_doc and id(self.current_doc) == doc_id:
+                        self.logger.error("MTL", f"Translation failed via {engine_name}: {err_str}")
+                        self.show_toast(f"❌ Translation failed: {err_str}")
+                        self.lbl_status.config(text=f"Translation failed: {err_str}")
+
+        except queue.Empty:
+            pass
+        finally:
+            if self.winfo_exists():
+                self._mtl_poll_job = self.after(50, self._poll_mtl_queue)
 
     def on_batch_translate(self) -> None:
         """Open automated batch translation dialog."""
@@ -12281,6 +12392,12 @@ class MTLSettingsDialog(tk.Toplevel):
         fg_panel = best_contrast_fg(t["bg_panel"])
         fg_editor = best_contrast_fg(t["bg_editor"])
 
+        self.worker_queue: queue.Queue = queue.Queue()
+        self._test_seq: int = 0
+        self._poll_job: Optional[str] = None
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
+
         content = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
         content.pack(fill="both", expand=True)
 
@@ -12452,20 +12569,67 @@ class MTLSettingsDialog(tk.Toplevel):
         self.lbl_tst_result.config(text=f"Testing {cfg.active_engine}...", fg=self.app.theme["fg_text"])
         self.btn_tst.config(state="disabled")
 
+        self._test_seq += 1
+        seq = self._test_seq
+        q = self.worker_queue
+
         def worker():
             engine = MTLEngine(cfg)
             ok, msg = engine.test_connection(cfg)
-            def update():
-                if self.winfo_exists():
-                    self.btn_tst.config(state="normal")
-                    col = self.app.theme.get("accent_green", "#2e7d32") if ok else self.app.theme.get("accent_yellow", "#f57c00")
-                    self.lbl_tst_result.config(text=msg, fg=col)
-            self.after_idle(update)
+            q.put(("test_result", seq, ok, msg))
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
+        self._schedule_poll()
+
+    def _schedule_poll(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+        if self.winfo_exists():
+            self._poll_job = self.after(50, self._poll_worker_queue)
+
+    def _poll_worker_queue(self):
+        self._poll_job = None
+        if not self.winfo_exists():
+            return
+
+        try:
+            while True:
+                msg = self.worker_queue.get_nowait()
+                if msg[0] == "test_result":
+                    _, seq, ok, text = msg
+                    if seq == self._test_seq and self.winfo_exists():
+                        self.btn_tst.config(state="normal")
+                        col = self.app.theme.get("accent_green", "#2e7d32") if ok else self.app.theme.get("accent_yellow", "#f57c00")
+                        self.lbl_tst_result.config(text=text, fg=col)
+        except queue.Empty:
+            pass
+
+        if self.winfo_exists() and str(self.btn_tst.cget("state")) == "disabled":
+            self._schedule_poll()
+
+    def _on_close(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
 
     def _on_save(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
         self.app.mtl_config = self._get_draft_config()
         self.app._save_user_prefs()
         self.app.show_toast(f"✓ Saved MTL preferences ({self.app.mtl_config.active_engine})")
@@ -12630,6 +12794,11 @@ class TranslatorAssistantDialog(tk.Toplevel):
         fg_panel = best_contrast_fg(t["bg_panel"])
         fg_editor = best_contrast_fg(t["bg_editor"])
 
+        self.worker_queue: queue.Queue = queue.Queue()
+        self._req_seq: int = 0
+        self._poll_job: Optional[str] = None
+        self._comp_widgets: Dict[str, Tuple[tk.Label, ttk.Button]] = {}
+
         # Top Bar: Box navigation and engine selector
         top_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=8)
         top_bar.pack(fill="x")
@@ -12748,7 +12917,94 @@ class TranslatorAssistantDialog(tk.Toplevel):
         status = "pinned on top" if self._is_pinned_top else "unpinned"
         self.app.show_toast(f"Translator Assistant {status}")
 
+    def _schedule_poll(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+        if self.winfo_exists():
+            self._poll_job = self.after(50, self._poll_worker_queue)
+
+    def _poll_worker_queue(self):
+        self._poll_job = None
+        if not self.winfo_exists():
+            return
+
+        try:
+            while True:
+                msg = self.worker_queue.get_nowait()
+                kind = msg[0]
+                if kind == "translate_success":
+                    _, meta, res = msg
+                    file_p, doc_id, b_uid, src_hash, req_seq, eng = meta
+                    if (
+                        self.winfo_exists()
+                        and self.app.current_doc
+                        and id(self.app.current_doc) == doc_id
+                        and str(self.app.current_file_path or "") == file_p
+                        and req_seq == self._req_seq
+                    ):
+                        b_idx = self.app.current_box_idx
+                        if 0 <= b_idx < len(self.app.current_doc.boxes):
+                            curr_box = self.app.current_doc.boxes[b_idx]
+                            if (
+                                _get_box_uid(curr_box) == b_uid
+                                and _hash_mtl_source(curr_box.clean_text) == src_hash
+                            ):
+                                self.txt_trans.delete("1.0", tk.END)
+                                self.txt_trans.insert("1.0", res)
+                                self.lbl_status.config(text=f"✓ Translated via {eng}")
+                elif kind == "translate_error":
+                    _, meta, err = msg
+                    file_p, doc_id, b_uid, src_hash, req_seq, eng = meta
+                    if (
+                        self.winfo_exists()
+                        and self.app.current_doc
+                        and id(self.app.current_doc) == doc_id
+                        and req_seq == self._req_seq
+                    ):
+                        self.lbl_status.config(text=f"❌ Translation failed: {err}")
+                elif kind == "fetch_all_result":
+                    _, meta, eng, ok, val = msg
+                    file_p, doc_id, b_uid, src_hash, req_seq = meta[:5]
+                    if (
+                        self.winfo_exists()
+                        and self.app.current_doc
+                        and id(self.app.current_doc) == doc_id
+                        and str(self.app.current_file_path or "") == file_p
+                        and req_seq == self._req_seq
+                    ):
+                        b_idx = self.app.current_box_idx
+                        if 0 <= b_idx < len(self.app.current_doc.boxes):
+                            curr_box = self.app.current_doc.boxes[b_idx]
+                            if (
+                                _get_box_uid(curr_box) == b_uid
+                                and _hash_mtl_source(curr_box.clean_text) == src_hash
+                            ):
+                                if eng in self._comp_widgets:
+                                    lbl_val, btn_use = self._comp_widgets[eng]
+                                    if lbl_val.winfo_exists() and btn_use.winfo_exists():
+                                        if ok:
+                                            fg_panel = best_contrast_fg(self.app.theme["bg_panel"])
+                                            lbl_val.config(text=val, fg=fg_panel)
+                                            btn_use.config(state="normal", command=lambda r=val: self._use_comp_text(r))
+                                        else:
+                                            lbl_val.config(text=f"Failed ({val})", fg=self.app.theme.get("accent_yellow", "#f57c00"))
+        except queue.Empty:
+            pass
+
+        if self.winfo_exists():
+            self._schedule_poll()
+
     def _on_close(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
         self.app._translator_dialog = None
         safe_grab_release(self)
         if self.winfo_exists():
@@ -12799,6 +13055,8 @@ class TranslatorAssistantDialog(tk.Toplevel):
         if not doc or not doc.boxes:
             return
         b_idx = self.app.current_box_idx
+        if b_idx < 0 or b_idx >= len(doc.boxes):
+            return
         box = doc.boxes[b_idx]
         text_to_tr = box.clean_text.strip()
         if not text_to_tr:
@@ -12807,19 +13065,21 @@ class TranslatorAssistantDialog(tk.Toplevel):
         eng = self.var_engine.get()
         self.lbl_status.config(text=f"Translating via {eng}...")
 
+        b_uid = _get_box_uid(box)
+        doc_id = id(doc)
+        file_p = str(self.app.current_file_path or "")
+        src_hash = _hash_mtl_source(text_to_tr)
+        self._req_seq += 1
+        req_seq = self._req_seq
+        meta = (file_p, doc_id, b_uid, src_hash, req_seq, eng)
+
+        q = self.worker_queue
+
         def on_success(res: str):
-            def update():
-                if self.winfo_exists():
-                    self.txt_trans.delete("1.0", tk.END)
-                    self.txt_trans.insert("1.0", res)
-                    self.lbl_status.config(text=f"✓ Translated via {eng}")
-            self.after_idle(update)
+            q.put(("translate_success", meta, res))
 
         def on_error(err: str):
-            def show():
-                if self.winfo_exists():
-                    self.lbl_status.config(text=f"❌ Translation failed: {err}")
-            self.after_idle(show)
+            q.put(("translate_error", meta, str(err)))
 
         cfg = MTLConfig.from_dict(self.app.mtl_config.to_dict())
         cfg.active_engine = eng
@@ -12831,12 +13091,16 @@ class TranslatorAssistantDialog(tk.Toplevel):
             on_error=on_error,
             xuat_cache=getattr(self.app, "xuat_entries", None),
         )
+        self._schedule_poll()
 
     def _on_fetch_all(self):
         doc = self.app.current_doc
         if not doc or not doc.boxes:
             return
         b_idx = self.app.current_box_idx
+        if b_idx < 0 or b_idx >= len(doc.boxes):
+            return
+        box = doc.boxes[b_idx]
         text_to_tr = doc.boxes[b_idx].clean_text.strip()
         if not text_to_tr:
             return
@@ -12848,7 +13112,15 @@ class TranslatorAssistantDialog(tk.Toplevel):
             w.destroy()
 
         t = self.app.theme
-        fg_panel = best_contrast_fg(t["bg_panel"])
+        b_uid = _get_box_uid(box)
+        doc_id = id(doc)
+        file_p = str(self.app.current_file_path or "")
+        src_hash = _hash_mtl_source(text_to_tr)
+        self._req_seq += 1
+        req_seq = self._req_seq
+
+        self._comp_widgets.clear()
+        q = self.worker_queue
 
         engines_to_query = ["Google", "DeepL", "Local / Sugoi", "LLM / OpenAI", "XUAT Cache"]
         for eng in engines_to_query:
@@ -12865,27 +13137,25 @@ class TranslatorAssistantDialog(tk.Toplevel):
             btn_use.pack(side="right")
             btn_use.config(state="disabled")
 
-            def make_worker(engine_name=eng, val_lbl=lbl_val, use_btn=btn_use):
+            self._comp_widgets[eng] = (lbl_val, btn_use)
+
+            meta = (file_p, doc_id, b_uid, src_hash, req_seq, eng)
+
+            def make_worker(engine_name=eng, request_meta=meta):
                 def worker():
                     cfg = MTLConfig.from_dict(self.app.mtl_config.to_dict())
                     cfg.active_engine = engine_name
                     engine = MTLEngine(cfg)
                     try:
                         res = engine.translate(text_to_tr, config=cfg, xuat_cache=getattr(self.app, "xuat_entries", None))
-                        def ok():
-                            if self.winfo_exists() and val_lbl.winfo_exists():
-                                val_lbl.config(text=res, fg=fg_panel)
-                                use_btn.config(state="normal", command=lambda r=res: self._use_comp_text(r))
-                        self.after_idle(ok)
+                        q.put(("fetch_all_result", request_meta, engine_name, True, res))
                     except Exception as exc:
-                        def fail():
-                            if self.winfo_exists() and val_lbl.winfo_exists():
-                                val_lbl.config(text=f"Failed ({exc})", fg=self.app.theme["accent_yellow"])
-                        self.after_idle(fail)
+                        q.put(("fetch_all_result", request_meta, engine_name, False, str(exc)))
 
                 threading.Thread(target=worker, daemon=True).start()
 
             make_worker()
+        self._schedule_poll()
 
     def _use_comp_text(self, text: str):
         self.txt_trans.delete("1.0", tk.END)
@@ -12965,6 +13235,9 @@ class BatchTranslateDialog(tk.Toplevel):
 
         self._cancelled = False
         self._is_running = False
+        self._batch_open: bool = False
+        self._close_requested: bool = False
+        self._poll_job: Optional[str] = None
         self.worker_queue: queue.Queue = queue.Queue()
 
         content = tk.Frame(self, bg=t["bg_panel"], padx=18, pady=12)
@@ -13023,18 +13296,43 @@ class BatchTranslateDialog(tk.Toplevel):
         self.btn_pin.configure(text="📌" if self._is_pinned_top else "📍")
         self.app.show_toast(f"Translator Assistant {'pinned on top' if self._is_pinned_top else 'unpinned'}")
 
+    def _end_undo_batch(self) -> None:
+        """Close open undo batch strictly once on the UI main thread (BUG-14)."""
+        if getattr(self, "_batch_open", False):
+            self._batch_open = False
+            try:
+                self.app.undo_journal.end_batch()
+            except Exception as exc:
+                self.app.logger.warning("MTL", f"end_batch error: {exc}")
+
+    def _schedule_poll(self):
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+        if self.winfo_exists():
+            self._poll_job = self.after(50, self._poll_worker_queue)
+
     def _on_close(self):
         if self._is_running:
             self._cancelled = True
-            self._is_running = False
+            self._close_requested = True
             try:
-                self.app.undo_journal.end_batch()
+                self.withdraw()
             except Exception:
                 pass
-            if self.app.current_file_path:
-                self.app._mark_document_dirty(self.app.current_file_path)
-                self.app._dirty_state_changed()
-                self.app._update_views()
+            return
+
+        if self._poll_job:
+            try:
+                self.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+
+        self._end_undo_batch()
         safe_grab_release(self)
         if self.winfo_exists():
             self.destroy()
@@ -13072,6 +13370,7 @@ class BatchTranslateDialog(tk.Toplevel):
 
         self._cancelled = False
         self._is_running = True
+        self._close_requested = False
         self.btn_start.config(state="disabled")
         self.progress.config(maximum=len(targets), value=0)
 
@@ -13096,6 +13395,7 @@ class BatchTranslateDialog(tk.Toplevel):
 
         # Begin undo batch on UI thread before worker thread starts
         self.app.undo_journal.begin_batch(f"Batch Translate ({len(targets)} boxes)")
+        self._batch_open = True
 
         def worker():
             translated_count = 0
@@ -13119,9 +13419,10 @@ class BatchTranslateDialog(tk.Toplevel):
                 self.worker_queue.put(("done", translated_count, skipped_locked))
 
         threading.Thread(target=worker, daemon=True).start()
-        self.after(50, self._poll_worker_queue)
+        self._schedule_poll()
 
     def _poll_worker_queue(self):
+        self._poll_job = None
         if not self.winfo_exists():
             return
         done_received = False
@@ -13133,26 +13434,28 @@ class BatchTranslateDialog(tk.Toplevel):
                 kind = msg[0]
                 if kind == "progress":
                     _, step, b_idx, spk, old_tx, new_tx = msg
-                    if self.winfo_exists():
+                    if self.winfo_exists() and not self._close_requested:
                         self.progress.config(value=step)
                         self.lbl_status.config(text=f"Translating Box {b_idx + 1} ({step} / {self.progress['maximum']})...")
                     # Apply on main UI thread (Rule 15)
                     doc = self.app.current_doc
                     if doc and 0 <= b_idx < len(doc.boxes):
-                        self.app.undo_journal.record(
-                            BoxEditDelta(
-                                box_index=b_idx,
-                                old_speaker=spk,
-                                new_speaker=spk,
-                                old_text=old_tx,
-                                new_text=new_tx,
-                                file_path=str(self.app.current_file_path or ""),
-                                box_uid=doc.boxes[b_idx].uid,
-                                source="mtl",
+                        if not self.app.is_box_locked(b_idx):
+                            # Mutate AST first (S07 / BUG-13)
+                            doc.inject_box(b_idx, spk, new_tx)
+                            self.app.undo_journal.record(
+                                BoxEditDelta(
+                                    box_index=b_idx,
+                                    old_speaker=spk,
+                                    new_speaker=spk,
+                                    old_text=old_tx,
+                                    new_text=new_tx,
+                                    file_path=str(self.app.current_file_path or ""),
+                                    box_uid=doc.boxes[b_idx].uid,
+                                    source="mtl",
+                                )
                             )
-                        )
-                        doc.inject_box(b_idx, spk, new_tx)
-                        self.app._modified_boxes.add(b_idx)
+                            self.app._modified_boxes.add(b_idx)
                 elif kind == "error":
                     _, step, b_idx, err_str = msg
                     self.app.logger.warning("MTL", f"Batch translate failed on box {b_idx}: {err_str}")
@@ -13165,12 +13468,18 @@ class BatchTranslateDialog(tk.Toplevel):
 
         if done_received:
             self._is_running = False
-            try:
-                self.app.undo_journal.end_batch()
-            except Exception:
-                pass
+            self._end_undo_batch()
             if self.app.current_file_path:
                 self.app._mark_document_dirty(self.app.current_file_path)
+            self.app._dirty_state_changed()
+            self.app._update_views()
+
+            if self._close_requested:
+                safe_grab_release(self)
+                if self.winfo_exists():
+                    self.destroy()
+                return
+
             if self.winfo_exists():
                 self.btn_start.config(state="normal")
                 stat_txt = f"Completed: {final_count} boxes translated."
@@ -13179,11 +13488,9 @@ class BatchTranslateDialog(tk.Toplevel):
                     stat_txt += f" ({final_skipped} locked boxes preserved)"
                     toast_txt += f" ({final_skipped} locked boxes preserved)"
                 self.lbl_status.config(text=stat_txt)
-                self.app._dirty_state_changed()
-                self.app._update_views()
                 self.app.show_toast(toast_txt)
-        elif self._is_running:
-            self.after(50, self._poll_worker_queue)
+        elif self._is_running or self._close_requested:
+            self._schedule_poll()
 
 
 def main():

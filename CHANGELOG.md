@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S11 — Main-Thread Queue-Only Async MTL, Stale-Result Identity Guard & Safe Batch Cancel
+- **Session Scope:** BUG-14, BUG-27 (Track 1 · Group F1 (DEP-6 — Split from XUAT per Grok R1)).
+- **BUG-27 (`core/mtl_engine.py`, `misora.py` — DEP-6):**
+  - Updated `core/mtl_engine.py:translate_async()` to accept optional `out_queue: Optional[queue.Queue] = None` and `metadata: Optional[Any] = None`, enforcing a strictly Tk-free worker contract that delivers results as `(trans, err, metadata)` via queue without any `self.after_idle(...)` or Tk calls.
+  - Eliminated all worker-thread `after_idle` calls across all 4 async MTL/connection-test paths (`on_translate_current_box`, `TranslatorAssistantDialog._on_translate`, `TranslatorAssistantDialog._on_fetch_all`, `MTLSettingsDialog._on_test_connection`), delivering all results strictly via main-thread-polled `queue.Queue` (`AGENTS.md` §15).
+  - In `on_translate_current_box()`, captured immutable 5-tuple context `(file_path, doc_id, b_uid, src_hash, req_seq)` on dispatch using shared `_hash_mtl_source(text)` helper; implemented `_poll_mtl_queue()` on the main thread with 5-stage identity guard:
+    1. Active document check (`self.current_file_path == file_path` and `id(self.current_doc) == doc_id`).
+    2. Box UID re-resolution: searches `self.current_doc.boxes` for `_get_box_uid(b) == b_uid`, cleanly accommodating box insertions, deletions, and positional shifts while in flight.
+    3. Source hash check: verifies `_hash_mtl_source(found_box.clean_text) == src_hash`, discarding result cleanly if the user edited the text while translation was in flight.
+    4. Translation lock check: verifies `is_box_locked(target_idx)` has not been engaged while in flight.
+    5. Monotonic sequence check: verifies `req_seq > self._latest_applied_mtl_seq` to reject out-of-order responses.
+  - Enforced mutate-before-undo in `_poll_mtl_queue()`: executes AST `inject_box()` first before recording `BoxEditDelta`.
+  - In `MTLSettingsDialog`, decoupled `_on_test_connection` to deliver via thread-safe `worker_queue`, protected by monotonic request sequence `_test_seq`, and cancels `_poll_job` via `after_cancel` on window close or save.
+  - In `TranslatorAssistantDialog`, decoupled `_on_translate` and `_on_fetch_all` to deliver via thread-safe `worker_queue` with active document/box identity checks, discarding stale results if navigated or edited, and cancels `_poll_job` on close.
+- **BUG-14 (`misora.py:BatchTranslateDialog` — DEP-6):**
+  - Added explicit `_batch_open: bool` tracking in `BatchTranslateDialog`.
+  - Implemented `_end_undo_batch()` to end the active undo journal batch strictly ONCE on the UI thread inside a guarded `try...except` block, preventing unbalanced batch operations or exceptions.
+  - Hardened `_on_close()`: if `_is_running`, sets `_cancelled = True`, `_close_requested = True`, hides the dialog via `self.withdraw()` to prevent re-entrant user interactions, and allows `_poll_worker_queue()` to continue polling until worker emits `('done', ...)`.
+  - Upon receiving `('done', ...)`, executes `_end_undo_batch()`, synchronizes dirty state, calls `safe_grab_release(self)`, and only then calls `super().destroy()`.
+  - Audited and cancelled pending `after(...)` timer IDs across dialog close and root application teardown (`_on_root_destroy`, `destroy()`).
+- **Test Suite:** Added `tests/test_p3_s11_mtl_threading.py` with 7 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 297 tests across 33 modules (257 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/mtl_engine.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s11_mtl_threading.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/xunity_sync.py`, `core/story_ast.py`, `core/security.py`, `core/logger.py`.
+
 ### S10 — Immutable box.uid XUAT JP Keys, Save Conflict Preview Gate & Atomic XUAT Dictionary Writes
 - **Session Scope:** BUG-25, BUG-26 (Track 1 · Group E (DEP-7 part 2 — Split from MTL per Grok R1)).
 - **BUG-25 (`misora.py`, `core/xunity_sync.py`):**

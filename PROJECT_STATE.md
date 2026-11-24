@@ -41,11 +41,13 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S09 Verification Baseline — 2026-11-24):
+Unit Test Suite (S11 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 284 tests across 31 modules (244 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 297 tests across 33 modules (257 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 284 tests (exact disk discovery):
+Test suites included in the 297 tests (exact disk discovery):
+  tests/test_p3_s11_mtl_threading.py        — 9 S11 main-thread queue-only async MTL, stale-result identity guard & safe batch cancel tests (all pass)
+  tests/test_p3_s10_xuat_integrity.py       — 4 S10 immutable box.uid XUAT JP keys, save conflict preview gate & atomic XUAT dictionary writes tests (all pass)
   tests/test_p3_s09_replace_all_backups.py  — 9 S09 multi-file replace-all cache keys, shared matcher, closed-file undo & collision-resistant backups tests (all pass)
   tests/test_p3_s08_search_roots_focus.py   — 6 S08 search match-case/errors/snapshots/spans, bounded project roots & search focus/gutter/no-op keyrelease tests (all pass)
   tests/test_p3_s07_undo_locks_raw.py       — 6 S07 caret paste dirty/lock, mutate-before-undo, non-contiguous cut undo, lock enforcement & read-only raw tests (all pass)
@@ -90,6 +92,31 @@ Test suites included in the 284 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S11 Main-Thread Queue-Only Async MTL, Stale-Result Identity Guard & Safe Batch Cancel (2026-11-24)
+- **Session Scope:** BUG-14, BUG-27 (Track 1 · Group F1 / DEP-6 — Split from XUAT per Grok R1).
+- **BUG-27 (`core/mtl_engine.py`, `misora.py` — DEP-6):**
+  - Updated `core/mtl_engine.py:translate_async()` to accept optional `out_queue: Optional[queue.Queue] = None` and `metadata: Optional[Any] = None`, enforcing a strictly Tk-free worker contract that delivers results as `(trans, err, metadata)` via queue without any `self.after_idle(...)` or Tk calls.
+  - Eliminated all worker-thread `after_idle` calls across all 4 async MTL/connection-test paths (`on_translate_current_box`, `TranslatorAssistantDialog._on_translate`, `TranslatorAssistantDialog._on_fetch_all`, `MTLSettingsDialog._on_test_connection`), delivering all results strictly via main-thread-polled `queue.Queue` (`AGENTS.md` §15).
+  - In `on_translate_current_box()`, captured immutable 5-tuple context `(file_path, doc_id, b_uid, src_hash, req_seq)` on dispatch using shared `_hash_mtl_source(text)` helper; implemented `_poll_mtl_queue()` on the main thread with 5-stage identity guard:
+    1. Active document check (`self.current_file_path == file_path` and `id(self.current_doc) == doc_id`).
+    2. Box UID re-resolution: searches `self.current_doc.boxes` for `_get_box_uid(b) == b_uid`, cleanly accommodating box insertions, deletions, and positional shifts while in flight.
+    3. Source hash check: verifies `_hash_mtl_source(found_box.clean_text) == src_hash`, discarding result cleanly if the user edited the text while translation was in flight.
+    4. Translation lock check: verifies `is_box_locked(target_idx)` has not been engaged while in flight.
+    5. Monotonic sequence check: verifies `req_seq > self._latest_applied_mtl_seq` to reject out-of-order responses.
+  - Enforced mutate-before-undo in `_poll_mtl_queue()`: executes AST `inject_box()` first before recording `BoxEditDelta`.
+  - In `MTLSettingsDialog`, decoupled `_on_test_connection` to deliver via thread-safe `worker_queue`, protected by monotonic request sequence `_test_seq`, and cancels `_poll_job` via `after_cancel` on window close or save.
+  - In `TranslatorAssistantDialog`, decoupled `_on_translate` and `_on_fetch_all` to deliver via thread-safe `worker_queue` with active document/box identity checks, discarding stale results if navigated or edited, and cancels `_poll_job` on close.
+- **BUG-14 (`misora.py:BatchTranslateDialog` — DEP-6):**
+  - Added explicit `_batch_open: bool` tracking in `BatchTranslateDialog`.
+  - Implemented `_end_undo_batch()` to end the active undo journal batch strictly ONCE on the UI thread inside a guarded `try...except` block, preventing unbalanced batch operations or exceptions.
+  - Hardened `_on_close()`: if `_is_running`, sets `_cancelled = True`, `_close_requested = True`, hides the dialog via `self.withdraw()` to prevent re-entrant user interactions, and allows `_poll_worker_queue()` to continue polling until worker emits `('done', ...)`.
+  - Upon receiving `('done', ...)`, executes `_end_undo_batch()`, synchronizes dirty state, calls `safe_grab_release(self)`, and only then calls `super().destroy()`.
+  - Audited and cancelled pending `after(...)` timer IDs across dialog close and root application teardown (`_on_root_destroy`, `destroy()`).
+- **New Test Suite:** Added `tests/test_p3_s11_mtl_threading.py` with 7 Defect Probes (failing-first) and 2 lightweight Regression Guards (passing). Full test suite discovered count: 297 tests across 33 modules (257 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/mtl_engine.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s11_mtl_threading.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/xunity_sync.py`, `core/story_ast.py`, `core/security.py`, `core/logger.py`.
 
 ### S10 Immutable box.uid XUAT JP Keys, Save Conflict Preview Gate & Atomic XUAT Dictionary Writes (2026-11-24)
 - **Session Scope:** BUG-25, BUG-26 (Track 1 · Group E / DEP-7 part 2 — Split from MTL per Grok R1).
@@ -782,6 +809,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **COLLISION-RESISTANT-BACKUPS** | RESOLVED (2026-11-24: S09 / BUG-20) | `misora.py` | Microsecond timestamp + 8-char SHA-256 hash prefix + collision loop across `on_save`, `_save_document_entry`, and `on_replace_all`. Covered by `test_p3_s09:test_probe_6-7`. | 2 |
 | **XUAT-JP-KEY-OVERWRITE** | RESOLVED (2026-11-24: S10 / BUG-25) | `misora.py`, `core/xunity_sync.py` | Register immutable Japanese source keys by `box.uid` backed by per-doc `_original_jp_by_uid`; never overwrite JP keys with saved English text; `preview_matches()` conflict gate prompts user only when duplicate translations exist. Covered by `test_p3_s10_xuat_integrity:test_probe_1`. | 2 |
 | **XUAT-ATOMIC-WRITES** | RESOLVED (2026-11-24: S10 / BUG-26) | `core/xunity_sync.py:find_and_update()` | `write_atomic_encoded()` replaces PID temp file and bare `os.replace`; unique timestamped temp name, bounded Windows retry, UTF-8 BOM, encoding and CRLF/LF preservation. Covered by `test_p3_s10_xuat_integrity:test_probe_2`. | 1 |
+| **BATCH-CANCEL-UNDO-LEAK** | RESOLVED (2026-11-24: S11 / BUG-14) | `misora.py:BatchTranslateDialog` | Track `_batch_open`; safe cancel waits for worker `('done', ...)` before single `end_batch()` on UI thread; prevents unbalanced undo journal batches. Covered by `test_p3_s11_mtl_threading:test_probe_2`. | 1 |
+| **ASYNC-MTL-QUEUE-STALE-GUARD** | RESOLVED (2026-11-24: S11 / BUG-27) | `core/mtl_engine.py`, `misora.py` | Zero `after_idle` from worker threads; main-thread queue delivery across all 4 async paths; 5-stage identity guard (active doc, box_uid re-resolution, src_hash, lock, seq). Covered by `test_p3_s11_mtl_threading:test_probe_1a-1d`. | 1 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 
