@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import colorsys
+import copy
 import ctypes
 import hashlib
 import json
@@ -50,7 +51,7 @@ try:
     from misora.assets.splash import MisoraSplashScreen
     from misora.core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
-        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
+        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
         save_bundle_story, dispose_unity_env,
@@ -66,12 +67,13 @@ try:
         safe_relpath, resolve_workspace_file_path, match_active_file,
         compute_workspace_diff, save_workspace, load_workspace,
     )
+    from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 except ImportError:
     from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
     from assets.splash import MisoraSplashScreen
     from core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
-        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
+        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
         save_bundle_story, dispose_unity_env,
@@ -87,6 +89,7 @@ except ImportError:
         safe_relpath, resolve_workspace_file_path, match_active_file,
         compute_workspace_diff, save_workspace, load_workspace,
     )
+    from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 
 try:
     from misora.core.security import DPAPISecurityError
@@ -5344,11 +5347,62 @@ class MisoraApp(tk.Tk):
 
         raw_header = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
         raw_header.pack(fill="x", padx=8, pady=4)
+        self._raw_edit_mode: bool = False
         self.lbl_raw_title = self._tag_role(
             tk.Label(raw_header, text="Raw Commands", font=("Segoe UI", u_sz, "bold"), bg=t["bg_panel"], fg=t["fg_muted"]),
             "label_muted"
         )
         self.lbl_raw_title.pack(side="left")
+
+        self.btn_edit_raw = self._tag_role(
+            tk.Button(
+                raw_header,
+                text="Edit Raw (v2)",
+                font=("Segoe UI", max(8, u_sz - 1)),
+                relief="flat",
+                bd=0,
+                padx=8,
+                pady=2,
+                cursor="hand2",
+                command=self.on_enter_raw_edit_mode,
+                state="disabled",
+            ),
+            "ribbon_btn",
+        )
+        self.btn_edit_raw.pack(side="right", padx=(4, 0))
+        create_tooltip(self.btn_edit_raw, "Edit whole file as lossless v2 Raw Commands (S19)")
+
+        self.btn_cancel_raw = self._tag_role(
+            tk.Button(
+                raw_header,
+                text="Revert / Cancel",
+                font=("Segoe UI", max(8, u_sz - 1)),
+                relief="flat",
+                bd=0,
+                padx=8,
+                pady=2,
+                cursor="hand2",
+                command=self.on_cancel_raw_edit_mode,
+            ),
+            "ribbon_btn",
+        )
+        create_tooltip(self.btn_cancel_raw, "Discard Raw Commands edits and return to read-only view")
+
+        self.btn_apply_raw = self._tag_role(
+            tk.Button(
+                raw_header,
+                text="Apply Raw",
+                font=("Segoe UI", max(8, u_sz - 1), "bold"),
+                relief="flat",
+                bd=0,
+                padx=8,
+                pady=2,
+                cursor="hand2",
+                command=self.on_apply_raw_commands,
+            ),
+            "ribbon_primary_btn",
+        )
+        create_tooltip(self.btn_apply_raw, "Validate and apply Raw Commands v2 edits to workspace")
 
         raw_container = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
         raw_container.pack(fill="both", expand=True, padx=8, pady=(0, 6))
@@ -7551,6 +7605,7 @@ class MisoraApp(tk.Tk):
             return
 
         self._save_active_document_state()
+        self._exit_raw_edit_mode(refresh=False)
 
         doc = staged["doc"]
         is_bundle = staged["is_bundle"]
@@ -7669,6 +7724,8 @@ class MisoraApp(tk.Tk):
         """Update Game Display View (Page or Continuous, Raw or Compiled Preview) and Raw AST View."""
         self._update_empty_state_visibility()
         self._update_dialogue_select_box_ui()
+        if hasattr(self, "_sync_raw_edit_buttons"):
+            self._sync_raw_edit_buttons()
         compiled = self.var_preview_compiled.get()
 
         if not self.current_doc:
@@ -7830,6 +7887,8 @@ class MisoraApp(tk.Tk):
 
     def _update_raw_view(self) -> None:
         """Render Raw AST View and highlight records associated with current_box_idx or Box 0."""
+        if getattr(self, "_raw_edit_mode", False):
+            return
         self.txt_raw.config(state="normal")
         try:
             self.txt_raw.delete("1.0", tk.END)
@@ -7863,6 +7922,266 @@ class MisoraApp(tk.Tk):
                 self.txt_raw.see(f"{first_active_line}.0")
         finally:
             self.txt_raw.config(state="disabled")
+
+    def _sync_raw_edit_buttons(self) -> None:
+        """Sync visibility and enabled state of Raw Commands edit/apply/cancel buttons."""
+        in_edit = bool(getattr(self, "_raw_edit_mode", False))
+        has_doc = self.current_doc is not None
+        if hasattr(self, "btn_edit_raw") and self.btn_edit_raw.winfo_exists():
+            if in_edit:
+                self.btn_edit_raw.pack_forget()
+            else:
+                self.btn_edit_raw.config(state="normal" if has_doc else "disabled")
+                if not self.btn_edit_raw.winfo_manager():
+                    self.btn_edit_raw.pack(side="right", padx=(4, 0))
+        if hasattr(self, "btn_apply_raw") and self.btn_apply_raw.winfo_exists():
+            if in_edit:
+                if not self.btn_apply_raw.winfo_manager():
+                    self.btn_apply_raw.pack(side="right", padx=(4, 0))
+            else:
+                self.btn_apply_raw.pack_forget()
+        if hasattr(self, "btn_cancel_raw") and self.btn_cancel_raw.winfo_exists():
+            if in_edit:
+                if not self.btn_cancel_raw.winfo_manager():
+                    self.btn_cancel_raw.pack(side="right", padx=(4, 0))
+            else:
+                self.btn_cancel_raw.pack_forget()
+
+    def _exit_raw_edit_mode(self, refresh: bool = True) -> None:
+        """Exit Raw Commands edit mode cleanly and restore read-only state (BUG-37)."""
+        self._raw_edit_mode = False
+        if hasattr(self, "txt_raw") and self.txt_raw.winfo_exists():
+            self.txt_raw.config(state="disabled")
+        if hasattr(self, "_sync_raw_edit_buttons"):
+            self._sync_raw_edit_buttons()
+        if refresh:
+            self._update_raw_view()
+
+    def on_enter_raw_edit_mode(self) -> None:
+        """Enter whole-file lossless v2 editing mode in Raw Commands (FEAT-11)."""
+        if not self.current_doc:
+            self.show_toast("No story document loaded")
+            return
+        self._flush_active_widget()
+        self._raw_edit_mode = True
+        self.txt_raw.config(state="normal")
+        self.txt_raw.delete("1.0", tk.END)
+        self.txt_raw.insert("1.0", self.current_doc.to_v2_text())
+        self._sync_raw_edit_buttons()
+        if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+            self.lbl_status.config(
+                text="Raw Commands Edit Mode (v2) — click Apply Raw to commit or Revert / Cancel to discard."
+            )
+
+    def on_cancel_raw_edit_mode(self) -> None:
+        """Discard Raw Commands v2 edits and return to read-only view."""
+        self._exit_raw_edit_mode(refresh=True)
+        if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+            self.lbl_status.config(text="Raw Commands edit cancelled.")
+
+    @staticmethod
+    def _parse_and_validate_raw_v2(v2_text: str) -> StoryDocument:
+        """Parse and structurally validate lossless v2 text via binary round-trip (NO-07, DEF-02)."""
+        if not isinstance(v2_text, str) or not v2_text.strip():
+            raise ValueError("Raw Commands v2 text is empty.")
+
+        lines = [l.rstrip("\r\n") for l in v2_text.splitlines()]
+        if lines and lines[0].startswith("#!priconne-story"):
+            lines.pop(0)
+
+        from core.story_ast import DEFAULT_CATEGORIES  # local import to avoid top-level churn
+
+        i = 0
+        has_record_blocks = False
+        while i < len(lines):
+            while i < len(lines) and not lines[i].strip():
+                i += 1
+            if i >= len(lines):
+                break
+            has_record_blocks = True
+            header = lines[i].strip()
+            i += 1
+
+            if "#" in header:
+                _cmd_name, cid_str = header.split("#", 1)
+                if not cid_str.isdigit():
+                    raise ValueError(f"Invalid numeric command ID in header '{header}'.")
+                cid = int(cid_str)
+                if not (0 <= cid <= 65535):
+                    raise ValueError(f"Command ID {cid} out of uint16 range (0..65535) in '{header}'.")
+            elif header.startswith("cmd_"):
+                cid_str = header[4:]
+                if not cid_str.isdigit():
+                    raise ValueError(f"Invalid numeric command header '{header}'.")
+                cid = int(cid_str)
+                if not (0 <= cid <= 65535):
+                    raise ValueError(f"Command ID {cid} out of uint16 range (0..65535) in '{header}'.")
+            else:
+                if header not in _AST_INV_CMD_MAP:
+                    raise ValueError(f"Unknown command name '{header}' without explicit #<id>.")
+
+            while i < len(lines):
+                l = lines[i]
+                i += 1
+                if not l.strip():
+                    break
+                if l in DEFAULT_CATEGORIES and not l.startswith("\\"):
+                    break
+                if l.startswith("\\b64:"):
+                    _ast_unescape_arg(l)
+
+        if not has_record_blocks:
+            raise ValueError("Raw Commands v2 text contains no command records.")
+
+        candidate = StoryDocument.from_v2_text(v2_text)
+        if not candidate.records:
+            raise ValueError("Parsed v2 document contains zero records.")
+
+        for idx, rec in enumerate(candidate.records):
+            if not (0 <= rec.cmd_id <= 65535):
+                raise ValueError(f"Record {idx} ({rec.cmd_name}) has out-of-range cmd_id {rec.cmd_id}.")
+
+        binary_bytes = candidate.to_binary()
+        roundtrip = StoryDocument.from_binary(binary_bytes)
+        if len(roundtrip.records) != len(candidate.records):
+            raise ValueError(
+                f"Binary round-trip record count mismatch ({len(roundtrip.records)} != {len(candidate.records)})."
+            )
+        for idx, (orig_r, rt_r) in enumerate(zip(candidate.records, roundtrip.records)):
+            if orig_r.cmd_id != rt_r.cmd_id:
+                raise ValueError(
+                    f"Binary round-trip cmd_id mismatch at record {idx}: {rt_r.cmd_id} != {orig_r.cmd_id}."
+                )
+            expected_args = [a if a != "" else " " for a in orig_r.args]
+            if rt_r.args != expected_args:
+                raise ValueError(
+                    f"Binary round-trip argument parity mismatch at record {idx} ({orig_r.cmd_name})."
+                )
+        return candidate
+
+    def _remap_locks_and_jp_keys(
+        self,
+        stable_locks: List[Tuple[int, str]],
+        old_jp_by_ordinal: Dict[int, str],
+        old_clean_by_ordinal: Dict[int, str],
+    ) -> None:
+        """Remap _original_jp_by_uid and _locked_box_uids via stable composite keys (CLAUDE-N02)."""
+        new_jp_by_uid: Dict[int, str] = {}
+        if self.current_doc and self.current_doc.boxes:
+            for i, box in enumerate(self.current_doc.boxes):
+                new_uid = _get_box_uid(box)
+                if new_uid is None:
+                    continue
+                if i in old_jp_by_ordinal and box.clean_text == old_clean_by_ordinal.get(i):
+                    new_jp_by_uid[new_uid] = old_jp_by_ordinal[i]
+                else:
+                    new_jp_by_uid[new_uid] = box.clean_text
+
+        matched_uids, _unresolved = restore_stable_locks(self.current_doc, stable_locks, new_jp_by_uid)
+        self._locked_box_uids = set(matched_uids)
+        self._original_jp_by_uid = new_jp_by_uid
+
+        if hasattr(self, "sync_manager") and self.sync_manager is not None:
+            for b_uid, jp_txt in new_jp_by_uid.items():
+                self.sync_manager.register_jp_key(b_uid, jp_txt)
+
+        if self.current_file_path:
+            cur_p = Path(self.current_file_path).resolve()
+            if cur_p in self.open_documents:
+                self.open_documents[cur_p]["locked_box_uids"] = set(self._locked_box_uids)
+                self.open_documents[cur_p]["original_jp_by_uid"] = dict(self._original_jp_by_uid)
+        self._resync_box_indices_from_uids()
+
+    def on_apply_raw_commands(self) -> None:
+        """Confirm, validate, and atomically commit whole-file Raw Commands v2 edits (FEAT-11)."""
+        if not self.current_doc:
+            return
+        confirmed = messagebox.askyesno(
+            "Apply Raw Commands",
+            "Applying Raw Commands will replace all workspace records for the current document.\n\n"
+            "Do you want to validate and apply these changes?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        raw_text = self.txt_raw.get("1.0", "end-1c")
+        try:
+            candidate = self._parse_and_validate_raw_v2(raw_text)
+        except Exception as exc:
+            self._exit_raw_edit_mode(refresh=True)
+            messagebox.showerror(
+                "Raw Commands Validation Error",
+                f"Failed to parse or validate Raw Commands v2 script:\n\n{exc}\n\n"
+                "No changes were applied; Raw Commands has been reverted.",
+                parent=self,
+            )
+            if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+                self.lbl_status.config(text=f"Raw Commands error: {exc}")
+            return
+
+        # Snapshot pre-edit state before mutating
+        old_records = copy.deepcopy(self.current_doc.records)
+        old_removed = set(self.current_doc.removed_records)
+        old_box_idx = int(getattr(self, "current_box_idx", 0))
+        old_is_box0 = bool(getattr(self, "is_box0_active", False))
+        old_locked_uids = set(getattr(self, "_locked_box_uids", set()))
+        old_jp_by_uid = dict(getattr(self, "_original_jp_by_uid", {}))
+
+        stable_locks = get_document_stable_locks(self.current_doc, old_locked_uids, old_jp_by_uid)
+        old_jp_by_ordinal = {
+            i: old_jp_by_uid.get(_get_box_uid(b), b.clean_text)
+            for i, b in enumerate(self.current_doc.boxes)
+        }
+        old_clean_by_ordinal = {i: b.clean_text for i, b in enumerate(self.current_doc.boxes)}
+
+        # Mutate AST & rebuild Box projection
+        self.current_doc.records = copy.deepcopy(candidate.records)
+        self.current_doc.removed_records = set()
+        self.current_doc._rebuild_boxes()
+
+        # Remap stable locks & immutable JP keys
+        self._remap_locks_and_jp_keys(stable_locks, old_jp_by_ordinal, old_clean_by_ordinal)
+
+        # Clamp cursor bounds safely
+        if self.current_doc.boxes:
+            self.current_box_idx = max(0, min(old_box_idx, len(self.current_doc.boxes) - 1))
+        else:
+            self.current_box_idx = 0
+        self.is_box0_active = bool(old_is_box0 and self.current_doc.has_metadata())
+
+        new_records = copy.deepcopy(self.current_doc.records)
+        new_locked_uids = set(getattr(self, "_locked_box_uids", set()))
+        new_jp_by_uid = dict(getattr(self, "_original_jp_by_uid", {}))
+
+        # Record single atomic DocumentRecordsDelta
+        self.undo_journal.record(
+            DocumentRecordsDelta(
+                file_path=str(self.current_file_path or ""),
+                old_records=old_records,
+                new_records=new_records,
+                old_removed_records=old_removed,
+                new_removed_records=set(),
+                old_box_idx=old_box_idx,
+                new_box_idx=self.current_box_idx,
+                old_is_box0=old_is_box0,
+                new_is_box0=self.is_box0_active,
+                old_locked_uids=old_locked_uids,
+                new_locked_uids=new_locked_uids,
+                old_jp_by_uid=old_jp_by_uid,
+                new_jp_by_uid=new_jp_by_uid,
+            ),
+            label="Edit Raw Commands",
+        )
+
+        self._mark_document_dirty(self.current_file_path)
+        self._exit_raw_edit_mode(refresh=False)
+        self._update_views()
+        self._sync_clean_view_to_current_box()
+        self._dirty_state_changed()
+        if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+            self.lbl_status.config(text="Applied Raw Commands v2 changes.")
+        self.logger.info("Edit", "Applied Raw Commands v2 edits.")
 
     # -------------------------------------------------------------------------
     # Continuous View: Box Card Stream Architecture & Two-Way Sync
@@ -11679,6 +11998,41 @@ class MisoraApp(tk.Tk):
                 self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
+        elif isinstance(delta, DocumentRecordsDelta):
+            target_file = Path(delta.file_path) if delta.file_path else None
+            if target_file and target_file != self.current_file_path:
+                self.open_file(target_file)
+            self._exit_raw_edit_mode(refresh=False)
+            if self.current_doc:
+                target_recs = delta.old_records if reverse else delta.new_records
+                target_removed = delta.old_removed_records if reverse else delta.new_removed_records
+                self.current_doc.records = copy.deepcopy(target_recs)
+                self.current_doc.removed_records = set(target_removed)
+                self.current_doc._rebuild_boxes()
+
+                self._locked_box_uids = set(delta.old_locked_uids if reverse else delta.new_locked_uids)
+                self._original_jp_by_uid = dict(delta.old_jp_by_uid if reverse else delta.new_jp_by_uid)
+                if hasattr(self, "sync_manager") and self.sync_manager is not None:
+                    for b_uid, jp_txt in self._original_jp_by_uid.items():
+                        self.sync_manager.register_jp_key(b_uid, jp_txt)
+                target_p = target_file or self.current_file_path
+                if target_p:
+                    cur_p = Path(target_p).resolve()
+                    if cur_p in self.open_documents:
+                        self.open_documents[cur_p]["locked_box_uids"] = set(self._locked_box_uids)
+                        self.open_documents[cur_p]["original_jp_by_uid"] = dict(self._original_jp_by_uid)
+                self._resync_box_indices_from_uids()
+
+                target_box_idx = delta.old_box_idx if reverse else delta.new_box_idx
+                if self.current_doc.boxes:
+                    self.current_box_idx = max(0, min(target_box_idx, len(self.current_doc.boxes) - 1))
+                else:
+                    self.current_box_idx = 0
+                target_is_box0 = delta.old_is_box0 if reverse else delta.new_is_box0
+                self.is_box0_active = bool(target_is_box0 and self.current_doc.has_metadata())
+                self._mark_document_dirty(target_p)
+                if refresh_ui:
+                    self._update_views()
         elif isinstance(delta, BoxStructuralDelta):
             target_file = Path(delta.file_path) if delta.file_path else None
             if target_file and target_file != self.current_file_path:
@@ -12119,6 +12473,7 @@ class MisoraApp(tk.Tk):
         if not self._flush_active_widget():
             return False
         self._save_active_document_state()
+        self._exit_raw_edit_mode(refresh=False)
 
         ws_path = Path(workspace_path).resolve()
         ws_dir = ws_path.parent

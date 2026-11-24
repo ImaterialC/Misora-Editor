@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S19 — Whole-File Editable `Raw Commands` (Lossless v2, Confirm, `DocumentRecordsDelta` Undo & Lock/JP Remap)
+- **Session Scope:** FEAT-11 (`U-B31` — Track 2 · Group G5, post-`DEP-5`).
+- **Undo Journal (`core/undo_journal.py`, `core/__init__.py`):**
+  - Added `DocumentRecordsDelta` holding before/after deep `Record` list snapshots, `removed_records`, cursor bounds, and lock/JP-key state, with `"Edit Raw Commands"` auto-labeling.
+- **Whole-File Raw Commands v2 Editor (`misora.py`):**
+  - Added explicit `Edit Raw (v2)` / `Apply Raw` / `Revert / Cancel` controls in the `Raw Commands` header (`raw_header`) with 350ms tooltips and theme role styling; kept `txt_raw` strictly read-only (`state="disabled"`) outside Edit Raw mode (`BUG-37`).
+  - Flushes pending Dialogue/All Script edits before entering Edit Raw mode, prevents `_update_raw_view()` from clobbering unsaved v2 text while editing, and exits cleanly on file switch or cancel.
+  - Validates v2 text via `_parse_and_validate_raw_v2()` (strict header/ID/b64 checks + `to_binary()` / `from_binary()` record count, `cmd_id`, and argument parity round-trip; ZERO command-specific arity checks `NO-07`; preserves `cmd_id` 35 & 32 `DEF-02`).
+  - On `Yes` confirmation, atomically replaces `current_doc.records`, rebuilds `boxes`, remaps Translation Locks and immutable JP keys via `get_document_stable_locks()` / `restore_stable_locks()` (`CLAUDE-N02`) + `XUnitySyncManager.register_jp_key()`, records ONE `DocumentRecordsDelta`, marks dirty, and refreshes all views. On `No` or validation error, aborts with zero mutation.
+  - Added `DocumentRecordsDelta` handling in `_apply_delta()` with safe `current_box_idx` / `is_box0_active` bounds clamping and full lock/JP-key restoration.
+- **Tests:** Added `tests/test_p3_s19_raw_commands_edit.py` (3 failing-first Defect Probes + 1 Regression Guard).
+
 ### S18 — Code-Drawn Game-Style `Dialogue Preview` & `All Script Preview`
 - **Session Scope:** FEAT-10 (`U-B27`, `U-B28` — Lead Ruling #4, `NO-02`, `NO-12`) — Track 2 · Group G4b (post-DEP-2, DEP-8).
 - **Code-Drawn Priconne-Style Dialogue Preview (`misora.py`):**

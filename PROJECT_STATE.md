@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S18 Verification Baseline — 2026-11-25):
+Unit Test Suite (S19 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 326 tests across 40 modules (286 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 330 tests across 41 modules (290 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 326 tests (exact disk discovery):
+Test suites included in the 330 tests (exact disk discovery):
+  tests/test_p3_s19_raw_commands_edit.py    — 4 S19 whole-file Raw Commands v2 editing, confirmation, DocumentRecordsDelta undo & lock/JP remap tests (all pass)
   tests/test_p3_s18_game_preview.py         — 3 S18 code-drawn Dialogue Preview & All Script Preview (wrap='none', bleed, cstyle_* sweep, no AtlasAdv) tests (all pass)
   tests/test_p3_s17_pixel_rulers.py         — 2 S17 pixel-measure helper, Canvas rulers, line 4+ red gutter & char counter removal tests (all pass)
   tests/test_p3_s16_misora_workspace.py     — 4 S16 .misora v1 workspace, stable lock matching & U-B18 overwrite diff tests (all pass)
@@ -104,6 +105,22 @@ Test suites included in the 326 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G5 (S19) COMPLETE
+- **Status:** S19 is 100% COMPLETE (FEAT-11).
+- **Next Session:** S20.
+
+### S19 Whole-File Editable `Raw Commands` (Lossless v2, Confirm, `DocumentRecordsDelta` Undo & Lock/JP Remap) (2026-11-25)
+- **Session Scope:** FEAT-11 (`U-B31`) — Track 2 · Group G5 (post-`DEP-5`).
+- **Undo Journal (`core/undo_journal.py`, `core/__init__.py`):**
+  - Added `DocumentRecordsDelta` holding before/after deep `Record` list snapshots, `removed_records`, cursor bounds, and lock/JP-key snapshots with `"Edit Raw Commands"` auto-labeling.
+- **Whole-File Raw Commands v2 Editor (`misora.py`):**
+  - Added `Edit Raw (v2)` / `Apply Raw` / `Revert / Cancel` controls in `raw_header` with 350ms tooltips and theme role styling; kept `txt_raw` strictly `state="disabled"` outside Edit Raw mode (`BUG-37`).
+  - Flushes pending Dialogue/All Script edits on `on_enter_raw_edit_mode()`, prevents `_update_raw_view()` from clobbering unsaved edits while `_raw_edit_mode` is `True`, and exits cleanly on file switch or cancel.
+  - Validates v2 text via `_parse_and_validate_raw_v2()` (strict header/ID/b64 checks + `to_binary()` / `from_binary()` record count, `cmd_id`, and argument parity round-trip; ZERO command-specific arity checks `NO-07`; preserves `cmd_id` 35 & 32 `DEF-02`).
+  - On `Yes` confirmation, atomically replaces `current_doc.records`, rebuilds `boxes`, remaps Translation Locks and immutable JP keys via `get_document_stable_locks()` / `restore_stable_locks()` (`CLAUDE-N02`) + `XUnitySyncManager.register_jp_key()`, records ONE `DocumentRecordsDelta`, marks dirty, and refreshes all views. On `No` or validation error, aborts cleanly with zero mutation.
+  - Added `DocumentRecordsDelta` handling in `_apply_delta()` with safe `current_box_idx` / `is_box0_active` bounds clamping and full lock/JP-key restoration.
+- **Tests:** Added `tests/test_p3_s19_raw_commands_edit.py` (3 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 330 tests across 41 modules (290 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G4b (S18) COMPLETE
 - **Status:** S18 is 100% COMPLETE (FEAT-10).

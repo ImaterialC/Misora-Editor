@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 from .story_ast import BoxSnapshot
 
@@ -84,6 +84,24 @@ class MetadataDelta:
     new_subtitle: str
     old_summary: str
     new_summary: str
+
+
+@dataclass
+class DocumentRecordsDelta:
+    """Whole-document Record list replacement (Raw Commands v2 edit) with lock/JP snapshots."""
+    file_path: str
+    old_records: List[Any]
+    new_records: List[Any]
+    old_removed_records: Set[int] = field(default_factory=set)
+    new_removed_records: Set[int] = field(default_factory=set)
+    old_box_idx: int = 0
+    new_box_idx: int = 0
+    old_is_box0: bool = False
+    new_is_box0: bool = False
+    old_locked_uids: Set[int] = field(default_factory=set)
+    new_locked_uids: Set[int] = field(default_factory=set)
+    old_jp_by_uid: Dict[int, str] = field(default_factory=dict)
+    new_jp_by_uid: Dict[int, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -374,4 +392,6 @@ def _auto_label(delta: Any) -> str:
         return delta.description
     if isinstance(delta, MetadataDelta):
         return "Edit Story Metadata"
+    if isinstance(delta, DocumentRecordsDelta):
+        return "Edit Raw Commands"
     return "Edit"
