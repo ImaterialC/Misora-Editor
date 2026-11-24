@@ -1558,6 +1558,13 @@ class MisoraApp(tk.Tk):
         self._mtl_drawer_cards: Dict[str, Dict[str, Any]] = {}
         self._mtl_drawer_engine_vars: Dict[str, tk.BooleanVar] = {}
         self._mtl_drawer_active_context: Optional[Tuple[str, int, Any, str]] = None
+        self._mtl_all_req_seqs: Dict[Tuple[Any, str], int] = {}
+        self._mtl_all_results: Dict[Tuple[str, int, Any, str], str] = {}
+        self._mtl_all_statuses: Dict[Tuple[str, int, Any, str], str] = {}
+        self._mtl_all_errors: Dict[Tuple[str, int, Any, str], str] = {}
+        self._mtl_all_selected_uid: Any = None
+        self._mtl_all_block_ranges: List[Tuple[int, int, Any]] = []
+        self._mtl_all_last_ctx: Optional[Tuple[str, int, Any, str]] = None
         if not hasattr(self, "_mtl_drawer_enabled_engines") or not isinstance(self._mtl_drawer_enabled_engines, dict):
             self._mtl_drawer_enabled_engines: Dict[str, bool] = {
                 "XUAT Cache": True,
@@ -2422,6 +2429,9 @@ class MisoraApp(tk.Tk):
             self.txt_glossary.tag_configure("gl_desc", font=("Segoe UI", max(8, u_sz - 1)), foreground=t["fg_muted"])
             self.txt_glossary.tag_configure("gl_selected", background=t["highlight_bg"], foreground=hl_fg)
             self._render_glossary_list()
+
+        if hasattr(self, "_apply_mtl_all_script_theme_tags"):
+            self._apply_mtl_all_script_theme_tags()
 
         for key, btn in self._theme_swatch_buttons.items():
             if key in t:
@@ -7057,6 +7067,9 @@ class MisoraApp(tk.Tk):
                 target_w.focus_set()
             except Exception:
                 pass
+
+        if hasattr(self, "_set_mtl_drawer_mode"):
+            self._set_mtl_drawer_mode("all_script" if self.var_continuous_view.get() else "dialogue")
 
     # -------------------------------------------------------------------------
     # Status & Action Bar
@@ -13318,7 +13331,7 @@ class MisoraApp(tk.Tk):
             command=lambda: self._set_mtl_drawer_mode("all_script"),
         )
         self.btn_mtl_mode_all_script.pack(side="left", padx=(0, 4))
-        create_tooltip(self.btn_mtl_mode_all_script, "All Script batch MTL (coming in S21)")
+        create_tooltip(self.btn_mtl_mode_all_script, "All Script batch MTL (2-widget list + scratchpad)")
 
         self.btn_mtl_refresh_all = ttk.Button(
             hdr,
@@ -13332,6 +13345,7 @@ class MisoraApp(tk.Tk):
         # Active box context bar
         ctx_bar = self._tag_role(tk.Frame(parent, bg=t["bg_panel"]), "panel")
         ctx_bar.pack(fill="x", padx=6, pady=(0, 4))
+        self._mtl_dialogue_ctx_bar = ctx_bar
 
         self.lbl_mtl_box_info = self._tag_role(
             tk.Label(ctx_bar, text="Box 0 / 0", bg=t["bg_panel"], fg=t["misora_pink"], anchor="w"),
@@ -13359,6 +13373,7 @@ class MisoraApp(tk.Tk):
             "panel_box",
         )
         eng_bar.pack(fill="x", padx=6, pady=(0, 4))
+        self._mtl_dialogue_eng_bar = eng_bar
 
         self._tag_role(
             tk.Label(eng_bar, text="Enabled Engines:", bg=t["bg_panel"], fg=t["fg_muted"], anchor="w"),
@@ -13392,6 +13407,7 @@ class MisoraApp(tk.Tk):
         # Scrollable vertical stack of enabled engine cards
         wrap = self._tag_role(tk.Frame(parent, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
         wrap.pack(fill="both", expand=True, padx=4, pady=(0, 6))
+        self._mtl_dialogue_wrap = wrap
 
         self._mtl_drawer_canvas = self._tag_role(
             tk.Canvas(wrap, bg=t["bg_panel"], highlightthickness=0, bd=0),
@@ -13414,18 +13430,224 @@ class MisoraApp(tk.Tk):
             lambda e: self._mtl_drawer_canvas.itemconfigure(win_id, width=max(220, e.width)),
         )
 
+        self._build_mtl_all_script_pane(parent)
         self._rebuild_mtl_drawer_cards()
+
+    def _build_mtl_all_script_pane(self, parent: tk.Frame) -> None:
+        """Build the All Script MTL mode pane: 1 single-engine selector + exact 2 tk.Text widgets (FEAT-13, NO-03)."""
+        t = self.theme
+        editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+
+        pane = self._tag_role(tk.Frame(parent, bg=t["bg_panel"]), "panel")
+        self.mtl_all_script_frame = pane
+
+        # Top single-engine selector
+        top_bar = self._tag_role(tk.Frame(pane, bg=t["bg_panel"]), "panel")
+        top_bar.pack(fill="x", padx=2, pady=(0, 4))
+
+        self._tag_role(
+            tk.Label(top_bar, text="Engine:", bg=t["bg_panel"], fg=t["fg_muted"], anchor="w"),
+            "label_muted",
+        ).pack(side="left", padx=(0, 4))
+
+        default_eng = getattr(self.mtl_config, "active_engine", "Google") or "Google"
+        if default_eng not in self._MTL_DRAWER_ENGINE_ORDER:
+            default_eng = "Google"
+        self.var_mtl_all_engine = tk.StringVar(master=self, value=default_eng)
+        self.cmb_mtl_all_engine = ttk.Combobox(
+            top_bar,
+            textvariable=self.var_mtl_all_engine,
+            values=list(self._MTL_DRAWER_ENGINE_ORDER),
+            state="readonly",
+            width=16,
+        )
+        self.cmb_mtl_all_engine.pack(side="left", fill="x", expand=True)
+        self.cmb_mtl_all_engine.bind("<<ComboboxSelected>>", self._on_mtl_all_engine_changed)
+        create_tooltip(self.cmb_mtl_all_engine, "Select single MTL engine for All Script batch mode")
+
+        # Action bar: Refresh Selected, Apply Selected, Translate All, Apply All
+        act_bar = self._tag_role(tk.Frame(pane, bg=t["bg_panel"]), "panel")
+        act_bar.pack(fill="x", padx=2, pady=(0, 4))
+
+        self.btn_mtl_all_refresh_sel = ttk.Button(
+            act_bar,
+            text="↻ Refresh Selected",
+            style="Small.TButton",
+            command=self._on_mtl_all_script_refresh_selected,
+        )
+        self.btn_mtl_all_refresh_sel.pack(side="left", padx=(0, 3))
+        create_tooltip(self.btn_mtl_all_refresh_sel, "Refresh selected box (bypass session cache)")
+
+        self.btn_mtl_all_apply_sel = ttk.Button(
+            act_bar,
+            text="→ Apply Selected",
+            style="TButton",
+            command=self._on_mtl_all_script_apply_selected,
+        )
+        self.btn_mtl_all_apply_sel.pack(side="left", padx=(0, 3))
+        create_tooltip(self.btn_mtl_all_apply_sel, "Apply scratchpad to selected box (enforces lock)")
+
+        act_bar2 = self._tag_role(tk.Frame(pane, bg=t["bg_panel"]), "panel")
+        act_bar2.pack(fill="x", padx=2, pady=(0, 4))
+
+        self.btn_mtl_all_translate = ttk.Button(
+            act_bar2,
+            text="Translate All",
+            style="Pink.TButton",
+            command=self._on_mtl_all_script_translate_all,
+        )
+        self.btn_mtl_all_translate.pack(side="left", padx=(0, 3))
+        create_tooltip(self.btn_mtl_all_translate, "Batch-translate all unlocked boxes (uses session cache)")
+
+        self.btn_mtl_all_apply_all = ttk.Button(
+            act_bar2,
+            text="Apply All",
+            style="Pink.TButton",
+            command=self._on_mtl_all_script_apply_all,
+        )
+        self.btn_mtl_all_apply_all.pack(side="left")
+        create_tooltip(self.btn_mtl_all_apply_all, "Apply all ready translations to unlocked boxes in one Undo batch")
+
+        # Widget 1: ONE read-only multi-line tk.Text list of clickable per-box tagged blocks
+        list_wrap = self._tag_role(tk.Frame(pane, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
+        list_wrap.pack(fill="both", expand=True, padx=2, pady=(0, 4))
+
+        self.txt_mtl_all_list = self._tag_role(
+            tk.Text(
+                list_wrap,
+                wrap="word",
+                state="disabled",
+                font=("Segoe UI", 9),
+                bg=t["bg_editor"],
+                fg=editor_fg,
+                bd=0,
+                padx=6,
+                pady=4,
+                cursor="hand2",
+            ),
+            "entry_editor",
+        )
+        list_scroll = tk.Scrollbar(list_wrap, orient="vertical", command=self.txt_mtl_all_list.yview)
+        list_scroll.pack(side="right", fill="y")
+        self.txt_mtl_all_list.pack(side="left", fill="both", expand=True)
+        self.txt_mtl_all_list.configure(yscrollcommand=list_scroll.set)
+        self.txt_mtl_all_list.bind("<Button-1>", self._on_mtl_all_list_click)
+
+        # Widget 2: ONE shared bottom editable tk.Text scratchpad synced to clicked box
+        self.lbl_mtl_all_scratch_hdr = self._tag_role(
+            tk.Label(pane, text="Scratchpad (No box selected)", bg=t["bg_panel"], fg=t["misora_pink"], anchor="w"),
+            "label_accent",
+        )
+        self.lbl_mtl_all_scratch_hdr.pack(fill="x", padx=2, pady=(0, 2))
+
+        self.txt_mtl_all_scratchpad = self._tag_role(
+            tk.Text(
+                pane,
+                wrap="word",
+                height=4,
+                undo=True,
+                font=("Segoe UI", 9),
+                bg=t["bg_editor"],
+                fg=editor_fg,
+                insertbackground=t["misora_pink"],
+                bd=1,
+                relief="solid",
+                padx=5,
+                pady=4,
+            ),
+            "entry_editor",
+        )
+        self.txt_mtl_all_scratchpad.pack(fill="x", padx=2, pady=(0, 2))
+
+        def _local_all_undo(_event=None):
+            try:
+                self.txt_mtl_all_scratchpad.edit_undo()
+            except tk.TclError:
+                pass
+            return "break"
+
+        def _local_all_redo(_event=None):
+            try:
+                self.txt_mtl_all_scratchpad.edit_redo()
+            except tk.TclError:
+                pass
+            return "break"
+
+        self.txt_mtl_all_scratchpad.bind("<Control-z>", _local_all_undo)
+        self.txt_mtl_all_scratchpad.bind("<Control-Z>", _local_all_undo)
+        self.txt_mtl_all_scratchpad.bind("<Control-y>", _local_all_redo)
+        self.txt_mtl_all_scratchpad.bind("<Control-Y>", _local_all_redo)
+        self.txt_mtl_all_scratchpad.bind("<Control-Shift-z>", _local_all_redo)
+        self.txt_mtl_all_scratchpad.bind("<Control-Shift-Z>", _local_all_redo)
+
+        self._apply_mtl_all_script_theme_tags()
+
+    def _apply_mtl_all_script_theme_tags(self) -> None:
+        """Configure the 5 static theme-aware status tags and block tags on All Script widgets."""
+        if not hasattr(self, "txt_mtl_all_list") or not self.txt_mtl_all_list.winfo_exists():
+            return
+        t = self.theme
+        editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+        hl_fg = best_contrast_fg(t["highlight_bg"], t["fg_text"], "#ffffff")
+
+        self.txt_mtl_all_list.configure(bg=t["bg_editor"], fg=editor_fg)
+        self.txt_mtl_all_list.tag_configure("mtl_status_ready", foreground=t.get("accent_green", t["misora_pink"]), font=("Segoe UI", 9, "bold"))
+        self.txt_mtl_all_list.tag_configure("mtl_status_translating", foreground=t.get("accent_blue", t["misora_pink"]), font=("Segoe UI", 9, "bold"))
+        self.txt_mtl_all_list.tag_configure("mtl_status_error", foreground=t.get("accent_red", t["accent_yellow"]), font=("Segoe UI", 9, "bold"))
+        self.txt_mtl_all_list.tag_configure("mtl_status_locked", foreground=t["fg_muted"], font=("Segoe UI", 9, "bold"))
+        self.txt_mtl_all_list.tag_configure("mtl_status_empty", foreground=t["fg_muted"], font=("Segoe UI", 9))
+
+        self.txt_mtl_all_list.tag_configure("mtl_block_header", foreground=t["misora_pink"], font=("Segoe UI", 9, "bold"))
+        self.txt_mtl_all_list.tag_configure("mtl_block_src", foreground=t["fg_muted"], font=("Segoe UI", 8))
+        self.txt_mtl_all_list.tag_configure("mtl_block_tr", foreground=editor_fg, font=("Segoe UI", 9))
+        self.txt_mtl_all_list.tag_configure("mtl_block_selected", background=t["highlight_bg"], foreground=hl_fg)
+
+        if hasattr(self, "txt_mtl_all_scratchpad") and self.txt_mtl_all_scratchpad.winfo_exists():
+            self.txt_mtl_all_scratchpad.configure(bg=t["bg_editor"], fg=editor_fg, insertbackground=t["misora_pink"])
 
     def _set_mtl_drawer_mode(self, mode: str) -> None:
         if mode == "all_script":
-            self.show_toast("All Script MTL drawer mode will be added in S21.")
+            self._mtl_drawer_mode = "all_script"
+            if hasattr(self, "btn_mtl_mode_dialogue"):
+                self.btn_mtl_mode_dialogue.configure(style="TButton")
+            if hasattr(self, "btn_mtl_mode_all_script"):
+                self.btn_mtl_mode_all_script.configure(style="Pink.TButton")
+            if hasattr(self, "btn_mtl_refresh_all") and self._is_widget_packed(self.btn_mtl_refresh_all):
+                self.btn_mtl_refresh_all.pack_forget()
+            for w_name in ("_mtl_dialogue_ctx_bar", "_mtl_dialogue_eng_bar", "_mtl_dialogue_wrap"):
+                w = getattr(self, w_name, None)
+                if w is not None and w.winfo_exists() and self._is_widget_packed(w):
+                    w.pack_forget()
+            body = getattr(self, "mtl_cards_body", None)
+            if body is not None and body.winfo_exists():
+                for child in list(body.winfo_children()):
+                    child.destroy()
+            if hasattr(self, "_mtl_drawer_cards") and isinstance(self._mtl_drawer_cards, dict):
+                self._mtl_drawer_cards.clear()
+            if hasattr(self, "mtl_all_script_frame") and self.mtl_all_script_frame.winfo_exists():
+                if not self._is_widget_packed(self.mtl_all_script_frame):
+                    self.mtl_all_script_frame.pack(fill="both", expand=True, padx=4, pady=(0, 6))
+            self._refresh_mtl_drawer_box()
             return
+
+        self._flush_mtl_all_scratchpad()
         self._mtl_drawer_mode = "dialogue"
         if hasattr(self, "btn_mtl_mode_dialogue"):
             self.btn_mtl_mode_dialogue.configure(style="Pink.TButton")
         if hasattr(self, "btn_mtl_mode_all_script"):
             self.btn_mtl_mode_all_script.configure(style="TButton")
-        self._refresh_mtl_drawer_box()
+        if hasattr(self, "mtl_all_script_frame") and self.mtl_all_script_frame.winfo_exists():
+            if self._is_widget_packed(self.mtl_all_script_frame):
+                self.mtl_all_script_frame.pack_forget()
+        if hasattr(self, "btn_mtl_refresh_all") and not self._is_widget_packed(self.btn_mtl_refresh_all):
+            self.btn_mtl_refresh_all.pack(side="right")
+        if hasattr(self, "_mtl_dialogue_ctx_bar") and not self._is_widget_packed(self._mtl_dialogue_ctx_bar):
+            self._mtl_dialogue_ctx_bar.pack(fill="x", padx=6, pady=(0, 4))
+        if hasattr(self, "_mtl_dialogue_eng_bar") and not self._is_widget_packed(self._mtl_dialogue_eng_bar):
+            self._mtl_dialogue_eng_bar.pack(fill="x", padx=6, pady=(0, 4))
+        if hasattr(self, "_mtl_dialogue_wrap") and not self._is_widget_packed(self._mtl_dialogue_wrap):
+            self._mtl_dialogue_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 6))
+        self._rebuild_mtl_drawer_cards()
 
     def _set_mtl_drawer_engine_enabled(self, engine_name: str, enabled: bool) -> None:
         if engine_name not in self._MTL_DRAWER_ENGINE_ORDER:
@@ -13579,6 +13801,10 @@ class MisoraApp(tk.Tk):
 
     def _refresh_mtl_drawer_box(self) -> None:
         """Sync MTL drawer box header, source preview, and cached scratchpads with active box."""
+        if getattr(self, "_mtl_drawer_mode", "dialogue") == "all_script":
+            if hasattr(self, "_refresh_mtl_all_script_view"):
+                self._refresh_mtl_all_script_view()
+            return
         if not hasattr(self, "lbl_mtl_box_info") or not self.lbl_mtl_box_info.winfo_exists():
             return
         active = self._get_mtl_drawer_active_box()
@@ -13755,12 +13981,46 @@ class MisoraApp(tk.Tk):
                 if not isinstance(req_meta, tuple) or len(req_meta) < 6:
                     continue
                 file_p, doc_id, b_uid, src_hash, req_seq, eng = req_meta[:6]
+                mode_tag = req_meta[6] if len(req_meta) >= 7 else "dialogue"
 
-                # Stale identity guard: discard if document, path, active box, source, or seq changed
+                # Stale identity guard: discard if document or path changed
                 if not self.current_doc or id(self.current_doc) != doc_id:
                     continue
                 if str(self.current_file_path or "") != file_p:
                     continue
+
+                if mode_tag == "all_script":
+                    target_box = None
+                    for b in self.current_doc.boxes:
+                        if _get_box_uid(b) == b_uid:
+                            target_box = b
+                            break
+                    if target_box is None:
+                        continue
+                    if _hash_mtl_source(target_box.clean_text) != src_hash:
+                        continue
+                    if req_seq < self._mtl_all_req_seqs.get((b_uid, eng), 0):
+                        continue
+
+                    ctx_key = (file_p, doc_id, b_uid, eng)
+                    if kind == "success":
+                        self._mtl_drawer_cache_put(eng, src_hash, payload)
+                        self._mtl_all_results[ctx_key] = payload
+                        self._mtl_all_statuses[ctx_key] = "ready"
+                        self._mtl_all_errors.pop(ctx_key, None)
+                        if (
+                            b_uid == getattr(self, "_mtl_all_selected_uid", None)
+                            and hasattr(self, "var_mtl_all_engine")
+                            and self.var_mtl_all_engine.get() == eng
+                        ):
+                            self._load_mtl_all_scratchpad(force_text=payload)
+                    elif kind == "error":
+                        self._mtl_all_statuses[ctx_key] = "error"
+                        self._mtl_all_errors[ctx_key] = str(payload)
+                    if getattr(self, "_mtl_drawer_mode", "dialogue") == "all_script":
+                        self._refresh_mtl_all_script_view(preserve_scroll=True)
+                    continue
+
                 active = self._get_mtl_drawer_active_box()
                 if active is None:
                     continue
@@ -13843,6 +14103,429 @@ class MisoraApp(tk.Tk):
         self._update_views()
         self.show_toast(f"✓ Applied {engine_name} translation to Box {b_idx + 1}")
         return True
+
+    # -------------------------------------------------------------------------
+    # Docked Right-Side MTL Drawer — All Script Mode Helpers (FEAT-13)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _is_mtl_empty_or_punct(text: str) -> bool:
+        """Return True if text is empty or contains only whitespace/punctuation."""
+        if not text or not text.strip():
+            return True
+        for ch in text:
+            if ch.isalnum():
+                return False
+        return True
+
+    def _mtl_all_ctx_key(self, box_uid: Any, engine_name: Optional[str] = None) -> Tuple[str, int, Any, str]:
+        eng = engine_name or (self.var_mtl_all_engine.get() if hasattr(self, "var_mtl_all_engine") else "Google")
+        return (str(self.current_file_path or ""), id(self.current_doc), box_uid, eng)
+
+    def _find_box_index_by_uid(self, box_uid: Any) -> Optional[Tuple[int, Box]]:
+        doc = getattr(self, "current_doc", None)
+        if not doc or not doc.boxes:
+            return None
+        for idx, b in enumerate(doc.boxes):
+            if _get_box_uid(b) == box_uid:
+                return idx, b
+        return None
+
+    def _flush_mtl_all_scratchpad(self) -> None:
+        """Persist current scratchpad text into document-scoped in-memory map before switching/applying."""
+        if not hasattr(self, "txt_mtl_all_scratchpad") or not self.txt_mtl_all_scratchpad.winfo_exists():
+            return
+        last_ctx = getattr(self, "_mtl_all_last_ctx", None)
+        if last_ctx is None:
+            return
+        _fp, doc_id, b_uid, eng = last_ctx
+        if not self.current_doc or id(self.current_doc) != doc_id or b_uid is None:
+            return
+        text = self.txt_mtl_all_scratchpad.get("1.0", "end-1c")
+        if last_ctx in self._mtl_all_results or text != "":
+            self._mtl_all_results[last_ctx] = text
+            if self._mtl_all_statuses.get(last_ctx) not in ("locked", "translating"):
+                if text != "":
+                    self._mtl_all_statuses[last_ctx] = "ready"
+
+    def _load_mtl_all_scratchpad(self, force_text: Optional[str] = None) -> None:
+        """Load selected box's translation into the shared bottom scratchpad."""
+        if not hasattr(self, "txt_mtl_all_scratchpad") or not self.txt_mtl_all_scratchpad.winfo_exists():
+            return
+        doc = getattr(self, "current_doc", None)
+        b_uid = getattr(self, "_mtl_all_selected_uid", None)
+        eng = self.var_mtl_all_engine.get() if hasattr(self, "var_mtl_all_engine") else "Google"
+
+        if not doc or not doc.boxes or b_uid is None:
+            self._mtl_all_last_ctx = None
+            if hasattr(self, "lbl_mtl_all_scratch_hdr") and self.lbl_mtl_all_scratch_hdr.winfo_exists():
+                self.lbl_mtl_all_scratch_hdr.config(text="Scratchpad (No box selected)")
+            self.txt_mtl_all_scratchpad.delete("1.0", tk.END)
+            self.txt_mtl_all_scratchpad.edit_reset()
+            return
+
+        found = self._find_box_index_by_uid(b_uid)
+        if found is None:
+            self._mtl_all_last_ctx = None
+            self.txt_mtl_all_scratchpad.delete("1.0", tk.END)
+            self.txt_mtl_all_scratchpad.edit_reset()
+            return
+
+        b_idx, box = found
+        ctx = self._mtl_all_ctx_key(b_uid, eng)
+        self._mtl_all_last_ctx = ctx
+        if hasattr(self, "lbl_mtl_all_scratch_hdr") and self.lbl_mtl_all_scratch_hdr.winfo_exists():
+            sp = box.speaker or "(Narration)"
+            self.lbl_mtl_all_scratch_hdr.config(text=f"Scratchpad — Box #{b_idx + 1} ({sp}) [{eng}]")
+
+        if force_text is not None:
+            val = force_text
+        elif ctx in self._mtl_all_results:
+            val = self._mtl_all_results[ctx]
+        else:
+            src_hash = _hash_mtl_source(box.clean_text)
+            val = self._mtl_drawer_cache.get((eng, src_hash), "")
+
+        self.txt_mtl_all_scratchpad.delete("1.0", tk.END)
+        if val:
+            self.txt_mtl_all_scratchpad.insert("1.0", val)
+        self.txt_mtl_all_scratchpad.edit_reset()
+
+    def _on_mtl_all_engine_changed(self, _event=None) -> None:
+        self._flush_mtl_all_scratchpad()
+        self._refresh_mtl_all_script_view()
+
+    def _on_mtl_all_list_click(self, event: tk.Event) -> str:
+        """Select clicked box block in txt_mtl_all_list and sync bottom scratchpad."""
+        if not hasattr(self, "txt_mtl_all_list") or not self.txt_mtl_all_list.winfo_exists():
+            return "break"
+        try:
+            idx_str = self.txt_mtl_all_list.index(f"@{event.x},{event.y}")
+            clicked_line = int(idx_str.split(".")[0])
+        except Exception:
+            return "break"
+
+        target_uid = None
+        for start_l, end_l, b_uid in getattr(self, "_mtl_all_block_ranges", []):
+            if start_l <= clicked_line <= end_l:
+                target_uid = b_uid
+                break
+
+        if target_uid is not None and target_uid != self._mtl_all_selected_uid:
+            self._flush_mtl_all_scratchpad()
+            self._mtl_all_selected_uid = target_uid
+            self._refresh_mtl_all_script_view(preserve_scroll=True)
+        return "break"
+
+    def _refresh_mtl_all_script_view(self, preserve_scroll: bool = False) -> None:
+        """Render all boxes as non-truncated multi-line blocks in txt_mtl_all_list."""
+        if not hasattr(self, "txt_mtl_all_list") or not self.txt_mtl_all_list.winfo_exists():
+            return
+
+        y_frac = 0.0
+        if preserve_scroll:
+            try:
+                y_frac = self.txt_mtl_all_list.yview()[0]
+            except Exception:
+                y_frac = 0.0
+
+        doc = getattr(self, "current_doc", None)
+        eng = self.var_mtl_all_engine.get() if hasattr(self, "var_mtl_all_engine") else "Google"
+        self._mtl_all_block_ranges = []
+
+        self.txt_mtl_all_list.config(state="normal")
+        try:
+            self.txt_mtl_all_list.delete("1.0", tk.END)
+            if not doc or not doc.boxes:
+                msg = "Open a story document to translate." if not doc else "Story document has 0 dialogue boxes."
+                self.txt_mtl_all_list.insert("1.0", msg, ("mtl_status_empty",))
+                self._mtl_all_selected_uid = None
+                self._load_mtl_all_scratchpad()
+                return
+
+            valid_uids = [_get_box_uid(b) for b in doc.boxes]
+            if self._mtl_all_selected_uid not in valid_uids:
+                active_idx = max(0, min(getattr(self, "current_box_idx", 0), len(doc.boxes) - 1))
+                self._mtl_all_selected_uid = valid_uids[active_idx]
+
+            status_meta = {
+                "ready": ("✓", "mtl_status_ready"),
+                "translating": ("⏳", "mtl_status_translating"),
+                "error": ("⚠", "mtl_status_error"),
+                "locked": ("🔒", "mtl_status_locked"),
+                "empty": ("-", "mtl_status_empty"),
+            }
+
+            for idx, box in enumerate(doc.boxes):
+                b_uid = valid_uids[idx]
+                ctx = self._mtl_all_ctx_key(b_uid, eng)
+                src_text = box.clean_text
+                src_hash = _hash_mtl_source(src_text)
+
+                if self.is_box_locked(idx):
+                    st_key = "locked"
+                elif ctx in self._mtl_all_statuses:
+                    st_key = self._mtl_all_statuses[ctx]
+                elif ctx in self._mtl_all_results or (eng, src_hash) in self._mtl_drawer_cache:
+                    st_key = "ready"
+                else:
+                    st_key = "empty"
+
+                icon, st_tag = status_meta.get(st_key, ("-", "mtl_status_empty"))
+                start_line = int(self.txt_mtl_all_list.index("end-1c").split(".")[0])
+
+                speaker = box.speaker or "(Narration)"
+                self.txt_mtl_all_list.insert(tk.END, f"{icon} ", (st_tag,))
+                hdr_tags = ("mtl_block_header", "mtl_block_selected") if b_uid == self._mtl_all_selected_uid else ("mtl_block_header",)
+                self.txt_mtl_all_list.insert(tk.END, f"Box #{idx + 1} — {speaker}\n", hdr_tags)
+
+                # Full multi-line JP source (no single-line truncation)
+                self.txt_mtl_all_list.insert(tk.END, (src_text if src_text else "(Empty)") + "\n", ("mtl_block_src",))
+
+                tr_val = self._mtl_all_results.get(ctx)
+                if tr_val is None and st_key == "ready":
+                    tr_val = self._mtl_drawer_cache.get((eng, src_hash))
+                if tr_val:
+                    self.txt_mtl_all_list.insert(tk.END, f"→ {tr_val}\n", ("mtl_block_tr",))
+                elif st_key == "error":
+                    err_msg = self._mtl_all_errors.get(ctx, "Translation failed")
+                    self.txt_mtl_all_list.insert(tk.END, f"⚠ {err_msg}\n", ("mtl_status_error",))
+
+                end_line = int(self.txt_mtl_all_list.index("end-1c").split(".")[0]) - 1
+                self._mtl_all_block_ranges.append((start_line, max(start_line, end_line), b_uid))
+                self.txt_mtl_all_list.insert(tk.END, "\n")
+
+            if preserve_scroll:
+                self.txt_mtl_all_list.yview_moveto(y_frac)
+        finally:
+            self.txt_mtl_all_list.config(state="disabled")
+
+        self._load_mtl_all_scratchpad()
+
+    def _dispatch_mtl_all_box(self, box_idx: int, box: Box, eng: str, bypass_cache: bool = False) -> bool:
+        """Dispatch translate_async for a single box in All Script mode, returning True if worker started."""
+        b_uid = _get_box_uid(box)
+        ctx = self._mtl_all_ctx_key(b_uid, eng)
+        orig_text = box.clean_text
+
+        if self.is_box_locked(box_idx):
+            self._mtl_all_statuses[ctx] = "locked"
+            return False
+        if self._is_mtl_empty_or_punct(orig_text):
+            self._mtl_all_statuses[ctx] = "empty"
+            return False
+
+        src_hash = _hash_mtl_source(orig_text)
+        if not bypass_cache and (eng, src_hash) in self._mtl_drawer_cache:
+            self._mtl_drawer_cache.move_to_end((eng, src_hash))
+            self._mtl_all_results[ctx] = self._mtl_drawer_cache[(eng, src_hash)]
+            self._mtl_all_statuses[ctx] = "ready"
+            return False
+
+        self._mtl_all_statuses[ctx] = "translating"
+        self._mtl_drawer_req_seq += 1
+        req_seq = self._mtl_drawer_req_seq
+        self._mtl_all_req_seqs[(b_uid, eng)] = req_seq
+
+        cfg = MTLConfig.from_dict(self.mtl_config.to_dict())
+        cfg.active_engine = eng
+        cfg.protect_tags = True
+
+        req_meta = (
+            str(self.current_file_path or ""),
+            id(self.current_doc),
+            b_uid,
+            src_hash,
+            req_seq,
+            eng,
+            "all_script",
+        )
+        self._mtl_drawer_pending += 1
+        translate_async(
+            orig_text,
+            cfg,
+            out_queue=self._mtl_drawer_queue,
+            metadata=req_meta,
+            xuat_cache=getattr(self, "xuat_entries", None),
+        )
+        if self._mtl_drawer_poll_id is None and self.winfo_exists():
+            self._mtl_drawer_poll_id = self.after(50, self._poll_mtl_drawer_queue)
+        return True
+
+    def _on_mtl_all_script_refresh_selected(self) -> None:
+        """Refresh the currently selected box in All Script mode (bypasses session cache)."""
+        doc = getattr(self, "current_doc", None)
+        if not doc or not doc.boxes:
+            self.show_toast("Open a story document to translate.")
+            return
+        found = self._find_box_index_by_uid(getattr(self, "_mtl_all_selected_uid", None))
+        if found is None:
+            self.show_toast("Select a box in the list to refresh.")
+            return
+        b_idx, box = found
+        if self.is_box_locked(b_idx):
+            self.show_toast(f"🔒 Box {b_idx + 1} is locked against translation.")
+            return
+        eng = self.var_mtl_all_engine.get()
+        self._dispatch_mtl_all_box(b_idx, box, eng, bypass_cache=True)
+        self._refresh_mtl_all_script_view(preserve_scroll=True)
+
+    def _on_mtl_all_script_apply_selected(self) -> bool:
+        """Apply scratchpad text to the selected box by box.uid (enforces lock, preserves whitespace)."""
+        self._flush_mtl_all_scratchpad()
+        doc = getattr(self, "current_doc", None)
+        if not doc or not doc.boxes:
+            self.show_toast("Open a story document first.")
+            return False
+        found = self._find_box_index_by_uid(getattr(self, "_mtl_all_selected_uid", None))
+        if found is None:
+            self.show_toast("Select a box before applying translation.")
+            return False
+        b_idx, old_box = found
+        if self.is_box_locked(b_idx):
+            self.show_toast(f"🔒 Box {b_idx + 1} is locked against translation.")
+            return False
+
+        new_text = self.txt_mtl_all_scratchpad.get("1.0", "end-1c")
+        old_sp = old_box.speaker
+        old_tx = old_box.clean_text
+        box_uid = _get_box_uid(old_box)
+        old_segs = [s.text for s in old_box.segs]
+
+        try:
+            doc.inject_box(b_idx, old_sp, new_text)
+        except Exception as exc:
+            self.logger.exception(f"All Script Apply Selected failed for box {b_idx}:", exc)
+            self.set_status(f"Error applying translation to Box #{b_idx + 1}: {exc}", is_error=True)
+            return False
+
+        new_segs = [s.text for s in doc.boxes[b_idx].segs]
+        self.undo_journal.record(
+            BoxEditDelta(
+                box_index=b_idx,
+                old_speaker=old_sp,
+                new_speaker=old_sp,
+                old_text=old_tx,
+                new_text=new_text,
+                file_path=str(self.current_file_path) if self.current_file_path else "",
+                box_uid=box_uid,
+                source="mtl",
+                old_seg_texts=old_segs,
+                new_seg_texts=new_segs,
+            )
+        )
+        self._modified_boxes.add(b_idx)
+        self._mark_document_dirty(self.current_file_path)
+        self._dirty_state_changed()
+        self._update_views()
+        self.show_toast(f"✓ Applied translation to Box {b_idx + 1}")
+        return True
+
+    def _on_mtl_all_script_translate_all(self) -> None:
+        """Batch-translate all unlocked, non-empty boxes using the selected engine."""
+        doc = getattr(self, "current_doc", None)
+        if not doc or not doc.boxes:
+            self.show_toast("Open a story document to translate.")
+            return
+        eng = self.var_mtl_all_engine.get()
+
+        if eng in self._MTL_DRAWER_PAID_ENGINES:
+            uncached_count = 0
+            for idx, box in enumerate(doc.boxes):
+                if self.is_box_locked(idx) or self._is_mtl_empty_or_punct(box.clean_text):
+                    continue
+                if (eng, _hash_mtl_source(box.clean_text)) not in self._mtl_drawer_cache:
+                    uncached_count += 1
+            if uncached_count > 0:
+                ok = messagebox.askyesno(
+                    "Confirm Paid API Batch Call",
+                    f"Translate All will call paid API '{eng}' for {uncached_count} uncached box(es).\n\nContinue?",
+                    parent=self,
+                )
+                if not ok:
+                    return
+
+        for idx, box in enumerate(doc.boxes):
+            self._dispatch_mtl_all_box(idx, box, eng, bypass_cache=False)
+
+        self._refresh_mtl_all_script_view(preserve_scroll=True)
+
+    def _on_mtl_all_script_apply_all(self) -> int:
+        """Apply all ready/edited translations to unlocked boxes in one Undo batch."""
+        self._flush_mtl_all_scratchpad()
+        doc = getattr(self, "current_doc", None)
+        if not doc or not doc.boxes:
+            self.show_toast("Open a story document first.")
+            return 0
+        eng = self.var_mtl_all_engine.get()
+
+        candidates: List[Tuple[Any, str]] = []
+        for idx, box in enumerate(doc.boxes):
+            if self.is_box_locked(idx):
+                continue
+            b_uid = _get_box_uid(box)
+            ctx = self._mtl_all_ctx_key(b_uid, eng)
+            st = self._mtl_all_statuses.get(ctx)
+            if st in ("locked", "translating", "error"):
+                continue
+            tr_text = self._mtl_all_results.get(ctx)
+            if tr_text is None:
+                src_hash = _hash_mtl_source(box.clean_text)
+                if (eng, src_hash) in self._mtl_drawer_cache:
+                    tr_text = self._mtl_drawer_cache[(eng, src_hash)]
+            if tr_text is None or tr_text == "":
+                continue
+            candidates.append((b_uid, tr_text))
+
+        if not candidates:
+            self.show_toast("No ready translations to apply.")
+            return 0
+
+        applied_count = 0
+        self.undo_journal.begin_batch("MTL Apply All")
+        try:
+            for b_uid, new_text in candidates:
+                found = self._find_box_index_by_uid(b_uid)
+                if found is None:
+                    continue
+                b_idx, old_box = found
+                if self.is_box_locked(b_idx):
+                    continue
+                old_sp = old_box.speaker
+                old_tx = old_box.clean_text
+                old_segs = [s.text for s in old_box.segs]
+                try:
+                    doc.inject_box(b_idx, old_sp, new_text)
+                except Exception as exc:
+                    self.logger.exception(f"MTL Apply All failed for box {b_idx}:", exc)
+                    continue
+                new_segs = [s.text for s in doc.boxes[b_idx].segs]
+                self.undo_journal.record(
+                    BoxEditDelta(
+                        box_index=b_idx,
+                        old_speaker=old_sp,
+                        new_speaker=old_sp,
+                        old_text=old_tx,
+                        new_text=new_text,
+                        file_path=str(self.current_file_path) if self.current_file_path else "",
+                        box_uid=b_uid,
+                        source="mtl",
+                        old_seg_texts=old_segs,
+                        new_seg_texts=new_segs,
+                    )
+                )
+                self._modified_boxes.add(b_idx)
+                applied_count += 1
+        finally:
+            self.undo_journal.end_batch()
+
+        if applied_count > 0:
+            self._mark_document_dirty(self.current_file_path)
+            self._dirty_state_changed()
+            self._update_views()
+            self.show_toast(f"✓ Applied {eng} translations to {applied_count} box(es)")
+        else:
+            self.show_toast("No translations were applied.")
+        return applied_count
 
     def on_translate_current_box(self) -> None:
         """Translate the dialogue in the active box using configured active engine (F8 / Rule 15 / BUG-27)."""

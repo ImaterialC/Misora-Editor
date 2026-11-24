@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S21 — Docked Right-Side MTL Drawer: `All Script` Mode (Exact 2 `tk.Text` Widgets + 5 Static Status Tags)
+- **Session Scope:** FEAT-13 (`U-B33` — Track 2 · Group G6b, post-S20; Lead Ruling #8, `NO-03`).
+- **`All Script` Mode UI & Mode Switching (`misora.py`):**
+  - Synced `_on_toggle_continuous_view()` with `_set_mtl_drawer_mode("all_script" if self.var_continuous_view.get() else "dialogue")` alongside the `Dialogue` / `All Script` mode toggle buttons.
+  - When `All Script` mode is active, hides Dialogue containers and clears `mtl_cards_body` so `tab_mtl_frame` contains ONE single-engine `ttk.Combobox` selector (`cmb_mtl_all_engine`) + **EXACTLY 2 `tk.Text` widgets** (`txt_mtl_all_list` read-only multi-line block list + `txt_mtl_all_scratchpad` shared bottom editable scratchpad), ZERO `ttk.Treeview`, and ZERO per-box `tk.Text` editors (`NO-03`).
+  - Configured **5 shared static theme-aware status tags** (`mtl_status_ready` `✓`, `mtl_status_translating` `⏳`, `mtl_status_error` `⚠`, `mtl_status_locked` `🔒` via `fg_muted`, `mtl_status_empty` `-` via `fg_muted`) refreshed live in `_apply_theme_and_fonts_live()`.
+  - Preserves full multi-line (2–3 line) dialogue/translation blocks without single-line truncation, with click-to-select block syncing and document-scoped `(file_path, doc_id, box_uid, engine)` scratchpad caching (`tk.TclError`-safe local `Ctrl+Z`/`Ctrl+Y`).
+- **Batch Pipeline & Lock Enforcement (`misora.py`):**
+  - Added `Refresh Selected`, `Apply Selected`, `Translate All`, and `Apply All` reusing `_mtl_drawer_queue` + `_poll_mtl_drawer_queue()` with monotonic per-`(box_uid, engine)` `req_seq` tracking, `TagMasker` protection, LRU cache reuse on `Translate All` (cache bypass on `Refresh Selected`), paid-API confirmation, model-layer `is_box_locked()` skipping, `box.uid` targeting, exact whitespace preservation (no `.strip()`), and single-batch `BoxEditDelta(source="mtl")` Undo.
+- **Tests:** Added `tests/test_p3_s21_mtl_drawer_all_script.py` (2 failing-first Defect Probes + 1 Regression Guard).
+
 ### S20 — Docked Right-Side MTL Drawer: Tab Infrastructure & `Dialogue` Multi-Engine Stack
 - **Session Scope:** FEAT-12 (`U-B9`, `U-B32` — Track 2 · Group G6a, post-`DEP-6`).
 - **Right-Side Drawer `'MTL'` Tab (`misora.py`):**

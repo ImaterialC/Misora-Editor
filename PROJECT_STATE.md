@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S20 Verification Baseline — 2026-11-25):
+Unit Test Suite (S21 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 333 tests across 42 modules (293 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 336 tests across 43 modules (296 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 333 tests (exact disk discovery):
+Test suites included in the 336 tests (exact disk discovery):
+  tests/test_p3_s21_mtl_drawer_all_script.py — 3 S21 All Script MTL drawer (exact 2 tk.Text widgets, 5 static status tags, Translate All / Apply All lock & box.uid batch) tests (all pass)
   tests/test_p3_s20_mtl_drawer_dialogue.py — 3 S20 docked MTL drawer tab, Dialogue multi-engine stack, lock/whitespace Apply, paid-API confirm & stale guard tests (all pass)
   tests/test_p3_s19_raw_commands_edit.py    — 4 S19 whole-file Raw Commands v2 editing, confirmation, DocumentRecordsDelta undo & lock/JP remap tests (all pass)
   tests/test_p3_s18_game_preview.py         — 3 S18 code-drawn Dialogue Preview & All Script Preview (wrap='none', bleed, cstyle_* sweep, no AtlasAdv) tests (all pass)
@@ -106,6 +107,19 @@ Test suites included in the 333 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G6b (S21) COMPLETE
+- **Status:** S21 is 100% COMPLETE (FEAT-13).
+- **Next Session:** S22.
+
+### S21 Docked Right-Side MTL Drawer — `All Script` Mode (2026-11-25)
+- **Session Scope:** FEAT-13 (`U-B33` — Track 2 · Group G6b, post-S20; Lead Ruling #8, `NO-03`).
+- **`All Script` Mode (`misora.py`):**
+  - Synced `_on_toggle_continuous_view()` with `_set_mtl_drawer_mode("all_script" if self.var_continuous_view.get() else "dialogue")` alongside `Dialogue` / `All Script` mode buttons.
+  - Renders ONE single-engine `ttk.Combobox` (`cmb_mtl_all_engine`) + **EXACTLY 2 `tk.Text` widgets** (`txt_mtl_all_list` read-only multi-line block list + `txt_mtl_all_scratchpad` shared bottom scratchpad), ZERO `ttk.Treeview`, and ZERO per-box `tk.Text` editors (`NO-03`).
+  - Configured 5 shared static theme-aware status tags (`mtl_status_ready`, `mtl_status_translating`, `mtl_status_error`, `mtl_status_locked`, `mtl_status_empty`) updated live in `_apply_theme_and_fonts_live()`.
+  - Added `Refresh Selected`, `Apply Selected`, `Translate All`, and `Apply All` reusing `_mtl_drawer_queue` + `_poll_mtl_drawer_queue()` with per-`(box_uid, engine)` `req_seq` tracking, model-layer `is_box_locked()` skipping, `box.uid` targeting, exact whitespace preservation (no `.strip()`), and single-batch `BoxEditDelta(source="mtl")` Undo.
+- **Tests:** Added `tests/test_p3_s21_mtl_drawer_all_script.py` (2 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 336 tests across 43 modules (296 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G6a (S20) COMPLETE
 - **Status:** S20 is 100% COMPLETE (FEAT-12).
