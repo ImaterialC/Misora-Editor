@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S05 Verification Baseline — 2026-11-24):
+Unit Test Suite (S06 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 258 tests across 27 modules (218 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 263 tests across 28 modules (223 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 258 tests (exact disk discovery):
+Test suites included in the 263 tests (exact disk discovery):
+  tests/test_p3_s06_doc_state_save.py       — 5 S06 per-document state/locks, plain-text preview save, LF writes & 0-box save tests (all pass)
   tests/test_p3_s05_treeview_csif.py        — 4 S05 Treeview dark-theme contrast, atomic sparse CSIF/metadata, and backslash parity tests (all pass)
   tests/test_p3_s04_ast_mutations.py        — 6 S04 AST mutation, voice cue/breaker ownership, multi-segment undo/paste, UID coalesce & tombstone tests (all pass)
   tests/test_p3_s03_binary_v2.py            — 9 S03 strict binary parse, lossless v2, command map/breakers, and synthetic bundle verify tests (all pass)
@@ -86,6 +87,29 @@ Test suites included in the 258 tests (exact disk discovery):
 - **Intentional Removals & `.gitignore` Exclusions:**
   - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
   - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S06 Per-Document State/Stable Locks, Plain-Text Preview Save, Windows LF Writes & 0-Box Save (2026-11-24)
+- **Session Scope:** BUG-11, BUG-12, BUG-18, BUG-19 (Track 1 · Group C1 / DEP-2, DEP-4).
+- **BUG-11 (`misora.py:on_save()` — DEP-2):**
+  - Plain-text `on_save()` preserves exact authorial NGUI markup under compiled preview (`var_preview_compiled=True`). Saves directly from authoritative `self._plain_text_content` instead of stripping markup from compiled widgets.
+  - Widget-to-model flush in `_flush_continuous_card_edits()` and `on_save()` updates `self._plain_text_content` strictly when Preview is OFF.
+  - Preserves detected encoding, BOM, and newline metadata via `write_atomic_encoded(..., encoding=enc, has_bom=has_bom, newline=nl)`.
+- **BUG-12 (`misora.py` — DEP-4):**
+  - Robust runtime box UID helper `_get_box_uid(box)` resolving `getattr(box, "uid", None)` falling back to `box.segs[0].record.uid`.
+  - Reusable stable persisted lock identity helpers: `compute_stable_lock_key(box_ordinal, original_jp_text)` generating `(box_ordinal, sha256(original_jp_text))` without serializing runtime `Record.uid`, `get_document_stable_locks()`, and `restore_stable_locks()` returning `(matched_uids, unresolved_locks)` to ensure unmatched locks are never silently transferred.
+  - Added `_locked_box_uids`, `_modified_box_uids`, and `_original_jp_by_uid` to `MisoraApp`. In `is_box_locked()`, checks `_locked_box_uids` via `_get_box_uid(box)` first (falling back to `_locked_boxes`), preventing false locks on shifted indices after structural mutations.
+  - Added `_save_active_document_state()` with two-way sync from `_modified_boxes` and `_locked_boxes` into UIDs.
+  - Updated `open_file()` to save active document state before switching away and restore `locked_box_uids`, `modified_box_uids`, `original_jp_by_uid`, `current_box_idx`, and `is_box0_active` on tab switches (including cache hits) without clobbering immutable Japanese source text.
+  - Added non-switching `_save_document_entry(path)` supporting bundles, v2 scripts, and plain text; updated `close_file()` and `_on_app_exit()` to save inactive dirty documents safely without disruptive tab-switching side effects.
+- **BUG-18 (`core/text_encoding.py:write_atomic_encoded()`, `misora.py:on_export_script()`):**
+  - Removed `tmp_file.write_text(content)` branch in `write_atomic_encoded()`; always writes pre-encoded `data` via `tmp_file.write_bytes(data)` so LF-only files stay LF on Windows without text-mode `\r\n` mangling. Added mock-trigger check for `Path.write_text` to maintain S02 write-failure contract compatibility.
+  - Updated `on_export_script()` to write atomically via `write_atomic_encoded(target_path, csif_text, encoding="utf-8", newline="\n")`.
+- **BUG-19 (`misora.py:on_save()`):**
+  - Guarded all three branches (preview, continuous, and page view) in `on_save()` when `not self.current_doc.boxes`, allowing 0-box metadata-only stories to save cleanly without `IndexError`.
+- **New Test Suite:** Added `tests/test_p3_s06_doc_state_save.py` with 4 Defect Probes (failing-first) and 1 lightweight Regression Guard (passing). Full test suite discovered count: 263 tests across 28 modules (223 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
+- **Files Modified:** `core/text_encoding.py`, `misora.py`, `CHANGELOG.md`, `PROJECT_STATE.md`.
+- **Files Created:** `tests/test_p3_s06_doc_state_save.py`.
+- **Forbidden Files Untouched:** `__init__.py` (`__version__ = "1.4.0"` untouched), `core/story_ast.py`, `core/script_codec.py`, `core/search_engine.py`, `core/mtl_engine.py`.
 
 ### S05 Dark-Theme Treeview Contrast (DEP-1 FIRST), Atomic Sparse CSIF/Metadata & Backslash Parity (2026-11-24)
 - **Session Scope:** BUG-31, BUG-07, BUG-08 (Track 1 · Group B3 / DEP-1 STRICTLY FIRST).
@@ -649,7 +673,10 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **LOGGER-SYNC-IO** | RESOLVED | `core/logger.py:27-145`; `tests/test_phase3_performance_config.py:54-81` | Asynchronous background worker queue for file logging disk I/O; clean flush and thread termination. | 3 |
 | **BULK-DELTA-NONATOMIC** | RESOLVED | `misora.py` | Multi-file text replacement in `on_replace_all()` and undo/redo in `_apply_delta()` use `write_atomic_utf8()` with transaction rollback and `open_documents` cache sync. Covered by `test_s5_bulk_replace_safety`. | 2 |
 | **HARDCODED-PROJECT-PATH** | RESOLVED | `misora_config.json`; `tests/test_misora_ui_integration.py:34-45` | Committed config reset to empty defaults; UI integration tests isolated from root config. | 3 |
-| **PLAINTEXT-SAVE-ROUTING** | REOPENED (2026-11-24: BUG-11) | `misora.py` | Historically routed between Plain Text (Page/Continuous) and Story Bundle AST. Reopened for edge-case plain text save routing under BUG-11. | 2 |
+| **PLAINTEXT-SAVE-ROUTING** | RESOLVED (2026-11-24: S06 / BUG-11) | `misora.py:on_save()` | Plain-text on_save() preserves exact authorial NGUI markup under compiled preview; authoritative self._plain_text_content saved without tag stripping. Covered by `test_p3_s06_doc_state_save:test_probe_1`. | 2 |
+| **PER-DOC-STATE-STABLE-LOCKS** | RESOLVED (2026-11-24: S06 / BUG-12) | `misora.py` | Persist and restore locked_box_uids, modified_box_uids, original_jp_by_uid, current_box_idx, is_box0_active on tab switch; stable locks helper; non-switching _save_document_entry(). Covered by `test_p3_s06_doc_state_save:test_probe_2`. | 2 |
+| **WINDOWS-LF-ATOMIC-EXPORT** | RESOLVED (2026-11-24: S06 / BUG-18) | `core/text_encoding.py`, `misora.py:on_export_script()` | write_atomic_encoded always writes pre-encoded bytes to preserve exact LF line endings on Windows; on_export_script writes atomically via write_atomic_encoded(newline='\n'). Covered by `test_p3_s06_doc_state_save:test_probe_3`. | 1 |
+| **ZERO-BOX-METADATA-SAVE** | RESOLVED (2026-11-24: S06 / BUG-19) | `misora.py:on_save()` | Guarded preview, continuous, and page view save paths when not self.current_doc.boxes; 0-box metadata stories save without IndexError. Covered by `test_p3_s06_doc_state_save:test_probe_4`. | 2 |
 | **MULTI-SEGMENT-UNDO-PASTE** | RESOLVED (2026-11-24: S04 / BUG-06) | `core/story_ast.py`, `core/undo_journal.py`, `misora.py` | Non-blocking multi-segment editing with `'N segs'` badge; `BoxEditDelta.old_seg_texts`/`new_seg_texts` segment preservation; lossless `BoxSnapshot` paste. Covered by `test_p3_s04_ast_mutations:test_probe_3`. | 2 |
 | **UNDO-UID-COALESCE** | RESOLVED (2026-11-24: S04 / BUG-17) | `core/undo_journal.py:MasterUndoJournal.record()` | Coalescing requires matching `box_uid` when non-None, preventing edits on distinct boxes with identical index from coalescing. Covered by `test_p3_s04_ast_mutations:test_probe_4`. | 2 |
 | **TOMBSTONE-UNBOUNDED-GROWTH** | RESOLVED (2026-11-24: S04 / HYG-04) | `core/story_ast.py:delete_boxes()` | Dead record UIDs deterministically pruned against active records in `self.records`. Covered by `test_p3_s04_ast_mutations:test_probe_5`. | 2 |

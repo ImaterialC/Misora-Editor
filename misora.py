@@ -1158,6 +1158,66 @@ def write_atomic_utf8(
     write_atomic_encoded(path, content, encoding=encoding, has_bom=has_bom, newline=newline)
 
 
+def _get_box_uid(box: Any) -> Optional[int]:
+    """Get runtime UID from a Box, falling back to its primary segment record UID (S06 / BUG-12)."""
+    if box is None:
+        return None
+    uid = getattr(box, "uid", None)
+    if uid is not None and uid != 0:
+        return uid
+    if hasattr(box, "segs") and box.segs and getattr(box.segs[0], "record", None):
+        return getattr(box.segs[0].record, "uid", None)
+    return uid
+
+
+def compute_stable_lock_key(box_ordinal: int, original_jp_text: str) -> Tuple[int, str]:
+    """Compute stable lock identity (box_ordinal, sha256(original_jp_text)) (S06 / BUG-12 / Invariant 6)."""
+    return (box_ordinal, hashlib.sha256(original_jp_text.encode("utf-8")).hexdigest())
+
+
+def get_document_stable_locks(
+    doc: Any,
+    locked_uids: Set[int],
+    original_jp_by_uid: Dict[int, str],
+) -> List[Tuple[int, str]]:
+    """Extract list of stable lock keys (box_ordinal, sha256(jp)) for locked boxes in doc."""
+    if not doc or not getattr(doc, "boxes", None):
+        return []
+    stable_locks: List[Tuple[int, str]] = []
+    for i, box in enumerate(doc.boxes):
+        b_uid = _get_box_uid(box)
+        if b_uid is not None and b_uid in locked_uids:
+            jp_text = original_jp_by_uid.get(b_uid, box.clean_text)
+            stable_locks.append(compute_stable_lock_key(i, jp_text))
+    return stable_locks
+
+
+def restore_stable_locks(
+    doc: Any,
+    stable_locks: Iterable[Tuple[int, str]],
+    original_jp_by_uid: Optional[Dict[int, str]] = None,
+) -> Tuple[Set[int], List[Tuple[int, str]]]:
+    """Restore stable lock keys against doc.boxes, returning (matched_uids, unresolved_locks) (S06 / BUG-12)."""
+    matched_uids: Set[int] = set()
+    unresolved: List[Tuple[int, str]] = []
+    if not doc or not getattr(doc, "boxes", None):
+        return matched_uids, list(stable_locks)
+
+    orig_map = original_jp_by_uid or {}
+    for ordinal, expected_hash in stable_locks:
+        if 0 <= ordinal < len(doc.boxes):
+            box = doc.boxes[ordinal]
+            b_uid = _get_box_uid(box)
+            jp_text = orig_map.get(b_uid, box.clean_text)
+            actual_hash = hashlib.sha256(jp_text.encode("utf-8")).hexdigest()
+            if actual_hash == expected_hash:
+                if b_uid is not None:
+                    matched_uids.add(b_uid)
+                continue
+        unresolved.append((ordinal, expected_hash))
+    return matched_uids, unresolved
+
+
 class MisoraApp(tk.Tk):
     """Main Application Window for Misora: Unity3D Revision Tool."""
 
@@ -1266,6 +1326,9 @@ class MisoraApp(tk.Tk):
         self.var_select_box_mode: tk.BooleanVar = tk.BooleanVar(master=self, value=False)
         self._selected_boxes: Set[int] = set()
         self._locked_boxes: Set[int] = set()
+        self._locked_box_uids: Set[int] = set()
+        self._modified_box_uids: Set[int] = set()
+        self._original_jp_by_uid: Dict[int, str] = {}
         self._box_clipboard: List[Any] = []
         self._is_speaker_pinned: bool = False
         self._icon_cache: dict = {}
@@ -1475,9 +1538,7 @@ class MisoraApp(tk.Tk):
             if ans is None:
                 return
             if ans:
-                if p != self.current_file_path:
-                    self.open_file(p)
-                if not self.on_save():
+                if not self._save_document_entry(p):
                     return
 
         self.logger.info("UI / Theme / Config", "Saving configuration on exit...")
@@ -6654,6 +6715,8 @@ class MisoraApp(tk.Tk):
         if not self._flush_active_widget():
             return
 
+        self._save_active_document_state()
+
         doc = staged["doc"]
         is_bundle = staged["is_bundle"]
         plain_text = staged["plain_text"]
@@ -6665,17 +6728,49 @@ class MisoraApp(tk.Tk):
         self.current_unity_env = staged["env"]
         self.current_text_obj = staged["obj"]
         self.is_bundle_file = is_bundle
-        self.current_box_idx = 0
-        self.is_box0_active = False
-        self.is_dirty = staged["dirty"]
         self._plain_text_content = plain_text
-        self._modified_boxes.clear()
-        self._locked_boxes.clear()
-        self._original_box_texts = (
-            {i: b.clean_text for i, b in enumerate(doc.boxes)}
-            if doc is not None and doc.boxes
-            else {}
-        )
+
+        if staged["kind"] == "cache":
+            entry = staged["entry"]
+            self.is_dirty = bool(entry.get("dirty", False))
+            self.current_box_idx = int(entry.get("current_box_idx", 0))
+            self.is_box0_active = bool(entry.get("is_box0_active", False))
+            self._locked_box_uids = set(entry.get("locked_box_uids", set()))
+            self._modified_box_uids = set(entry.get("modified_box_uids", set()))
+            self._original_jp_by_uid = dict(entry.get("original_jp_by_uid", {}))
+        else:
+            self.current_box_idx = 0
+            self.is_box0_active = False
+            self.is_dirty = staged["dirty"]
+            self._locked_box_uids = set()
+            self._modified_box_uids = set()
+            self._original_jp_by_uid = (
+                {_get_box_uid(b): b.clean_text for b in doc.boxes if _get_box_uid(b) is not None}
+                if doc is not None and doc.boxes
+                else {}
+            )
+            staged_cache = staged.get("cache")
+            if staged_cache is not None:
+                staged_cache["current_box_idx"] = 0
+                staged_cache["is_box0_active"] = False
+                staged_cache["locked_box_uids"] = set()
+                staged_cache["modified_box_uids"] = set()
+                staged_cache["original_jp_by_uid"] = dict(self._original_jp_by_uid)
+
+        if doc is not None and doc.boxes:
+            self.current_box_idx = max(0, min(self.current_box_idx, len(doc.boxes) - 1))
+            self._locked_boxes = {i for i, b in enumerate(doc.boxes) if _get_box_uid(b) in self._locked_box_uids}
+            self._modified_boxes = {i for i, b in enumerate(doc.boxes) if _get_box_uid(b) in self._modified_box_uids}
+            self._original_box_texts = {i: self._original_jp_by_uid.get(_get_box_uid(b), b.clean_text) for i, b in enumerate(doc.boxes)}
+            for b in doc.boxes:
+                b_uid = _get_box_uid(b)
+                if b_uid is not None and b_uid not in self._original_jp_by_uid:
+                    self._original_jp_by_uid[b_uid] = b.clean_text
+        else:
+            self.current_box_idx = 0
+            self._locked_boxes = set()
+            self._modified_boxes = set()
+            self._original_box_texts = {}
 
         if hasattr(self, "recent_files"):
             if file_path in self.recent_files:
@@ -6896,21 +6991,22 @@ class MisoraApp(tk.Tk):
         """Flush any uncommitted edits from active Box Cards or plain text back into model."""
         if not self.current_doc:
             if hasattr(self, "txt_continuous") and self.txt_continuous.winfo_exists():
-                new_tx = self.txt_continuous.get("1.0", "end-1c")
-                if self._plain_text_content != new_tx:
-                    old_tx = self._plain_text_content
-                    self.undo_journal.record(
-                        PlainTextDelta(
-                            file_path=str(self.current_file_path or ""),
-                            old_content=old_tx,
-                            new_content=new_tx,
-                        ),
-                        label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
-                    )
-                    self._plain_text_content = new_tx
-                    if self.current_file_path and self.current_file_path in self.open_documents:
-                        self.open_documents[self.current_file_path]["plain_text"] = new_tx
-                    self._mark_document_dirty(self.current_file_path)
+                if not getattr(self, "var_preview_compiled", None) or not self.var_preview_compiled.get():
+                    new_tx = self.txt_continuous.get("1.0", "end-1c")
+                    if self._plain_text_content != new_tx:
+                        old_tx = self._plain_text_content
+                        self.undo_journal.record(
+                            PlainTextDelta(
+                                file_path=str(self.current_file_path or ""),
+                                old_content=old_tx,
+                                new_content=new_tx,
+                            ),
+                            label=f"Edit {self.current_file_path.name if self.current_file_path else 'text'}"
+                        )
+                        self._plain_text_content = new_tx
+                        if self.current_file_path and self.current_file_path in self.open_documents:
+                            self.open_documents[self.current_file_path]["plain_text"] = new_tx
+                        self._mark_document_dirty(self.current_file_path)
             return
 
         if not getattr(self, "_card_widgets", None):
@@ -8513,23 +8609,47 @@ class MisoraApp(tk.Tk):
                 self._update_views()
 
     def is_box_locked(self, box_idx: int) -> bool:
-        """Check if dialogue box at box_idx is locked against translation / batch mutations (Rule 20 D8)."""
+        """Check if dialogue box at box_idx is locked against translation / batch mutations (Rule 20 D8 / S06)."""
+        if self.current_doc and 0 <= box_idx < len(self.current_doc.boxes):
+            b_uid = _get_box_uid(self.current_doc.boxes[box_idx])
+            if b_uid is not None and b_uid in getattr(self, "_locked_box_uids", set()):
+                return True
         return box_idx in getattr(self, "_locked_boxes", set())
 
     def on_toggle_lock_current_box(self) -> None:
-        """Toggle Translation Lock on active dialogue box (Ctrl+L / Rule 20 D8)."""
+        """Toggle Translation Lock on active dialogue box (Ctrl+L / Rule 20 D8 / S06)."""
         if not self.current_doc or not self.current_doc.boxes:
             return
         if getattr(self, "is_box0_active", False):
             self.show_toast("Box 0 metadata cannot be locked.")
             return
         b_idx = self.current_box_idx
-        if b_idx in self._locked_boxes:
-            self._locked_boxes.remove(b_idx)
+        if not (0 <= b_idx < len(self.current_doc.boxes)):
+            return
+        box = self.current_doc.boxes[b_idx]
+        b_uid = _get_box_uid(box)
+
+        if not hasattr(self, "_locked_box_uids"):
+            self._locked_box_uids = set()
+        if not hasattr(self, "_locked_boxes"):
+            self._locked_boxes = set()
+
+        is_currently_locked = (b_uid is not None and b_uid in self._locked_box_uids) or (b_idx in self._locked_boxes)
+        if is_currently_locked:
+            if b_uid is not None:
+                self._locked_box_uids.discard(b_uid)
+            self._locked_boxes.discard(b_idx)
             self.show_toast(f"🔓 Box {b_idx + 1} unlocked")
         else:
+            if b_uid is not None:
+                self._locked_box_uids.add(b_uid)
             self._locked_boxes.add(b_idx)
             self.show_toast(f"🔒 Box {b_idx + 1} locked from batch/paste edits")
+
+        if self.current_file_path:
+            cur_p = Path(self.current_file_path).resolve()
+            if cur_p in self.open_documents:
+                self.open_documents[cur_p]["locked_box_uids"] = set(self._locked_box_uids)
         self._update_views()
 
     def _update_rendered_char_count(self, text: str) -> None:
@@ -8580,13 +8700,16 @@ class MisoraApp(tk.Tk):
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     bak_path = backup_dir / f"{self.current_file_path.stem}.bak_{ts}{self.current_file_path.suffix}"
                     shutil.copy2(self.current_file_path, bak_path)
-                content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
+                if not getattr(self, "var_preview_compiled", None) or not self.var_preview_compiled.get():
+                    content = self.txt_continuous.get("1.0", "end-1c") if self.var_continuous_view.get() else self.txt_dialogue.get("1.0", "end-1c")
+                    self._plain_text_content = content
+                else:
+                    content = self._plain_text_content
                 doc_entry = self.open_documents.get(cur_p, {})
                 enc = doc_entry.get("encoding", "utf-8")
                 has_bom = bool(doc_entry.get("has_bom", False))
                 nl = doc_entry.get("newline", None)
-                write_atomic_utf8(self.current_file_path, content, encoding=enc, has_bom=has_bom, newline=nl)
-                self._plain_text_content = content
+                write_atomic_encoded(self.current_file_path, content, encoding=enc, has_bom=has_bom, newline=nl)
                 if cur_p in self.open_documents:
                     self.open_documents[cur_p]["dirty"] = False
                     self.open_documents[cur_p]["plain_text"] = content
@@ -8600,20 +8723,32 @@ class MisoraApp(tk.Tk):
 
             if getattr(self, "is_box0_active", False):
                 self._on_box0_metadata_edited()
+            elif not self.current_doc.boxes:
+                # 0-box metadata-only story (BUG-19)
+                pass
             elif self.var_preview_compiled.get():
-                new_sp = self.speaker_var.get()
-                cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-                self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+                if 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                    new_sp = self.speaker_var.get()
+                    cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
+                    self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
             elif self.var_continuous_view.get():
                 self._sync_continuous_box_from_widget()
-                new_sp = self.speaker_var.get()
-                cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-                self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+                if 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                    new_sp = self.speaker_var.get()
+                    cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
+                    self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
             else:
-                new_sp = self.speaker_var.get()
-                new_tx = self.txt_dialogue.get("1.0", "end-1c")
-                self.current_doc.inject_box(self.current_box_idx, new_sp, new_tx)
-                self._modified_boxes.add(self.current_box_idx)
+                if 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                    new_sp = self.speaker_var.get()
+                    new_tx = self.txt_dialogue.get("1.0", "end-1c")
+                    self.current_doc.inject_box(self.current_box_idx, new_sp, new_tx)
+                    self._modified_boxes.add(self.current_box_idx)
+                    box = self.current_doc.boxes[self.current_box_idx]
+                    b_uid = _get_box_uid(box)
+                    if b_uid is not None:
+                        if not hasattr(self, "_modified_box_uids"):
+                            self._modified_box_uids = set()
+                        self._modified_box_uids.add(b_uid)
 
             if self.is_bundle_file:
                 written_size = save_bundle_story(
@@ -8676,17 +8811,146 @@ class MisoraApp(tk.Tk):
                         self.lbl_status.config(text=self.lbl_status.cget("text") + f" | Synced XUAT file(s): {files_str}")
                         self.logger.info("XUAT Sync", f"Synced XUAT file(s): {files_str}")
                     self._modified_boxes.clear()
+                    if hasattr(self, "_modified_box_uids"):
+                        self._modified_box_uids.clear()
+                    if cur_p in self.open_documents:
+                        self.open_documents[cur_p]["modified_box_uids"] = set()
                 except Exception as xuat_err:
                     self.logger.warning("XUAT", f"Secondary XUAT sync failed (primary save succeeded): {xuat_err}")
                     self.lbl_status.config(text=self.lbl_status.cget("text") + f" | (XUAT sync failed: {xuat_err})")
             else:
                 self._modified_boxes.clear()
+                if hasattr(self, "_modified_box_uids"):
+                    self._modified_box_uids.clear()
+                if cur_p in self.open_documents:
+                    self.open_documents[cur_p]["modified_box_uids"] = set()
 
             return True
 
         except Exception as e:
             self.logger.exception(f"Save/Patch failed for '{self.current_file_path}':", e)
             messagebox.showerror("Save Failed", f"Failed to repack or save:\n{e}")
+            return False
+
+    def _save_active_document_state(self) -> None:
+        """Save mutable UI/view state for active document into open_documents cache (S06 / BUG-12)."""
+        if not self.current_file_path:
+            return
+        cur_p = Path(self.current_file_path).resolve()
+        if cur_p not in self.open_documents:
+            return
+
+        if not hasattr(self, "_modified_box_uids"):
+            self._modified_box_uids = set()
+        if not hasattr(self, "_locked_box_uids"):
+            self._locked_box_uids = set()
+
+        if self.current_doc and self.current_doc.boxes:
+            for idx in getattr(self, "_modified_boxes", set()):
+                if 0 <= idx < len(self.current_doc.boxes):
+                    b_uid = _get_box_uid(self.current_doc.boxes[idx])
+                    if b_uid is not None:
+                        self._modified_box_uids.add(b_uid)
+            for idx in getattr(self, "_locked_boxes", set()):
+                if 0 <= idx < len(self.current_doc.boxes):
+                    b_uid = _get_box_uid(self.current_doc.boxes[idx])
+                    if b_uid is not None:
+                        self._locked_box_uids.add(b_uid)
+
+        entry = self.open_documents[cur_p]
+        entry["current_box_idx"] = getattr(self, "current_box_idx", 0)
+        entry["is_box0_active"] = getattr(self, "is_box0_active", False)
+        entry["locked_box_uids"] = set(getattr(self, "_locked_box_uids", set()))
+        entry["modified_box_uids"] = set(getattr(self, "_modified_box_uids", set()))
+        if hasattr(self, "_original_jp_by_uid"):
+            entry["original_jp_by_uid"] = dict(self._original_jp_by_uid)
+        if not self.current_doc:
+            entry["plain_text"] = getattr(self, "_plain_text_content", "")
+        entry["dirty"] = getattr(self, "is_dirty", False)
+
+    def _save_document_entry(self, path: Union[str, Path]) -> bool:
+        """Save an open document entry to disk without switching active UI context (S06 / BUG-12)."""
+        cur_p = Path(path).resolve()
+        if cur_p == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+            return self.on_save()
+
+        if cur_p not in self.open_documents:
+            self.logger.warning("File I/O", f"Cannot save non-open document: {cur_p}")
+            return False
+
+        entry = self.open_documents[cur_p]
+        backup_dir = self._get_backup_dir()
+        modified_uids = set(entry.get("modified_box_uids", set()))
+
+        try:
+            if entry.get("is_bundle", False):
+                env = entry.get("env")
+                obj = entry.get("obj")
+                doc = entry.get("doc")
+                if not doc:
+                    return False
+                written_size = save_bundle_story(
+                    env, obj, doc, cur_p, backup_dir=backup_dir
+                )
+                entry["dirty"] = False
+                entry["modified_box_uids"] = set()
+                self._record_saved_checkpoint(cur_p, doc, "")
+                self.undo_journal.mark_saved(str(cur_p))
+                self.logger.info("File I/O", f"Saved inactive bundle '{cur_p}' ({written_size} bytes)")
+            elif entry.get("doc") is not None:
+                doc = entry.get("doc")
+                if cur_p.is_file() and backup_dir:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    bak_path = backup_dir / f"{cur_p.stem}.bak_{ts}{cur_p.suffix}"
+                    shutil.copy2(cur_p, bak_path)
+                v2_text = doc.to_v2_text()
+                enc = entry.get("encoding", "utf-8")
+                has_bom = bool(entry.get("has_bom", False))
+                nl = entry.get("newline", None)
+                write_atomic_encoded(cur_p, v2_text, encoding=enc, has_bom=has_bom, newline=nl)
+                entry["dirty"] = False
+                entry["modified_box_uids"] = set()
+                self._record_saved_checkpoint(cur_p, doc, "")
+                self.undo_journal.mark_saved(str(cur_p))
+                self.logger.info("File I/O", f"Saved inactive v2 script '{cur_p}'")
+            else:
+                if cur_p.is_file() and backup_dir:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    bak_path = backup_dir / f"{cur_p.stem}.bak_{ts}{cur_p.suffix}"
+                    shutil.copy2(cur_p, bak_path)
+                content = entry.get("plain_text", "")
+                enc = entry.get("encoding", "utf-8")
+                has_bom = bool(entry.get("has_bom", False))
+                nl = entry.get("newline", None)
+                write_atomic_encoded(cur_p, content, encoding=enc, has_bom=has_bom, newline=nl)
+                entry["dirty"] = False
+                self._record_saved_checkpoint(cur_p, None, content)
+                self.undo_journal.mark_saved(str(cur_p))
+                self.logger.info("File I/O", f"Saved inactive plain text file '{cur_p}'")
+
+            if self.var_sync_xuat.get() and self.xuat_search_roots and entry.get("doc") and modified_uids:
+                doc = entry.get("doc")
+                orig_by_uid = entry.get("original_jp_by_uid", {})
+                try:
+                    for box_obj in doc.boxes:
+                        b_uid = _get_box_uid(box_obj)
+                        if b_uid not in modified_uids:
+                            continue
+                        orig_key = orig_by_uid.get(b_uid, box_obj.clean_text)
+                        self.sync_manager.find_and_update(
+                            japanese_key=orig_key,
+                            new_english_text=box_obj.clean_text,
+                            search_roots=self.xuat_search_roots,
+                            backup=True,
+                            backup_dir=backup_dir,
+                        )
+                except Exception as e:
+                    self.logger.warning("UI / Theme / Config", f"Secondary XUAT sync failed for inactive doc: {e}")
+
+            self._refresh_opened_files_list()
+            return True
+        except Exception as exc:
+            self.logger.exception(f"Failed saving document entry '{cur_p}':", exc)
             return False
 
     def on_reload(self) -> None:
@@ -9980,9 +10244,7 @@ class MisoraApp(tk.Tk):
             if ans is None:
                 return False
             if ans:
-                if file_path != self.current_file_path:
-                    self.open_file(file_path)
-                if not self.on_save():
+                if not self._save_document_entry(file_path):
                     return False
 
         closed_env = None
@@ -10967,7 +11229,7 @@ class MisoraApp(tk.Tk):
         try:
             csif_text = serialize(self.current_doc, scope="all", include_metadata="auto")
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(csif_text, encoding="utf-8")
+            write_atomic_encoded(target_path, csif_text, encoding="utf-8", newline="\n")
         except Exception as exc:
             self.logger.exception("Failed to export script:", exc)
             messagebox.showerror("Export Failed", f"Could not write export file:\n{exc}", parent=self)
