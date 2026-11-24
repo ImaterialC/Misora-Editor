@@ -62,6 +62,7 @@ class TestS9cWorkspaceSafety(unittest.TestCase):
         dir3.mkdir()
 
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         with patch.object(self.app, "_process_opened_folder") as mock_open_folder, \

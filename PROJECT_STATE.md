@@ -1,10 +1,11 @@
 # Misora Editor — Canonical Project State
 
-Last updated: 2026-11-22
+Last updated: 2026-11-24
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.4.0
+Target release: v1.4.1 (Phase 2.5 Track 1)
 Current code baseline: root `__init__.py` reports `version = "1.4.0"`; unified across UI, splash, dialogs, and tests.
+Starting baseline pinned at commit `683724edaf2afac89d2695a80e30a471a0da9195`.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -34,46 +35,62 @@ OS: Windows 10 / 11 (AMD64)
 Python Version: Python 3.12.10
 UnityPy Availability: AVAILABLE (installed in Python 3.12 environment)
 Pillow Availability: Available
-Fixture Availability: storydata_1001005.unity3d present in repository root (39 dialogue boxes)
+Fixture Availability: storydata_1001005.unity3d intentionally excluded from repository root; local docs/ intentionally removed and excluded via .gitignore.
 
 Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (Phase 7 completion session — 2026-11-23):
+Unit Test Suite (S02 Verification Baseline — 2026-11-24):
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 234 tests in 247.764s — OK (234/234 pass, 0 failures, 0 errors, 0 skips)
+Result: Ran 239 tests across 24 modules (199 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 234 tests:
-  tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (all pass)
-  tests/test_misora_ui_integration.py       — 26 UI integration, Box 0, DnD, and editing tests (all pass)
-  tests/test_phase1_manual_verification.py  — 9 Page and Continuous view verified workflows (all pass)
+Test suites included in the 239 tests (exact disk discovery):
+  tests/test_p3_s02_hygiene.py              — 5 S02 hygiene, single-version User-Agent, and backup isolation tests (all pass)
+  tests/test_misora_core.py                 — 20 core AST, binary, search, and sync tests (18 pass, 2 skipped)
+  tests/test_misora_ui_integration.py       — 27 UI integration, Box 0, DnD, and editing tests (15 pass, 12 skipped)
+  tests/test_phase1_manual_verification.py  — 8 Page and Continuous view verified workflows (all pass)
   tests/test_phase2_required.py             — 13 GUI-level required tests (all pass)
   tests/test_phase3_performance_config.py   — 6 startup, lazy-load, async logger, config tests (all pass)
   tests/test_phase4_import_export_preview.py— 5 import/export, paste preview, tooltip, version tests (all pass)
   tests/test_phase5_mtl_security_preview.py — 7 NGUI tag, DPAPI, TLS verify, DeepL usage, lock, preview tests (all pass)
   tests/test_script_codec.py                — 14 CSIF codec unit tests (all pass)
   tests/test_s1_open_file_safety.py         — 7 staged open-file & multi-format tests (all pass)
-  tests/test_s2_dirty_contract.py           — 14 per-document dirty contract tests (all pass)
-  tests/test_s3_document_close.py           — 10 clean close & dirty lifecycle tests (all pass)
-  tests/test_s4_view_model_sync.py          — 12 dynamic view & ribbon synchronization tests (all pass)
+  tests/test_s2_dirty_contract.py           — 12 per-document dirty contract tests (all pass)
+  tests/test_s3_document_close.py           — 16 clean close & dirty lifecycle tests (all pass)
+  tests/test_s4_view_model_sync.py          — 14 dynamic view & ribbon synchronization tests (all pass)
   tests/test_s5_bulk_replace_safety.py      — 8 atomic bulk replace & transaction rollback tests (all pass)
-  tests/test_s6_threading_decoupling.py     — 16 background search & worker thread queue tests (all pass)
+  tests/test_s6_threading_decoupling.py     — 8 background search & worker thread queue tests (all pass)
   tests/test_s7_undo_speaker_safety.py      — 10 speaker commit & undo integrity tests (all pass)
   tests/test_s8a_dialog_grab_safety.py      — 10 modal dialog grab & lifecycle safety tests (all pass)
   tests/test_s8b1_notification_manager.py   — 10 status bar & toast notification tests (all pass)
-  tests/test_s8b2_memory_leak_guards.py     — 11 asset disposal & memory leak tests (all pass)
-  tests/test_s8b3_keyboard_shortcuts.py     — 9 shortcut router & keybinding tests (all pass)
+  tests/test_s8b2_memory_guards.py          — 8 asset disposal & memory leak tests (3 pass, 3 fail, 2 error due to missing root fixture)
+  tests/test_s8b3_encoding_detection.py     — 10 encoding detection, BOM & CP932 fallback tests (all pass)
   tests/test_s8b4_ui_polishing.py           — 8 dock collapse, DPI & tooltip tests (all pass)
   tests/test_s9a_search_unicode.py          — 6 Japanese Unicode & combining character search tests (all pass)
   tests/test_s9b_replace_all_bundle_safety.py — 3 bundle replace-all extraction & undo tests (all pass)
   tests/test_s9c_workspace_safety.py        — 4 workspace protection, geometry & undo isolation tests (all pass)
 ```
 
-### Current Test Failures
-**None**. 234/234 tests pass (0 failures, 0 errors, 0 skips).
-The former local test design discrepancy in `test_phase3_performance_config:test_05` has been resolved in Slice S9c
-by providing an authoritative committed default template `misora_config.default.json` with clean empty values.
+### Current Test Environment Blockers
+- **Fixture Blockers:** 3 failures and 2 errors in `tests/test_s8b2_memory_guards.py` occur because `storydata_1001005.unity3d` was intentionally excluded from the repository. In addition, 35 tests across `test_misora_core` (2 tests) and `test_misora_ui_integration` (12 tests) report `skipped` when the root fixture is not present. Per `AGENTS.md` §2, missing production fixtures remain environment blockers (`BLOCKED`), never faked or skipped into false passes.
+
+### Reference Audit Provenance & Document Exclusions
+- **Reference Dossier Provenance:**
+  - `Phase_1_Gemini.md`: Gemini's dossier covering initial Phase 1 codebase review, defect taxonomy, and AST mapping.
+  - `Phase_1_Claude.md`: Claude's dossier detailing Phase 1 codebase review, architecture, and candidate fixes.
+  - `Phase_2R1_Claude.md`: Valid 22,852-byte technical specification and Phase 2 review.
+- **Intentional Removals & `.gitignore` Exclusions:**
+  - `docs/`: Local legacy documentation directory intentionally removed and excluded via `.gitignore` to prevent documentation drift.
+  - `storydata_1001005.unity3d`: Proprietary binary test fixture intentionally removed from repository root and tracked files; excluded via `.gitignore`.
+
+### S02 Hygiene & Single-Source Verification (2026-11-24)
+- **Session Scope:** HYG-02, HYG-05, HYG-06 (Track 1 · Group A).
+- **HYG-05 (`core/search_engine.py`):** Added `Any` and `Dict` from `typing`, resolving runtime `typing.get_type_hints(ProjectSearchEngine.search_directory)` cleanly without `NameError`.
+- **HYG-06 (`core/mtl_engine.py`):** Replaced hardcoded DeepL User-Agent strings (`1.3`) with dynamic `f"Misora-Story-Editor/{APP_VERSION}"` read from single version source in `__init__.py`. Verified no circular import of `misora.py` occurs in an isolated process. `__version__ = "1.4.0"` untouched.
+- **HYG-02 (`tests/*.py`):** Redirected `app.backup_folder = str(self.tmp_dir / "backups")` in `setUp()` and cleaned up in `tearDown()` across all UI/save/replace test suites. Confirmed zero new files written to repo root `backups/` across full discovery run (file count remained exactly 936).
+- **New Test Suite:** Added `tests/test_p3_s02_hygiene.py` with 3 Defect Probes (failing-first) and 2 Regression Guards (passing).
+- **Discovered Test Count:** 239 tests (199 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### S0/S1 Open-File Safety Verification (2026-11-21)
 - Pre-edit `misora.py`: 510,461 raw bytes; SHA-256 `2188eab968e031d4d5469f117f3cfb8403dc27622b5b6009d38b3880dd97babe`; LF-normalized 499,293 bytes.
@@ -515,29 +532,29 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **BOX-PASTE-DEAD** | RESOLVED | `misora.py` | Missing helpers `_push_undo`, `_dirty_state_changed`, and `_sync_clean_view_to_current_box` implemented. Covered by `test_28`. | 2 |
 | **BUNDLE-SAVE-WRITES-BEFORE-VERIFY** | RESOLVED | `core/bundle_io.py:117-128` | Staged `.tmp` save with target `path_id` verification, fingerprint validation, and `os.replace`. Covered by `test_17, test_18`. | 1 |
 | **BOX0-SAVE-CORRUPTION** | RESOLVED | `misora.py` | Dedicated Box 0 metadata flush/save path. Prevents dialogue injection while Box 0 is active. Covered by `test_33`. | 2 |
-| **V2-ROUNDTRIP-LOSS** | RESOLVED | `core/story_ast.py` | Preserves numeric command IDs, categories, duplicate commands, and line breaks. Covered by `test_16`. | 1 |
+| **V2-ROUNDTRIP-LOSS** | REOPENED (2026-11-24: BUG-03) | `core/story_ast.py` | Historically preserved numeric command IDs, categories, and line breaks (test_16). Reopened for full lossless roundtrip and whitespace preservation audit under BUG-03. | 1 |
 | **XUAT-SYNC-LINE-CORRUPTION** | RESOLVED | `core/xunity_sync.py` | Strict UTF-8 with BOM preservation, multiline `\n` escaping in values, CRLF/LF line ending preservation. Covered by `test_19`. | 1 |
 | **EMPTY-ARG-ARITY** | RESOLVED | `core/story_ast.py` | Binary serialization retains empty string arguments, preventing arity reduction. Covered by `test_15`. | 1 |
 | **NARRATION-EMPTY-PHANTOM** | RESOLVED | `core/story_ast.py` | Narration emits `tag` records instead of `print` with empty speaker. Covered by `test_15`. | 1 |
 | **PAGE-BREAK-NOT-SPLIT** | RESOLVED | `core/story_ast.py` | Breaker tokens aligned (`page` / `next_page`). Covered by `test_13`. | 1 |
 | **RAW-TAIL-FROZEN** | RESOLVED | `core/story_ast.py` | `inject_box` updates `seg.raw` alongside `seg.text`. | 1 |
-| **CMD0-SPECIAL-CASE** | RESOLVED | `core/story_ast.py` | Removed `cmd_id == 0` special case in `to_binary`. | 1 |
+| **CMD0-SPECIAL-CASE** | REOPENED (2026-11-24: BUG-03) | `core/story_ast.py` | Historically removed `cmd_id == 0` special case in `to_binary`. Reopened for complete roundtrip command map relabeling safety under BUG-03. | 1 |
 | **SHORTCUT-BINDTAG-ORDER** | RESOLVED | `misora.py` | Installed first-position `MisoraShortcuts` bindtag router. Ctrl+H opens replace dialog without mutating dialogue text. Covered by `test_31`. | 2 |
 | **RIBBON-CUT-PASTE-NO-COMMIT** | RESOLVED | `misora.py` | Virtual `<<Cut>>` and `<<Paste>>` explicitly invoke central `_commit_widget_edit`. Covered by `test_30`. | 2 |
-| **MULTI-TEXTASSET-TARGET** | RESOLVED | `core/bundle_io.py` | Locks target TextAsset by `path_id`. Save verification checks target `path_id`. | 1 |
+| **MULTI-TEXTASSET-TARGET** | REOPENED (2026-11-24: BUG-09 / DEF-03) | `core/bundle_io.py` | Historically locked target TextAsset by `path_id`. Reopened for multi-story asset safety and non-target asset preservation under BUG-09 / DEF-03. | 1 |
 | **INJECT-EXTRA-ARGS** | RESOLVED | `core/story_ast.py` | `inject_box` and `set_metadata` preserve unmanaged trailing args. | 1 |
 
-### P0 (new, from manual testing 2026-11-20 — all RESOLVED)
+### P0 (new, from manual testing 2026-11-20)
 
 | Slug | Status | File & Line Evidence | Impact & Resolution | Phase |
 |---|---|---|---|---|
-| **BOX0-NO-SELECT-CHECKBOX** | RESOLVED | `misora.py:_render_continuous_view` | Added Checkbutton to Box 0 card header (`hdr_0`) keyed to index `-1` in `self._selected_boxes` when `var_select_box_mode` is enabled. Allows copying Box 0 metadata. | 2 |
+| **BOX0-NO-SELECT-CHECKBOX** | REOPENED (2026-11-24: BUG-41) | `misora.py:_render_continuous_view` | Historically added Checkbutton to Box 0 card header (`hdr_0`). Reopened for selection mode routing and Box 0 copy integrity under BUG-41. | 2 |
 | **BOX1-COPIES-BOX0-METADATA** | RESOLVED | `core/script_codec.py:serialize()` | Removed `0 in box_indices` auto-emission branch in `serialize()`. Auto-emission now only emits metadata when `scope in ("all", "metadata")` or when Box 0 (`-1`) is explicitly selected. | 2 |
-| **CTRL-ALT-HOTKEYS-BLOCKED** | RESOLVED | `misora.py:_on_misora_shortcut()` | Fixed Windows Alt modifier bitmask to include `0x20000` (`MOD2_MASK`). Whitelisted app `Ctrl+Alt` accelerators (`Ctrl+Alt+X`, `Ctrl+Alt+C`, `Ctrl+Alt+V`, `Ctrl+Alt+A`) and added explicit root bindings. | 2 |
+| **CTRL-ALT-HOTKEYS-BLOCKED** | REOPENED (2026-11-24: BUG-29) | `misora.py:_on_misora_shortcut()` | Historically fixed Windows Alt modifier bitmask. Reopened for AltGr/Ctrl+Alt keyboard shortcut router resolution under BUG-29. | 2 |
 | **CONTINUOUS-EDIT-NO-COMMIT** | RESOLVED | `misora.py:_commit_widget_edit()` | Decoupled Page View Box 0 widgets and Continuous View Card -1 from `is_box0_active` boolean guard. Edits to continuous cards and Box 0 synopsis now commit directly to AST document. | 2 |
 | **BOX0-SWITCH-LOCKS-EDITOR** | RESOLVED | `misora.py:_on_toggle_continuous_view`, `on_prev_box`, `on_next_box` | Restores caret and keyboard focus immediately and via `after_idle` upon view toggles and box navigation. Guarded `_cont_focus_job` against stale cross-view firing. | 2 |
 | **VOICE-CUE-DISPLAY-MISSING** | RESOLVED | `core/story_ast.py:_rebuild_boxes` | Captured `cmd_id == 12` voice cues with `"vo_"` prefix; guarded breaker loop `elif r.cmd_id != 12 and r.cmd_name in DEFAULT_BREAKERS:` so voice cues are never skipped or discarded. | 2 |
-| **FIND-REPLACE-UI-ASYMMETRY** | RESOLVED | `misora.py:_build_search_panel` | Converted Find and Replace rows to a unified 5-column `grid` with `columnconfigure(1, weight=1)`, ensuring Find and Replace entry fields start and end at identical pixel coordinates. Aligned the 4 action buttons ('Find in Files', 'Cancel', 'Replace', 'Replace All') in a symmetrical 2x2 column block with matching widths and added dedicated illustrated Twemoji icons for all 4 buttons. | 2 |
+| **FIND-REPLACE-UI-ASYMMETRY** | REOPENED (2026-11-24: BUG-38) | `misora.py:_build_search_panel` | Historically converted Find/Replace rows to 5-column grid and 2x2 buttons. Reopened for layout symmetry and coordinate alignment under BUG-38. | 2 |
 
 ### P1 — Functional, UI, & Security Issues (Phases 2, 3, 5)
 
@@ -548,10 +565,10 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **REPLACE-ALL-BUNDLE-PREFILTER** | RESOLVED | `misora.py:on_replace_all()` | Candidate discovery decodes structured story TextAssets instead of raw byte scanning. Covered by `test_s9b_replace_all_bundle_safety.py:test_01`. | 2 |
 | **REPLACE-ALL-UNDO-GAP** | RESOLVED | `misora.py:on_replace_all(), _apply_delta()` | Bundle changes recorded in BulkFileDelta with atomic backup snapshots; fully undoable/redoable with transaction rollback. Covered by `test_s9b:test_02, test_03`. | 2 |
 | **TLS-VERIFICATION-DISABLED** | RESOLVED | `core/mtl_engine.py:142-144` | Outbound HTTPS requests strictly enforce valid TLS certificate and hostname verification. Covered by `test_phase5_mtl_security_preview.py:test_03`. | 5 |
-| **API-KEYS-PLAINTEXT** | RESOLVED | `core/security.py:20-65`; `core/mtl_engine.py:52-78`; `misora.py` | API keys encrypted via Windows DPAPI (`dpapi:...` prefix) in config; decrypted in memory; secrets redacted in logs/UI. Covered by `test_phase5:test_02`. | 5 |
+| **API-KEYS-PLAINTEXT** | REOPENED (2026-11-24: BUG-33) | `core/security.py:20-65`; `core/mtl_engine.py:52-78`; `misora.py` | Historically encrypted keys via Windows DPAPI (`dpapi:...` prefix) in config (test_phase5:test_02). Reopened for comprehensive secrets redaction and plain text leakage audit under BUG-33. | 5 |
 | **TAGMASKER-INCOMPLETE** | RESOLVED | `core/ngui_tags.py:15-161` | Central single source of truth for NGUI markup, hyphen gradients, multiline ruby, placeholders, and full shielding/unshielding. Covered by `test_phase5:test_01`. | 5 |
-| **SIZE-RIBBON-NO-COMMIT** | RESOLVED | `misora.py:6374-6394` | Font size insertion routes through central commit and updates dirty state. Covered by `test_37`. | 2 |
-| **CONTINUOUS-RIBBON-TARGET-STALE** | RESOLVED | `misora.py` | Active card resolved dynamically by widget identity, preventing closure desync. | 2 |
+| **SIZE-RIBBON-NO-COMMIT** | REOPENED (2026-11-24: BUG-28) | `misora.py:6374-6394` | Historically routed font size insertion to central commit (test_37). Reopened for Continuous View ribbon commit target desync under BUG-28. | 2 |
+| **CONTINUOUS-RIBBON-TARGET-STALE** | REOPENED (2026-11-24: BUG-28) | `misora.py` | Historically resolved active card dynamically. Reopened for Continuous View ribbon formatting desync under BUG-28. | 2 |
 | **UNDO-STORM** | RESOLVED | `misora.py` | Batch undo applies all deltas to model first, then refreshes UI once in `finally`. | 2 |
 | **SEARCH-RACE** | RESOLVED | `misora.py` | UI thread snapshot isolation via `on_start_search()`; covered by `test_s6_threading_decoupling`. | 2 |
 | **CLIP-SHADOW** | RESOLVED | `misora.py` | If system clipboard differs from internal box snapshot text, internal snapshot is discarded. Covered by `test_35`. | 2 |
@@ -567,7 +584,7 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **LOGGER-SYNC-IO** | RESOLVED | `core/logger.py:27-145`; `tests/test_phase3_performance_config.py:54-81` | Asynchronous background worker queue for file logging disk I/O; clean flush and thread termination. | 3 |
 | **BULK-DELTA-NONATOMIC** | RESOLVED | `misora.py` | Multi-file text replacement in `on_replace_all()` and undo/redo in `_apply_delta()` use `write_atomic_utf8()` with transaction rollback and `open_documents` cache sync. Covered by `test_s5_bulk_replace_safety`. | 2 |
 | **HARDCODED-PROJECT-PATH** | RESOLVED | `misora_config.json`; `tests/test_misora_ui_integration.py:34-45` | Committed config reset to empty defaults; UI integration tests isolated from root config. | 3 |
-| **PLAINTEXT-SAVE-ROUTING** | RESOLVED | `misora.py` | `on_save()` routes correctly between Plain Text (Page/Continuous) and Story Bundle AST. | 2 |
+| **PLAINTEXT-SAVE-ROUTING** | REOPENED (2026-11-24: BUG-11) | `misora.py` | Historically routed between Plain Text (Page/Continuous) and Story Bundle AST. Reopened for edge-case plain text save routing under BUG-11. | 2 |
 
 ### P2 — Performance, QoL, & Measured Risks (Phases 3, 4, 5)
 
@@ -578,8 +595,8 @@ Result: Ran 38 tests in 28.601s — FAILED (failures=4, errors=1)
 | **ICON-CACHE-GROWTH** | RESOLVED | `assets/icon.py:prune_icon_cache()`; `misora.py:destroy()` | Bounded icon cache; explicitly pruned on toplevel destruction and app teardown. Covered by `test_s8b2:test_05`. | 3 |
 | **OFFSCREEN-GEOMETRY** | RESOLVED | `misora.py:sanitize_window_geometry()` | Window coordinates validated against virtual display bounds; off-screen coordinates safely clamped to visible screen. Covered by `test_s9c:test_02`. | 3 |
 | **TOOLTIP-LIFECYCLE** | RESOLVED | Delayed tooltip cancels pending `after()` timers on `<Leave>` / `<Destroy>`, checks `widget_exists()`, and safely destroys `tip_window`. Covered by `test_phase4_import_export_preview.py:test_02`. | 4 |
-| **GAME-BOX-PREVIEW** | RESOLVED | Rendered dialogue length counter ignoring tags; live warning badge `⚠ Overflow` for lines exceeding 45 characters. Covered by `test_phase5:test_06`. | 5 |
-| **TRANSLATION-LOCK** | RESOLVED | Translation Lock (`Ctrl+L`) excludes protected boxes from batch translation, script paste, and replace all. Covered by `test_phase5:test_05`. | 5 |
+| **GAME-BOX-PREVIEW** | REOPENED (2026-11-24: FEAT-09 / FEAT-10) | Rendered dialogue length counter ignoring tags; live warning badge. Reopened for native overflow ruler emulation (50 digit-widths or 3+ linebreaks) planned for S17 under FEAT-09/FEAT-10. | 5 |
+| **TRANSLATION-LOCK** | REOPENED (2026-11-24: BUG-12 / BUG-16) | Translation Lock (`Ctrl+L`) excludes protected boxes from batch translation, script paste, and replace all (test_phase5:test_05). Reopened for model/application layer lock enforcement under BUG-12/BUG-16. | 5 |
 | **PROMPT-STUDIO** | DESIGN | Upgrade prompt dialog; token budget; templates as data. | 5 |
 | **TERMBASE / TM** | DESIGN | TM = XUAT cache index; provenance sidecar only. | 5 |
 | **XUAT2RAW** | DESIGN | Adapter stub only until tool output spec exists. | 4 |

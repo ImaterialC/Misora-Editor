@@ -95,6 +95,7 @@ class TestPhase3PerformanceAndConfig(unittest.TestCase):
                 # Instantiate MisoraApp headless with mocked preferences loading
                 app = misora.MisoraApp(restore_session=False, show_splash=False)
                 app.withdraw()
+                app.backup_folder = str(Path(tmp) / "backups")
 
                 # Verify a .bak file was created alongside tmp_cfg
                 bak_files = list(Path(tmp).glob("misora_config*.bak*"))

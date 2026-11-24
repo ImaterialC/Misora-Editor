@@ -42,6 +42,7 @@ class TestS1OpenFileSafety(unittest.TestCase):
         misora.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         try:

@@ -124,6 +124,7 @@ class S5TestBase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="misora_s5_test_")
         self.app, self.root = _build_headless_app()
+        self.app.backup_folder = str(Path(self.temp_dir) / "backups")
         def _get_test_bak_dir():
             d = Path(self.temp_dir) / "backups"
             d.mkdir(parents=True, exist_ok=True)

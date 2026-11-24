@@ -79,6 +79,7 @@ class _BasePhase1Test(unittest.TestCase):
             p.start()
 
         self.app = _make_app()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         _destroy_app(self.app)

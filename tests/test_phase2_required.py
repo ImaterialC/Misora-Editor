@@ -62,6 +62,7 @@ class TestPhase2Required(unittest.TestCase):
             p.start()
         self.app = misora_app.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         try:
@@ -435,6 +436,7 @@ class TestPhase2RequiredNoFixture(unittest.TestCase):
     """Required Phase 2 tests that do not need a bundle fixture."""
 
     def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="p2req_nofix_"))
         self._patches = [
             patch.object(misora_app.messagebox, "askyesno", return_value=True),
             patch.object(misora_app.messagebox, "showinfo", return_value=None),
@@ -445,6 +447,7 @@ class TestPhase2RequiredNoFixture(unittest.TestCase):
             p.start()
         self.app = misora_app.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         try:
@@ -456,6 +459,7 @@ class TestPhase2RequiredNoFixture(unittest.TestCase):
                 p.stop()
             except Exception:
                 pass
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_38_on_box_copy_emits_csif(self):
         """on_box_copy always emits CSIF regardless of fixture presence."""

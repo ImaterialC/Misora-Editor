@@ -61,11 +61,14 @@ class S8b3TestBase(unittest.TestCase):
         cls.patch_info.stop()
         cls.patch_warning.stop()
         cls.patch_error.stop()
+        import shutil
+        shutil.rmtree(cls.tmp_dir, ignore_errors=True)
 
     def setUp(self):
         with patch.object(misora, "CONFIG_PATH", self.config_path):
             self.app = misora.MisoraApp()
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         try:

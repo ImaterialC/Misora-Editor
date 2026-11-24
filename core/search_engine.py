@@ -12,7 +12,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .bundle_io import load_bundle_story, dispose_unity_env
 from .text_encoding import read_text_file_strictly

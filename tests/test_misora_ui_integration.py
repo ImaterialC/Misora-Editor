@@ -36,6 +36,7 @@ class TestMisoraUIIntegration(unittest.TestCase):
         misora_app.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora_app.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
 
     def tearDown(self):
         try:
@@ -505,6 +506,7 @@ class TestMisoraUIIntegration(unittest.TestCase):
 
         splash_app = misora_app.MisoraApp(restore_session=False, show_splash=True)
         splash_app.withdraw()
+        splash_app.backup_folder = str(self.tmp_dir / "backups")
         try:
             splash_app.open_file(bundle_path)
             # The speaker entry widget must NOT be empty string!

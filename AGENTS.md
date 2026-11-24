@@ -110,10 +110,10 @@
 - `core/ngui_tags.py` is the only definition of NGUI tag patterns.
 - Vertical gradients emit hyphen `[RRGGBB-RRGGBB]`; comma syntax is accepted on input and flagged/normalized.
 - TagMasker must cover every tag the editor emits, including size and multiline ruby.
-- User-visible length counters measure rendered text, not raw markup.
+- User-visible length counters use pixel-calibrated measurement on rendered text, strictly excluding raw markup.
 
 ## 20. CSIF rules
-- CSIF is a future interchange format, not a substitute for AST repair.
+- CSIF is a shipped interchange format, not a substitute for AST repair.
 - Export uses `@@Speaker`, explicit narration `@@_`, and metadata `@@!title/@@!subtitle/@@!summary`.
 - Sparse addressing `@@#N|Speaker` is 1-based and only for filtered/non-contiguous export.
 - Reject mixed, duplicate, missing, or out-of-range sparse addressing; never silently remap positionally.
@@ -123,6 +123,7 @@
 - Colors use theme + `best_contrast_fg()`.
 - Icon-only controls have tooltips and text fallback when icons are unavailable.
 - `__version__` in root `__init__.py` is the single version source.
+- Native overflow rule: 50 digit-widths without a linebreak OR 3 or more linebreaks (4 or more lines). Note that editor font is a proxy/estimate of the in-game font.
 
 ## 22. Startup
 - One process only. Do not spawn a second OS process for splash.
@@ -135,7 +136,7 @@
 - Do not change process DPI awareness at runtime.
 
 ## 24. Scope discipline
-- Do not implement CSIF, MTL drawer, Prompt Studio, Xuat2Raw, LRU eviction, or splash redesign before Phase 1–2 data-integrity gates pass.
+- Do not implement MTL drawer before Phase 2.5 Track 1 P0/P1 stabilization closure (S01..S13); do not implement Prompt Studio, Xuat2Raw, LRU eviction, or splash redesign before data-integrity gates pass.
 - Do not invent fixture outcomes or platform behavior. Mark conditional claims explicitly.
 
 ## 25. Delivery
@@ -157,5 +158,5 @@
 - report_callback_exception must surface a status-bar error, not only a log line. A silently dead button is a defect, not acceptable behavior.
 
 ## 29. Machine-confirmed release blockers
-Verified by the user on Windows: Ctrl+H mutates the dialogue buffer; ribbon Cut is reverted by navigation; Paste Box does nothing in either view.
-These three are release blockers and each needs an explicit manual Windows test in addition to unit tests.
+Verified by the user on Windows v1.4.0: Ctrl+H is verified fixed (retaining HYG-07 minor bind_all hygiene); ribbon Cut is reverted by navigation (REOPENED/ACTIVE); Paste Box does nothing in either view (REOPENED/ACTIVE).
+The remaining two (ribbon Cut and Paste Box) are release blockers and each needs an explicit manual Windows test in addition to unit tests.

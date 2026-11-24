@@ -62,6 +62,7 @@ class TestPhase5MTLSecurityPreview(unittest.TestCase):
             cls.app = misora.MisoraApp(restore_session=False, show_splash=False)
             cls.app._test_bypass_dialogs = True
             cls.app.withdraw()
+            cls.app.backup_folder = str(cls.tmp_dir / "backups")
 
     @classmethod
     def tearDownClass(cls):

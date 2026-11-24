@@ -13,7 +13,9 @@ Verification test suite for S8b-4 (Remaining UI Polishing & Responsive Scaling):
 
 import ast
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -36,8 +38,9 @@ class TestS8b4UIPolishing(unittest.TestCase):
     """Test suite for S8b-4 UI polishing, responsive scaling, and DPI stability."""
 
     def setUp(self):
-        # Isolate config path
-        self.tmp_config = REPO_ROOT / "tests" / "fixtures" / "tmp_s8b4_config.json"
+        # Isolate config path and backups folder
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="misora_s8b4_test_"))
+        self.tmp_config = self.tmp_dir / "tmp_s8b4_config.json"
         self.orig_config_path = misora.CONFIG_PATH
         misora.CONFIG_PATH = self.tmp_config
         self.app = None
@@ -50,11 +53,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
                 pass
             self.app = None
         misora.CONFIG_PATH = self.orig_config_path
-        if self.tmp_config.exists():
-            try:
-                self.tmp_config.unlink()
-            except Exception:
-                pass
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_01_dpi_startup_helper_callable(self):
         """init_process_dpi_awareness() should execute safely and idempotently."""
@@ -98,6 +97,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
     def test_03_paned_window_minsizes(self):
         """PanedWindow panes must have enforced minsize constraints to prevent collapse."""
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         # Check horizontal paned window
@@ -124,6 +124,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
     def test_04_dock_collapse_toggle_cycle(self):
         """_toggle_dock_collapse() must toggle cleanly between collapsed and expanded states."""
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         orig_w = self.app.left_frame.winfo_width()
@@ -153,6 +154,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
     def test_05_icon_buttons_fallback_text(self):
         """All icon-only buttons must specify non-empty fallback text (Rule 21)."""
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         # Check ribbon & toolbar action buttons
@@ -188,6 +190,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
     def test_06_icon_buttons_tooltips(self):
         """All icon-only and compact buttons must have accessible tooltips (Rule 21)."""
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         buttons_to_check = [
@@ -232,6 +235,7 @@ class TestS8b4UIPolishing(unittest.TestCase):
     def test_08_side_drawer_responsive_constraints(self):
         """Opening side_drawer must apply minsize=260 and closing must cleanly forget it."""
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         self.assertFalse(self.app._side_drawer_visible)

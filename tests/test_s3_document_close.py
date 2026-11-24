@@ -50,6 +50,7 @@ class TestS3DocumentClose(unittest.TestCase):
         misora.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.var_preview_compiled.set(False)
         self.app.var_continuous_view.set(False)
 

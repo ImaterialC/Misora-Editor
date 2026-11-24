@@ -58,7 +58,7 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 ### 5. Machine Translation, Security & Safety
 * **DeepL & Local LLM Integration**: Fast single-box and batch translation with rate-limiting delay and non-blocking background workers.
 * **DPAPI Credential Security**: API keys stored encrypted using Windows Data Protection API (`dpapi:...`); secrets automatically redacted from logs and diagnostic exports.
-* **NGUI Tag Engine & Length Counter**: Single-source NGUI syntax highlighting, vertical hyphen gradient generation (`[c0-c1]`), ruby text (`[rub:...]`), and live rendered character length counter warning against in-game overflow (> 45 chars).
+* **NGUI Tag Engine & Length Counter**: Single-source NGUI syntax highlighting, vertical hyphen gradient generation (`[c0-c1]`), ruby text (`[rub:...]`), and live rendered character length counter warning against in-game overflow (> 45 chars; native pixel-calibrated overflow ruler planned for v1.4.1 / S17).
 * **Workspace & Geometry Safety**: Safe multi-folder drop notifications and virtual screen coordinate clamping to prevent off-screen window restoration.
 
 ---
@@ -138,10 +138,7 @@ Misora-Editor/
 │   ├── text_encoding.py                # Strict multi-encoding detection (UTF-8, UTF-16, CP932)
 │   ├── undo_journal.py                 # Multi-level transactional undo/redo journal with per-file revision stacks
 │   └── xunity_sync.py                  # Bi-directional sync for XUAT translation dictionaries
-├── docs/
-│   ├── ANTIGRAVITY_PROMPTS.md          # Reference prompts and architectural guidelines
-│   └── SCRIPT_FORMAT.md                # Story script format and CSIF specification
-├── tests/                              # 23 automated test suites (234 unit tests, 100% pass)
+├── tests/                              # 23 automated test suites (234 unit tests; storydata_1001005.unity3d fixture & local docs/ excluded via .gitignore)
 │   ├── test_misora_core.py             # Core AST, binary, search, and sync tests
 │   ├── test_misora_ui_integration.py   # UI integration, Box 0, DnD, and editing tests
 │   ├── test_phase1_manual_verification.py # Page and Continuous view verified workflows
@@ -159,14 +156,15 @@ Misora-Editor/
 │   ├── test_s7_undo_speaker_safety.py  # Speaker commit & undo integrity tests
 │   ├── test_s8a_dialog_grab_safety.py  # Modal dialog grab & lifecycle safety tests
 │   ├── test_s8b1_notification_manager.py # Status bar & toast notification tests
-│   ├── test_s8b2_memory_leak_guards.py # Asset disposal & memory leak tests
-│   ├── test_s8b3_keyboard_shortcuts.py # Shortcut router & keybinding tests
+│   ├── test_s8b2_memory_guards.py      # Asset disposal & memory leak tests
+│   ├── test_s8b3_encoding_detection.py # Encoding detection, BOM & CP932 fallback tests
 │   ├── test_s8b4_ui_polishing.py       # Dock collapse, DPI & tooltip tests
 │   ├── test_s9a_search_unicode.py      # Japanese Unicode & combining character search tests
 │   ├── test_s9b_replace_all_bundle_safety.py # Bundle replace-all extraction & undo tests
 │   └── test_s9c_workspace_safety.py    # Workspace protection, geometry & undo isolation tests
 ├── .gitattributes                      # Git line ending and binary attributes
 ├── .gitignore                          # Git exclude rules
+├── CHANGELOG.md                        # Project version changelog & release notes
 ├── LICENSE                             # MIT License
 ├── misora.bat                          # Windows launcher with Python auto-detect
 ├── misora.py                           # Main Tkinter dual-view story editor GUI

@@ -24,6 +24,24 @@ from core.security import protect_secret, unprotect_secret, redact_secret
 # Supported engine names
 MTL_ENGINES = ["Google", "DeepL", "Local / Sugoi", "LLM / OpenAI", "XUAT Cache"]
 
+
+def _get_app_version() -> str:
+    """Retrieve application version from root __init__.py as single source of truth (Rule 21 / HYG-06)."""
+    try:
+        init_file = Path(__file__).resolve().parent.parent / "__init__.py"
+        if init_file.is_file():
+            for line in init_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("__version__"):
+                    parts = line.split("=")
+                    if len(parts) == 2:
+                        return parts[1].strip().strip('"\'')
+    except Exception:
+        pass
+    return "1.4.0"
+
+
+APP_VERSION = _get_app_version()
+
 # Default system prompt for LLM translation
 DEFAULT_LLM_PROMPT = (
     "You are an expert Japanese-to-English visual novel and game localization translator "
@@ -209,7 +227,7 @@ class MTLEngine:
             headers={
                 "Authorization": f"DeepL-Auth-Key {cfg.deepl_api_key.strip()}",
                 "Content-Type": "application/json",
-                "User-Agent": "Misora-Story-Editor/1.3",
+                "User-Agent": f"Misora-Story-Editor/{APP_VERSION}",
             }
         )
         with urllib.request.urlopen(req, timeout=cfg.timeout_sec, context=self._ssl_ctx) as resp:
@@ -306,7 +324,7 @@ class MTLEngine:
             base_url,
             headers={
                 "Authorization": f"DeepL-Auth-Key {key}",
-                "User-Agent": "Misora-Story-Editor/1.3",
+                "User-Agent": f"Misora-Story-Editor/{APP_VERSION}",
             }
         )
         with urllib.request.urlopen(req, timeout=cfg.timeout_sec, context=self._ssl_ctx) as resp:

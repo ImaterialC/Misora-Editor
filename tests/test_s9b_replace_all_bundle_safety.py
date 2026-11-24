@@ -61,6 +61,7 @@ class TestS9bReplaceAllBundleSafety(unittest.TestCase):
             self.skipTest("storydata_1001005.unity3d fixture not found")
 
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         # Check dialogue in test bundle
@@ -112,6 +113,7 @@ class TestS9bReplaceAllBundleSafety(unittest.TestCase):
         orig_txt_bytes = test_txt.read_bytes()
 
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         self.app.search_var.set("TARGET_WORD")
@@ -167,6 +169,7 @@ class TestS9bReplaceAllBundleSafety(unittest.TestCase):
         text_file.write_text("live_text", encoding="utf-8")
 
         self.app = MisoraApp(show_splash=False)
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.update()
 
         delta = BulkFileDelta(

@@ -58,6 +58,7 @@ class TestS2DirtyContract(unittest.TestCase):
         misora.CONFIG_PATH = self.tmp_dir / "misora_config.json"
         self.app = misora.MisoraApp(restore_session=False)
         self.app.withdraw()
+        self.app.backup_folder = str(self.tmp_dir / "backups")
         # Always keep var_preview_compiled OFF for save tests (avoids F-GPT-04 plain-text path)
         self.app.var_preview_compiled.set(False)
         # Switch to Page View
