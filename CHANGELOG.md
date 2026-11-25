@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S22 — Unified `core/xuat_index.py` & Separate Floating `Import from XUAT` Resolver (`FEAT-14`)
+- **Session Scope:** `FEAT-14` (`U-B34`, `CLAUDE-N07`, `QW-E03`, `RF-3`, `GEM-R01`, `GEM-R02`, `GEM-R04`, `NO-09`) — Track 2 · Group G7 (post-`DEP-2`, `DEP-7`).
+- **Unified XUAT Dictionary Indexer (`core/xuat_index.py`, `core/__init__.py`, `core/mtl_engine.py`):**
+  - Added single shared background-safe `XuatIndex` scanning strictly `BepInEx\Translation\en\Text` (excluding `.missing.txt`, `.report.txt`, `_SUMMARY.txt`, `_warnings.txt`, and `.bak_` files) using strict decoding (`read_text_file_strictly`), `split_xuat_line()`, and symmetric backslash-parity `unescape_xuat_value()` (literal `\n` → real Enter while preserving `\\n`).
+  - Implemented NGUI-tag and `{playername}`/`{0}`-aware O(1) normalization (`normalize_xuat_key`) that canonicalizes placeholders before `strip_tags()`, eliminating the `QW-E03` `O(N)` linear scan in `core/mtl_engine.py` and unifying `var_xuat_cache` / `self.xuat_entries` (`D11`).
+  - Avoided all `advscript.py` (`GEM-R01`), `priconne_tool.py` (`GEM-R02`), and `asset_registry.py` (`GEM-R04`) traps with typed `XuatLookupResult`, separate dialogue vs speaker match counts, and ZERO `conflict_manager` / global XUAT pruning (`NO-09`).
+- **Floating `ImportFromXUATDialog` Resolver (`misora.py`):**
+  - Added `File -> Import from XUAT...` (auto-closes docked MTL drawer on open; not placed inside MTL drawer).
+  - Single outer scrollable list of paired rows (Left = Story JP/current, Right = XUAT match) where **both** boxes are strictly read-only (`state="disabled"`), fixed `3 lines × 50 digit-widths` via S17 `_measure_dialogue_metrics()`, with ZERO per-box `Scrollbar` widgets, subtle `▼`/`▶` overflow indicators, and focus-gated inner wheel + `Shift+Wheel`/drag horizontal panning.
+  - Added duplicate `◀ 1/N ▶` stepper + `filename:line` provenance + 3-tier conflict scope (`This Box` / `This Story` / `Global` in-memory opt-in), per-box `Skip` checkbox + auto-skip/gray-out for locked boxes (`🔒`), top filter chips (`All | Duplicates | Missing | Matched`), and optional speaker translation.
+  - Added Pre-Apply confirmation prompt enumerating imported box numbers, lock-skipped (`🔒`) box numbers, user-skipped box numbers, and missing count; commits via mutate-before-undo single batch (`BoxEditDelta(..., source="xuat_import")`) preserving immutable `_original_jp_by_uid` keys and leaving XUAT `.txt` files untouched.
+- **Tests:** Added `tests/test_p3_s22_import_xuat.py` (3 failing-first Defect Probes + 1 Regression Guard).
+
 ### S21 — Docked Right-Side MTL Drawer: `All Script` Mode (Exact 2 `tk.Text` Widgets + 5 Static Status Tags)
 - **Session Scope:** FEAT-13 (`U-B33` — Track 2 · Group G6b, post-S20; Lead Ruling #8, `NO-03`).
 - **`All Script` Mode UI & Mode Switching (`misora.py`):**

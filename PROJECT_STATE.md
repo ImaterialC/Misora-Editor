@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S21 Verification Baseline — 2026-11-25):
+Unit Test Suite (S22 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 336 tests across 43 modules (296 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 340 tests across 44 modules (300 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 336 tests (exact disk discovery):
+Test suites included in the 340 tests (exact disk discovery):
+  tests/test_p3_s22_import_xuat.py          — 4 S22 unified core/xuat_index.py, O(1) MTL cache, & floating ImportFromXUATDialog (paired 3x50 read-only, duplicates, lock/skip, Pre-Apply prompt, atomic Undo) tests (all pass)
   tests/test_p3_s21_mtl_drawer_all_script.py — 3 S21 All Script MTL drawer (exact 2 tk.Text widgets, 5 static status tags, Translate All / Apply All lock & box.uid batch) tests (all pass)
   tests/test_p3_s20_mtl_drawer_dialogue.py — 3 S20 docked MTL drawer tab, Dialogue multi-engine stack, lock/whitespace Apply, paid-API confirm & stale guard tests (all pass)
   tests/test_p3_s19_raw_commands_edit.py    — 4 S19 whole-file Raw Commands v2 editing, confirmation, DocumentRecordsDelta undo & lock/JP remap tests (all pass)
@@ -107,6 +108,21 @@ Test suites included in the 336 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Group G7 (S22) COMPLETE
+- **Status:** S22 is 100% COMPLETE (FEAT-14).
+- **Next Session:** S23.
+
+### S22 Unified `core/xuat_index.py` & Separate Floating `Import from XUAT` Resolver (2026-11-25)
+- **Session Scope:** FEAT-14 (`U-B34`, `CLAUDE-N07`, `QW-E03`, `RF-3`, `GEM-R01`, `GEM-R02`, `GEM-R04`, `NO-09` — Track 2 · Group G7, post-`DEP-2`, `DEP-7`).
+- **Unified XUAT Indexer (`core/xuat_index.py`, `core/__init__.py`, `core/mtl_engine.py`):**
+  - Built single shared background-safe `XuatIndex` scanning strictly `BepInEx\Translation\en\Text` (excluding `.missing.txt`, `.report.txt`, `_SUMMARY.txt`, `_warnings.txt`, and `.bak_` files) using strict decoding (`read_text_file_strictly`), `split_xuat_line()`, and symmetric backslash-parity `unescape_xuat_value()`.
+  - Added NGUI-tag and `{playername}`/`{0}`-aware O(1) normalization (`normalize_xuat_key`) protecting placeholders before `strip_tags()`, eliminating `QW-E03` linear scanning in `MTLEngine.translate()` and unifying `self.xuat_index` / `self.xuat_entries` (`D11`).
+  - Typed `XuatLookupResult` (`GEM-R04`), separate dialogue vs speaker counts (`GEM-R02`), and zero `conflict_manager` / global XUAT pruning (`NO-09`).
+- **Floating `ImportFromXUATDialog` (`misora.py`):**
+  - Added `File -> Import from XUAT...` (auto-closes docked MTL drawer on open; not in MTL drawer).
+  - Single outer scrollable list of paired rows with strictly read-only (`state="disabled"`) Left/Right `tk.Text` boxes fixed at `3 lines × 50 digit-widths` (via S17 `_measure_dialogue_metrics`), zero per-box `Scrollbar` widgets, `▼`/`▶` overflow indicators, focus-gated inner wheel + `Shift+Wheel`/drag horizontal panning, duplicate `◀ 1/N ▶` + `filename:line` + 3-tier scope (`This Box` / `This Story` / `Global` in-memory), lock (`🔒`) auto-skip & gray-out, per-box `Skip`, filter chips, Pre-Apply summary prompt, and mutate-before-undo single batch (`BoxEditDelta(..., source="xuat_import")`).
+- **Tests:** Added `tests/test_p3_s22_import_xuat.py` (3 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 340 tests across 44 modules (300 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G6b (S21) COMPLETE
 - **Status:** S21 is 100% COMPLETE (FEAT-13).

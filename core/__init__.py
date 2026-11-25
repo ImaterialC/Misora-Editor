@@ -24,6 +24,12 @@ from .workspace import (
     safe_relpath, resolve_workspace_file_path, match_active_file,
     compute_workspace_diff, save_workspace, load_workspace,
 )
+from .xuat_index import (
+    XuatEntry, XuatLookupResult, XuatIndex,
+    unescape_xuat_value, unescape_xuat_key, normalize_xuat_key,
+    resolve_xuat_text_roots, build_xuat_index, build_xuat_index_async,
+    analyze_story_matches,
+)
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
@@ -43,4 +49,8 @@ __all__ = [
     "LockedKeyEntry", "WorkspaceFileEntry", "WorkspaceDiffEntry", "WorkspaceSession",
     "safe_relpath", "resolve_workspace_file_path", "match_active_file",
     "compute_workspace_diff", "save_workspace", "load_workspace",
+    "XuatEntry", "XuatLookupResult", "XuatIndex",
+    "unescape_xuat_value", "unescape_xuat_key", "normalize_xuat_key",
+    "resolve_xuat_text_roots", "build_xuat_index", "build_xuat_index_async",
+    "analyze_story_matches",
 ]

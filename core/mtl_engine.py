@@ -129,23 +129,26 @@ class MTLEngine:
         # Enforce valid TLS certificate and hostname verification on all outbound requests (Rule 18)
         self._ssl_ctx = ssl.create_default_context()
 
-    def translate(self, text: str, config: Optional[MTLConfig] = None, xuat_cache: Optional[Dict[str, str]] = None) -> str:
+    def translate(self, text: str, config: Optional[MTLConfig] = None, xuat_cache: Optional[Any] = None) -> str:
         """Translate a single text string using the configured active engine."""
         cfg = config or self.config
         raw = text.strip()
         if not raw:
             return ""
 
-        # 1. Check local XUAT translation cache first if enabled
+        # 1. Check local XUAT translation cache first if enabled (O(1) via XuatIndex - QW-E03)
         if cfg.use_xuat_cache and xuat_cache:
-            # Check exact match
-            if raw in xuat_cache:
-                return xuat_cache[raw]
-            # Check normalized match without whitespace
-            norm_k = re.sub(r"[\s\u3000]+", "", raw)
-            for k, v in xuat_cache.items():
-                if re.sub(r"[\s\u3000]+", "", k) == norm_k:
-                    return v
+            if hasattr(xuat_cache, "lookup_translation"):
+                hit = xuat_cache.lookup_translation(raw)
+                if hit is not None:
+                    return hit
+            else:
+                if raw in xuat_cache:
+                    return xuat_cache[raw]
+                norm_k = re.sub(r"[\s\u3000]+", "", raw)
+                for k, v in xuat_cache.items():
+                    if re.sub(r"[\s\u3000]+", "", k) == norm_k:
+                        return v
 
         # 2. Tag protection
         tag_map: Dict[str, str] = {}
@@ -164,8 +167,13 @@ class MTLEngine:
         elif engine_name == "LLM / OpenAI":
             translated = self._translate_llm(to_translate, cfg)
         elif engine_name == "XUAT Cache":
-            if xuat_cache and raw in xuat_cache:
-                return xuat_cache[raw]
+            if xuat_cache:
+                if hasattr(xuat_cache, "lookup_translation"):
+                    hit = xuat_cache.lookup_translation(raw)
+                    if hit is not None:
+                        return hit
+                elif raw in xuat_cache:
+                    return xuat_cache[raw]
             raise ValueError("No matching translation found in loaded XUAT dictionary.")
         else:
             # Fallback to Google

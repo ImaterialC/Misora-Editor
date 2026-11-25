@@ -66,6 +66,8 @@ try:
         LockedKeyEntry, WorkspaceFileEntry, WorkspaceDiffEntry, WorkspaceSession,
         safe_relpath, resolve_workspace_file_path, match_active_file,
         compute_workspace_diff, save_workspace, load_workspace,
+        XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
+        analyze_story_matches, normalize_xuat_key,
     )
     from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 except ImportError:
@@ -88,6 +90,8 @@ except ImportError:
         LockedKeyEntry, WorkspaceFileEntry, WorkspaceDiffEntry, WorkspaceSession,
         safe_relpath, resolve_workspace_file_path, match_active_file,
         compute_workspace_diff, save_workspace, load_workspace,
+        XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
+        analyze_story_matches, normalize_xuat_key,
     )
     from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 
@@ -1502,6 +1506,15 @@ class MisoraApp(tk.Tk):
         self.is_dirty: bool = False
         self._plain_text_content: str = ""
         self.xuat_search_roots: List[Path] = []
+        self.xuat_index: Optional[XuatIndex] = None
+        self.xuat_entries: Optional[XuatIndex] = None
+        self._xuat_index_queue: queue.Queue = queue.Queue()
+        self._xuat_index_poll_id: Optional[str] = None
+        self._xuat_index_seq: int = 0
+        self._xuat_index_cancel: Optional[threading.Event] = None
+        self._xuat_global_choice_overrides: Dict[str, str] = {}
+        self._import_xuat_dialog: Optional[Any] = None
+        self._ui_ready: bool = False
         self.selected_search_folder: Optional[Path] = None
 
         # Steps 3-4: Undo journal & opened-files cache
@@ -1671,10 +1684,14 @@ class MisoraApp(tk.Tk):
         # Reveal the main window instantly (DEP-9 / AGENTS.md §22)
         self.deiconify()
 
+        self._rpt_done = True
+        self._ui_ready = True
         # Defer session file restoration to idle loop so startup never hangs (BUG-35)
         def _deferred_restore() -> None:
-            if not self.winfo_exists():
+            if not self.winfo_exists() or getattr(self, "_destroyed", False):
                 return
+            if restore_session and getattr(self, "xuat_search_roots", None) and self.xuat_index is None:
+                self._refresh_xuat_index_async()
             if initial_path and os.path.exists(initial_path):
                 init_p = Path(initial_path)
                 if init_p.is_dir():
@@ -1829,6 +1846,18 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
                 self._mtl_drawer_poll_id = None
+            if hasattr(self, "_xuat_index_cancel") and self._xuat_index_cancel is not None:
+                try:
+                    self._xuat_index_cancel.set()
+                except Exception:
+                    pass
+                self._xuat_index_cancel = None
+            if hasattr(self, "_xuat_index_poll_id") and self._xuat_index_poll_id:
+                try:
+                    self.after_cancel(self._xuat_index_poll_id)
+                except Exception:
+                    pass
+                self._xuat_index_poll_id = None
             if hasattr(self, "_toast_after_id") and self._toast_after_id:
                 try:
                     self.after_cancel(self._toast_after_id)
@@ -1873,6 +1902,18 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._mtl_drawer_poll_id = None
+        if hasattr(self, "_xuat_index_cancel") and self._xuat_index_cancel is not None:
+            try:
+                self._xuat_index_cancel.set()
+            except Exception:
+                pass
+            self._xuat_index_cancel = None
+        if hasattr(self, "_xuat_index_poll_id") and self._xuat_index_poll_id:
+            try:
+                self.after_cancel(self._xuat_index_poll_id)
+            except Exception:
+                pass
+            self._xuat_index_poll_id = None
         if hasattr(self, "_toast_after_id") and self._toast_after_id:
             try:
                 self.after_cancel(self._toast_after_id)
@@ -3149,6 +3190,8 @@ class MisoraApp(tk.Tk):
         self.bepinex_project_folder = p
         xuat_dir = self._resolve_xuat_text_root(p)
         self.xuat_search_roots = [xuat_dir] if (xuat_dir and xuat_dir.exists()) else []
+        if getattr(self, "_ui_ready", False) and hasattr(self, "_refresh_xuat_index_async"):
+            self._refresh_xuat_index_async()
 
     def _resolve_xuat_text_root(self, proj_dir: Optional[Path]) -> Optional[Path]:
         """Resolve XUAT text root strictly to BepInEx\\Translation\\en\\Text (or Text)."""
@@ -3590,6 +3633,7 @@ class MisoraApp(tk.Tk):
         file_menu.add_command(label="Reload Current File", command=self.on_reload, accelerator="F5")
         file_menu.add_separator()
         file_menu.add_command(label="Import Script (CSIF / Text)...", command=self.on_import_script, accelerator="Ctrl+Shift+I")
+        file_menu.add_command(label="Import from XUAT...", command=self.on_import_from_xuat)
         file_menu.add_command(label="Export Script (CSIF)...", command=self.on_export_script, accelerator="Ctrl+Shift+E")
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_app_exit, accelerator="Ctrl+Q")
@@ -14955,6 +14999,101 @@ class MisoraApp(tk.Tk):
 
         self._show_paste_preview_and_apply(content, source_label=f"Import ({target_file.name})", confirm=confirm)
 
+    def _get_xuat_index_roots(self) -> List[Path]:
+        """Collect candidate roots for strict BepInEx\\Translation\\en\\Text XUAT indexing."""
+        roots: List[Path] = []
+        if getattr(self, "xuat_search_roots", None):
+            roots.extend(self.xuat_search_roots)
+        elif getattr(self, "project_folder", None):
+            roots.append(self.project_folder)
+        return resolve_xuat_text_roots(roots)
+
+    def _refresh_xuat_index_async(self) -> None:
+        """Start background XUAT dictionary indexing and poll on the Tk main thread (Rule 15)."""
+        if getattr(self, "_xuat_index_cancel", None) is not None:
+            try:
+                self._xuat_index_cancel.set()
+            except Exception:
+                pass
+        strict_roots = self._get_xuat_index_roots()
+        if not strict_roots:
+            self.xuat_index = None
+            self.xuat_entries = None
+            self._xuat_index_cancel = None
+            return
+        self._xuat_index_seq += 1
+        seq = self._xuat_index_seq
+        cancel_ev = threading.Event()
+        self._xuat_index_cancel = cancel_ev
+        build_xuat_index_async(
+            strict_roots,
+            out_queue=self._xuat_index_queue,
+            metadata=seq,
+            cancel_event=cancel_ev,
+        )
+        if self._xuat_index_poll_id is None and self.winfo_exists():
+            self._xuat_index_poll_id = self.after(50, self._poll_xuat_index_queue)
+
+    def _poll_xuat_index_queue(self) -> None:
+        """Poll background XUAT index builds strictly while a build is in flight (BUG-27)."""
+        self._xuat_index_poll_id = None
+        if not self.winfo_exists() or getattr(self, "_destroyed", False):
+            return
+        latest_applied = False
+        try:
+            while True:
+                kind, seq, payload = self._xuat_index_queue.get_nowait()
+                if seq != self._xuat_index_seq:
+                    continue
+                if kind == "xuat_index_ready":
+                    self.xuat_index = payload
+                    self.xuat_entries = payload
+                    latest_applied = True
+                elif kind == "xuat_index_error":
+                    self.logger.warning("XUAT Index", f"Background XUAT index failed: {payload}")
+                    latest_applied = True
+        except queue.Empty:
+            pass
+
+        if not latest_applied and self.winfo_exists() and not getattr(self, "_destroyed", False):
+            self._xuat_index_poll_id = self.after(50, self._poll_xuat_index_queue)
+
+    def _get_or_build_xuat_index(self, force_rebuild: bool = False) -> XuatIndex:
+        """Return unified XuatIndex (D11), building synchronously if not yet cached."""
+        strict_roots = self._get_xuat_index_roots()
+        if not force_rebuild and isinstance(getattr(self, "xuat_index", None), XuatIndex):
+            if self.xuat_index.roots == strict_roots:
+                return self.xuat_index
+        idx = build_xuat_index(strict_roots)
+        self.xuat_index = idx
+        self.xuat_entries = idx
+        return idx
+
+    def on_import_from_xuat(self, xuat_index: Optional[XuatIndex] = None) -> Optional["ImportFromXUATDialog"]:
+        """Open separate floating Import from XUAT resolver; auto-closes MTL drawer (FEAT-14 / U-B34)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            messagebox.showwarning("No Story Open", "Open a story bundle or text file first.", parent=self)
+            return None
+
+        # Auto-close docked MTL drawer when opening Import from XUAT
+        if getattr(self, "_side_drawer_visible", False) and getattr(self, "_side_drawer_tab", "") == "mtl":
+            self._close_side_drawer()
+
+        idx = xuat_index if xuat_index is not None else self._get_or_build_xuat_index()
+        existing = getattr(self, "_import_xuat_dialog", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return existing
+            except Exception:
+                pass
+
+        dlg = ImportFromXUATDialog(self, idx)
+        self._import_xuat_dialog = dlg
+        return dlg
+
     def on_export_script(self, file_path: Optional[Union[str, Path]] = None) -> Optional[Path]:
         """Export active story in CSIF format to a file (Ctrl+Shift+E)."""
         if not self.current_doc or not self.current_doc.boxes:
@@ -15391,6 +15530,661 @@ class ScriptPastePreviewDialog(tk.Toplevel):
 
 
 # =============================================================================
+# Floating Import from XUAT Resolver Dialog (S22 / FEAT-14 / U-B34)
+# =============================================================================
+class ImportFromXUATDialog(tk.Toplevel):
+    """Separate floating resolver pairing Story boxes (left) with XUAT matches (right).
+
+    Both sides are strictly read-only (state='disabled') with fixed 3 lines x 50 digit-widths
+    (via S17 _measure_dialogue_metrics) and zero per-box Scrollbar widgets.
+    """
+
+    def __init__(self, parent: "MisoraApp", xuat_index: XuatIndex):
+        super().__init__(parent)
+        self.app = parent
+        self.xuat_index = xuat_index
+        self._rows: List[Dict[str, Any]] = []
+        self._focused_box_widget: Optional[tk.Text] = None
+        self._active_filter: str = "all"
+        self._speaker_matches: Dict[int, str] = {}
+        self._filter_buttons: Dict[str, ttk.Button] = {}
+        self._canvas_win_id: Optional[int] = None
+
+        self.title("Import from XUAT (Read-Only Paired Resolver)")
+        self.geometry("980x680")
+        self.minsize(820, 520)
+        self.transient(parent)
+
+        t = self.app.theme
+        self.configure(bg=t["bg_panel"])
+        apply_window_icon(self)
+
+        self.var_translate_speakers = tk.BooleanVar(master=self, value=False)
+        self._build_ui()
+        self._populate_rows()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
+
+    def _build_ui(self) -> None:
+        t = self.app.theme
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+
+        top = tk.Frame(self, bg=t["bg_panel"], padx=12, pady=8)
+        top.pack(fill="x")
+
+        title_row = tk.Frame(top, bg=t["bg_panel"])
+        title_row.pack(fill="x")
+
+        tk.Label(
+            title_row,
+            text="Import from XUAT Dictionary",
+            font=("Segoe UI", 12, "bold"),
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+        ).pack(side="left")
+
+        ttk.Button(
+            title_row,
+            text="↻ Reload XUAT Index",
+            style="Small.TButton",
+            command=self._on_reload_index,
+        ).pack(side="right")
+
+        self.lbl_summary = tk.Label(
+            top,
+            text="Dialogue: 0 matched | Speakers: 0 matched",
+            font=("Segoe UI", 9),
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            anchor="w",
+        )
+        self.lbl_summary.pack(fill="x", pady=(4, 4))
+
+        ctrl_row = tk.Frame(top, bg=t["bg_panel"])
+        ctrl_row.pack(fill="x", pady=(2, 0))
+
+        for f_key, f_label in (
+            ("all", "All"),
+            ("duplicates", "Duplicates"),
+            ("missing", "Missing"),
+            ("matched", "Matched"),
+        ):
+            btn = ttk.Button(
+                ctrl_row,
+                text=f_label,
+                style="Pink.TButton" if f_key == "all" else "TButton",
+                command=lambda k=f_key: self._set_filter(k),
+            )
+            btn.pack(side="left", padx=(0, 4))
+            self._filter_buttons[f_key] = btn
+
+        cb_spk = tk.Checkbutton(
+            ctrl_row,
+            text="Also translate speaker names",
+            variable=self.var_translate_speakers,
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            selectcolor=t["bg_dark"],
+            activebackground=t["bg_panel"],
+            activeforeground=fg_panel,
+        )
+        cb_spk.pack(side="right")
+
+        # Outer scrollable list (single outer vertical scrollbar)
+        list_wrap = tk.Frame(self, bg=t["bg_dark"], bd=1, relief="solid")
+        list_wrap.pack(fill="both", expand=True, padx=12, pady=6)
+
+        self.list_canvas = tk.Canvas(list_wrap, bg=t["bg_dark"], highlightthickness=0)
+        self.outer_vsb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.list_canvas.yview)
+        self.list_canvas.configure(yscrollcommand=self.outer_vsb.set)
+
+        self.outer_vsb.pack(side="right", fill="y")
+        self.list_canvas.pack(side="left", fill="both", expand=True)
+
+        self.rows_frame = tk.Frame(self.list_canvas, bg=t["bg_dark"])
+        self._canvas_win_id = self.list_canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
+
+        self.rows_frame.bind("<Configure>", self._on_rows_configure)
+        self.list_canvas.bind("<Configure>", self._on_canvas_configure)
+        self.list_canvas.bind("<MouseWheel>", self._on_outer_mousewheel)
+        self.rows_frame.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+        # Bottom action bar
+        btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=12, pady=8)
+        btn_bar.pack(fill="x", side="bottom")
+
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_close).pack(side="right", padx=4)
+        ttk.Button(btn_bar, text="Apply Import", style="Pink.TButton", command=self._on_apply_import).pack(
+            side="right", padx=4
+        )
+
+    def _on_rows_configure(self, _event: Optional[tk.Event] = None) -> None:
+        if self.list_canvas.winfo_exists():
+            self.list_canvas.configure(scrollregion=self.list_canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        if self.list_canvas.winfo_exists() and self._canvas_win_id is not None:
+            self.list_canvas.itemconfig(self._canvas_win_id, width=event.width)
+
+    def _on_outer_mousewheel(self, event: tk.Event) -> str:
+        if self.list_canvas.winfo_exists() and getattr(event, "delta", 0):
+            self.list_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"
+
+    def _on_reload_index(self) -> None:
+        self.xuat_index = self.app._get_or_build_xuat_index(force_rebuild=True)
+        self._populate_rows()
+
+    def _get_immutable_jp_key(self, box_idx: int, box: Box) -> str:
+        """Resolve immutable JP source key by box_uid (BUG-25 / DEP-7)."""
+        b_uid = _get_box_uid(box)
+        orig_map = getattr(self.app, "_original_jp_by_uid", {})
+        if b_uid is not None and b_uid in orig_map and orig_map[b_uid]:
+            return orig_map[b_uid]
+        if hasattr(self.app, "sync_manager") and self.app.sync_manager is not None:
+            jp = self.app.sync_manager.get_jp_key(b_uid)
+            if jp:
+                return jp
+        return box.clean_text
+
+    def _populate_rows(self) -> None:
+        for child in self.rows_frame.winfo_children():
+            child.destroy()
+        self._rows.clear()
+        self._speaker_matches.clear()
+        self._focused_box_widget = None
+
+        doc = self.app.current_doc
+        if not doc or not doc.boxes:
+            return
+
+        t = self.app.theme
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+        fg_muted = t["fg_muted"]
+
+        measure_font = self.app._get_dialogue_measure_font()
+        safe_w = self.app._measure_dialogue_metrics("1234567890" * 5)["safe_w"]
+        line_h = max(14, int(measure_font.metrics("linespace")))
+        box_px_w = safe_w + 10
+        box_px_h = line_h * 3 + 8
+
+        orig_map = getattr(self.app, "_original_jp_by_uid", {})
+        stats = analyze_story_matches(doc, orig_map, self.xuat_index)
+        self.lbl_summary.config(
+            text=(
+                f"Dialogue: {stats['dialogue_matched']}/{stats['dialogue_total']} matched "
+                f"({stats['dialogue_duplicates']} duplicates, {stats['dialogue_missing']} missing)  |  "
+                f"Speakers: {stats['speaker_matched']}/{stats['speaker_total']} matched "
+                f"({stats['speaker_missing']} missing)  |  "
+                f"Files indexed: {len(self.xuat_index.files_indexed)}"
+            )
+        )
+
+        # Update filter chip labels
+        chip_counts = {
+            "all": stats["dialogue_total"],
+            "duplicates": stats["dialogue_duplicates"],
+            "missing": stats["dialogue_missing"],
+            "matched": stats["dialogue_matched"],
+        }
+        chip_names = {"all": "All", "duplicates": "Duplicates", "missing": "Missing", "matched": "Matched"}
+        for k, btn in self._filter_buttons.items():
+            btn.config(text=f"{chip_names[k]} ({chip_counts[k]})")
+
+        global_overrides = getattr(self.app, "_xuat_global_choice_overrides", {})
+
+        for idx, box in enumerate(doc.boxes):
+            b_uid = _get_box_uid(box)
+            jp_key = self._get_immutable_jp_key(idx, box)
+            norm_k = normalize_xuat_key(jp_key, strip_ngui=True)
+            lookup = self.xuat_index.lookup_candidates(jp_key)
+            is_locked = self.app.is_box_locked(idx)
+
+            if box.speaker:
+                sp_hit = self.xuat_index.lookup_translation(box.speaker)
+                if sp_hit is not None:
+                    self._speaker_matches[idx] = sp_hit
+
+            # Determine default candidate index (respecting in-memory global override if any)
+            cand_idx = 0
+            if lookup.candidates and norm_k in global_overrides:
+                pref_val = global_overrides[norm_k]
+                for ci, cand in enumerate(lookup.candidates):
+                    if cand.value == pref_val:
+                        cand_idx = ci
+                        break
+
+            row_bg = t["bg_dark"] if is_locked else t["bg_panel"]
+            card = tk.Frame(
+                self.rows_frame,
+                bg=row_bg,
+                bd=1,
+                relief="solid",
+                highlightbackground=t["border"],
+                highlightthickness=1,
+                padx=8,
+                pady=6,
+            )
+            card.pack(fill="x", padx=6, pady=4)
+            card.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+            # Row Header
+            hdr = tk.Frame(card, bg=row_bg)
+            hdr.pack(fill="x", pady=(0, 4))
+            hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+            spk_label = box.speaker if box.speaker else "(Narration)"
+            tk.Label(
+                hdr,
+                text=f"Box #{idx + 1:03d} — {spk_label}",
+                font=("Segoe UI", 9, "bold"),
+                bg=row_bg,
+                fg=fg_muted if is_locked else t["misora_pink"],
+            ).pack(side="left")
+
+            if is_locked:
+                tk.Label(
+                    hdr,
+                    text="🔒 Locked (Auto-Skip)",
+                    font=("Segoe UI", 8, "bold"),
+                    bg=row_bg,
+                    fg=fg_muted,
+                ).pack(side="left", padx=(8, 4))
+
+            var_skip = tk.BooleanVar(master=self, value=is_locked)
+            cb_skip = tk.Checkbutton(
+                hdr,
+                text="Skip",
+                variable=var_skip,
+                state="disabled" if is_locked else "normal",
+                bg=row_bg,
+                fg=fg_muted if is_locked else fg_panel,
+                disabledforeground=fg_muted,
+                selectcolor=t["bg_dark"],
+                activebackground=row_bg,
+                activeforeground=fg_panel,
+            )
+            cb_skip.pack(side="right")
+
+            # Provenance + duplicate controls
+            prov_text = lookup.candidates[cand_idx].provenance if lookup.candidates else "No XUAT match"
+            lbl_provenance = tk.Label(
+                hdr,
+                text=prov_text,
+                font=("Consolas", 8),
+                bg=row_bg,
+                fg=fg_muted,
+            )
+            lbl_provenance.pack(side="right", padx=(6, 8))
+
+            lbl_dup_counter = tk.Label(hdr, text="", font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_blue"])
+            var_scope = tk.StringVar(master=self, value="This Box")
+            if lookup.status == "duplicate":
+                scope_cmb = ttk.Combobox(
+                    hdr,
+                    textvariable=var_scope,
+                    values=("This Box", "This Story", "Global"),
+                    state="readonly",
+                    width=10,
+                )
+                scope_cmb.pack(side="right", padx=(4, 4))
+                scope_cmb.bind(
+                    "<<ComboboxSelected>>",
+                    lambda _e, r_idx=idx: self._apply_conflict_scope(r_idx),
+                )
+
+                btn_next = ttk.Button(hdr, text="▶", width=2, style="Small.TButton", command=lambda r_idx=idx: self._step_candidate(r_idx, 1))
+                btn_next.pack(side="right", padx=(1, 2))
+                lbl_dup_counter.config(text=f"{cand_idx + 1}/{len(lookup.candidates)}")
+                lbl_dup_counter.pack(side="right", padx=2)
+                btn_prev = ttk.Button(hdr, text="◀", width=2, style="Small.TButton", command=lambda r_idx=idx: self._step_candidate(r_idx, -1))
+                btn_prev.pack(side="right", padx=(2, 1))
+
+            # Paired Left (Story) & Right (XUAT) 3x50 read-only boxes
+            pair_frame = tk.Frame(card, bg=row_bg)
+            pair_frame.pack(fill="x")
+            pair_frame.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+            left_col = tk.Frame(pair_frame, bg=row_bg)
+            left_col.pack(side="left", padx=(0, 8))
+            left_hdr = tk.Frame(left_col, bg=row_bg)
+            left_hdr.pack(fill="x")
+            tk.Label(left_hdr, text="Story (JP / Current)", font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
+            left_m = self.app._measure_dialogue_metrics(jp_key)
+            left_ov_badge = ("▼" if left_m["has_line_overflow"] else "") + ("▶" if left_m["has_width_overflow"] else "")
+            lbl_left_overflow = tk.Label(left_hdr, text=left_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"])
+            lbl_left_overflow.pack(side="right")
+
+            left_wrap = tk.Frame(left_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
+            left_wrap.pack_propagate(False)
+            left_wrap.pack()
+
+            txt_left = tk.Text(
+                left_wrap,
+                font=measure_font,
+                height=3,
+                width=50,
+                wrap="none",
+                bg=t["bg_dark"] if is_locked else t["bg_editor"],
+                fg=fg_muted if is_locked else fg_editor,
+                bd=0,
+                highlightthickness=0,
+                padx=3,
+                pady=2,
+            )
+            txt_left.insert("1.0", jp_key)
+            txt_left.config(state="disabled")
+            txt_left.pack(fill="both", expand=True)
+
+            right_col = tk.Frame(pair_frame, bg=row_bg)
+            right_col.pack(side="left")
+            right_hdr = tk.Frame(right_col, bg=row_bg)
+            right_hdr.pack(fill="x")
+            tk.Label(right_hdr, text="XUAT Match", font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
+
+            right_text = lookup.candidates[cand_idx].value if lookup.candidates else ""
+            right_m = self.app._measure_dialogue_metrics(right_text)
+            right_ov_badge = ("▼" if right_m["has_line_overflow"] else "") + ("▶" if right_m["has_width_overflow"] else "")
+            lbl_right_overflow = tk.Label(right_hdr, text=right_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"])
+            lbl_right_overflow.pack(side="right")
+
+            right_wrap = tk.Frame(right_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
+            right_wrap.pack_propagate(False)
+            right_wrap.pack()
+
+            txt_right = tk.Text(
+                right_wrap,
+                font=measure_font,
+                height=3,
+                width=50,
+                wrap="none",
+                bg=t["bg_dark"] if is_locked else t["bg_editor"],
+                fg=fg_muted if is_locked else fg_editor,
+                bd=0,
+                highlightthickness=0,
+                padx=3,
+                pady=2,
+            )
+            txt_right.insert("1.0", right_text)
+            txt_right.config(state="disabled")
+            txt_right.pack(fill="both", expand=True)
+
+            self._bind_paired_box_events(txt_left, left_m["has_line_overflow"], left_m["has_width_overflow"])
+            self._bind_paired_box_events(txt_right, right_m["has_line_overflow"], right_m["has_width_overflow"])
+
+            self._rows.append(
+                {
+                    "box_idx": idx,
+                    "box_uid": b_uid,
+                    "norm_key": norm_k,
+                    "status": lookup.status,
+                    "candidates": lookup.candidates,
+                    "cand_idx": cand_idx,
+                    "is_locked": is_locked,
+                    "var_skip": var_skip,
+                    "cb_skip": cb_skip,
+                    "var_scope": var_scope,
+                    "frame": card,
+                    "left_wrap": left_wrap,
+                    "right_wrap": right_wrap,
+                    "txt_left": txt_left,
+                    "txt_right": txt_right,
+                    "lbl_left_overflow": lbl_left_overflow,
+                    "lbl_right_overflow": lbl_right_overflow,
+                    "lbl_provenance": lbl_provenance,
+                    "lbl_dup_counter": lbl_dup_counter,
+                }
+            )
+
+        self._set_filter(self._active_filter)
+
+    def _bind_paired_box_events(self, txt: tk.Text, has_v: bool, has_h: bool) -> None:
+        """Focus-gated inner vertical wheel & horizontal Shift+Wheel/drag; outer scroll otherwise."""
+        def _on_press(event: tk.Event) -> None:
+            self._focused_box_widget = txt
+            try:
+                txt.focus_set()
+                if has_h:
+                    txt.scan_mark(event.x, event.y)
+            except Exception:
+                pass
+
+        def _on_drag(event: tk.Event) -> None:
+            if self._focused_box_widget is txt and has_h:
+                try:
+                    txt.scan_dragto(event.x, event.y, gain=1)
+                except Exception:
+                    pass
+
+        def _on_focus_out(_event: tk.Event) -> None:
+            if self._focused_box_widget is txt:
+                self._focused_box_widget = None
+
+        def _on_wheel(event: tk.Event) -> str:
+            if self._focused_box_widget is txt and has_v and getattr(event, "delta", 0):
+                try:
+                    txt.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                except Exception:
+                    pass
+                return "break"
+            return self._on_outer_mousewheel(event)
+
+        def _on_shift_wheel(event: tk.Event) -> str:
+            if self._focused_box_widget is txt and has_h and getattr(event, "delta", 0):
+                try:
+                    txt.xview_scroll(int(-1 * (event.delta / 120)), "units")
+                except Exception:
+                    pass
+                return "break"
+            return self._on_outer_mousewheel(event)
+
+        txt.bind("<ButtonPress-1>", _on_press)
+        txt.bind("<B1-Motion>", _on_drag)
+        txt.bind("<FocusOut>", _on_focus_out)
+        txt.bind("<MouseWheel>", _on_wheel)
+        txt.bind("<Shift-MouseWheel>", _on_shift_wheel)
+
+    def _step_candidate(self, row_idx: int, delta: int) -> None:
+        if not (0 <= row_idx < len(self._rows)):
+            return
+        row = self._rows[row_idx]
+        cands = row["candidates"]
+        if len(cands) <= 1:
+            return
+        new_ci = (row["cand_idx"] + delta) % len(cands)
+        self._select_candidate(row_idx, new_ci)
+        self._apply_conflict_scope(row_idx)
+
+    def _select_candidate(self, row_idx: int, cand_idx: int) -> None:
+        row = self._rows[row_idx]
+        cands = row["candidates"]
+        if not (0 <= cand_idx < len(cands)):
+            return
+        row["cand_idx"] = cand_idx
+        chosen = cands[cand_idx]
+        txt_r = row["txt_right"]
+        if txt_r.winfo_exists():
+            txt_r.config(state="normal")
+            txt_r.delete("1.0", tk.END)
+            txt_r.insert("1.0", chosen.value)
+            txt_r.config(state="disabled")
+        rm = self.app._measure_dialogue_metrics(chosen.value)
+        ov_badge = ("▼" if rm["has_line_overflow"] else "") + ("▶" if rm["has_width_overflow"] else "")
+        row["lbl_right_overflow"].config(text=ov_badge)
+        row["lbl_provenance"].config(text=chosen.provenance)
+        row["lbl_dup_counter"].config(text=f"{cand_idx + 1}/{len(cands)}")
+
+    def _apply_conflict_scope(self, row_idx: int) -> None:
+        """Apply 3-tier duplicate conflict scope (This Box / This Story / Global in-memory opt-in)."""
+        row = self._rows[row_idx]
+        cands = row["candidates"]
+        if not cands:
+            return
+        chosen = cands[row["cand_idx"]]
+        scope = row["var_scope"].get()
+        norm_k = row["norm_key"]
+        if scope in ("This Story", "Global"):
+            for other_idx, other in enumerate(self._rows):
+                if other_idx == row_idx or other["norm_key"] != norm_k:
+                    continue
+                for ci, c in enumerate(other["candidates"]):
+                    if c.value == chosen.value:
+                        self._select_candidate(other_idx, ci)
+                        break
+        if scope == "Global" and norm_k:
+            if not hasattr(self.app, "_xuat_global_choice_overrides"):
+                self.app._xuat_global_choice_overrides = {}
+            self.app._xuat_global_choice_overrides[norm_k] = chosen.value
+
+    def _set_filter(self, filter_key: str) -> None:
+        self._active_filter = filter_key
+        for k, btn in self._filter_buttons.items():
+            btn.configure(style="Pink.TButton" if k == filter_key else "TButton")
+        for row in self._rows:
+            st = row["status"]
+            show = (
+                filter_key == "all"
+                or (filter_key == "duplicates" and st == "duplicate")
+                or (filter_key == "missing" and st == "missing")
+                or (filter_key == "matched" and st in ("matched", "duplicate"))
+            )
+            if show:
+                if not row["frame"].winfo_manager():
+                    row["frame"].pack(fill="x", padx=6, pady=4)
+            else:
+                if row["frame"].winfo_manager():
+                    row["frame"].pack_forget()
+        self._on_rows_configure()
+
+    @staticmethod
+    def _format_box_list(nums: List[int]) -> str:
+        if not nums:
+            return "None"
+        return ", ".join(f"Box #{n}" for n in nums)
+
+    def _on_apply_import(self) -> bool:
+        """Show Pre-Apply summary prompt and apply unlocked, non-skipped boxes in ONE Undo batch."""
+        doc = self.app.current_doc
+        if not doc or not doc.boxes:
+            return False
+
+        translate_speakers = bool(self.var_translate_speakers.get())
+        to_import_nums: List[int] = []
+        lock_skipped_nums: List[int] = []
+        user_skipped_nums: List[int] = []
+        missing_count = 0
+        plan: List[Tuple[int, Any, str, str]] = []
+
+        for row in self._rows:
+            b_idx = row["box_idx"]
+            b_num = b_idx + 1
+            if self.app.is_box_locked(b_idx) or row["is_locked"]:
+                lock_skipped_nums.append(b_num)
+                continue
+            if row["var_skip"].get():
+                user_skipped_nums.append(b_num)
+                continue
+            cands = row["candidates"]
+            if not cands:
+                missing_count += 1
+                continue
+            box = doc.boxes[b_idx]
+            new_tx = cands[row["cand_idx"]].value
+            new_sp = box.speaker
+            if translate_speakers and b_idx in self._speaker_matches and box.kind == "print":
+                new_sp = self._speaker_matches[b_idx]
+            to_import_nums.append(b_num)
+            plan.append((b_idx, row["box_uid"], new_sp, new_tx))
+
+        prompt = (
+            "Confirm XUAT Import Summary:\n\n"
+            f"1. Boxes to import ({len(to_import_nums)}): {self._format_box_list(to_import_nums)}\n"
+            f"2. Skipped — Translation Lock (🔒) ({len(lock_skipped_nums)}): {self._format_box_list(lock_skipped_nums)}\n"
+            f"3. Skipped — User Skip ({len(user_skipped_nums)}): {self._format_box_list(user_skipped_nums)}\n"
+            f"4. Missing / Untranslated: {missing_count} box(es)\n\n"
+            "Proceed with importing these translations?"
+        )
+        if not messagebox.askyesno("Confirm XUAT Import", prompt, parent=self):
+            return False
+
+        if not plan:
+            self.app.show_toast("No eligible boxes to import.")
+            return False
+
+        self.app._commit_widget_edit()
+
+        applied_count = 0
+        self.app.undo_journal.begin_batch("Import from XUAT")
+        try:
+            for b_idx, b_uid, new_sp, new_tx in plan:
+                if not (0 <= b_idx < len(doc.boxes)):
+                    continue
+                if self.app.is_box_locked(b_idx):
+                    continue
+                old_box = doc.boxes[b_idx]
+                old_sp = old_box.speaker
+                old_tx = old_box.clean_text
+                if new_sp == old_sp and new_tx == old_tx:
+                    continue
+                old_segs = [s.text for s in old_box.segs]
+                # Mutate AST first (BUG-13)
+                doc.inject_box(b_idx, new_sp, new_tx)
+                new_segs = [s.text for s in doc.boxes[b_idx].segs]
+                self.app.undo_journal.record(
+                    BoxEditDelta(
+                        box_index=b_idx,
+                        old_speaker=old_sp,
+                        new_speaker=new_sp,
+                        old_text=old_tx,
+                        new_text=new_tx,
+                        file_path=str(self.app.current_file_path) if self.app.current_file_path else "",
+                        box_uid=b_uid,
+                        source="xuat_import",
+                        old_seg_texts=old_segs,
+                        new_seg_texts=new_segs,
+                    )
+                )
+                self.app._modified_boxes.add(b_idx)
+                if b_uid is not None and hasattr(self.app, "_modified_box_uids"):
+                    self.app._modified_box_uids.add(b_uid)
+                applied_count += 1
+        finally:
+            self.app.undo_journal.end_batch()
+
+        if applied_count > 0:
+            self.app._mark_document_dirty(self.app.current_file_path)
+            self.app._dirty_state_changed()
+            self.app._update_views()
+            self.app.show_toast(f"✓ Imported XUAT translations for {applied_count} box(es)")
+        else:
+            self.app.show_toast("No changes were applied from XUAT.")
+
+        self._on_close()
+        return applied_count > 0
+
+    def _on_close(self) -> None:
+        self._focused_box_widget = None
+        self._rows.clear()
+        self._filter_buttons.clear()
+        self._speaker_matches.clear()
+        self.var_translate_speakers = None
+        try:
+            for w in (self.list_canvas, self.rows_frame):
+                if w and w.winfo_exists():
+                    w.unbind("<MouseWheel>")
+                    w.unbind("<Configure>")
+        except Exception:
+            pass
+        if getattr(self.app, "_import_xuat_dialog", None) is self:
+            self.app._import_xuat_dialog = None
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
+
+
+# =============================================================================
 # Translator Suite Dialogs (#4A, #16, #17)
 # =============================================================================
 class MTLSettingsDialog(tk.Toplevel):
@@ -15650,6 +16444,9 @@ class MTLSettingsDialog(tk.Toplevel):
                 pass
             self._poll_job = None
         self.app.mtl_config = self._get_draft_config()
+        if self.app.mtl_config.use_xuat_cache and getattr(self.app, "xuat_index", None) is None:
+            if hasattr(self.app, "_refresh_xuat_index_async"):
+                self.app._refresh_xuat_index_async()
         self.app._save_user_prefs()
         self.app.show_toast(f"✓ Saved MTL preferences ({self.app.mtl_config.active_engine})")
         safe_grab_release(self)
