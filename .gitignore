@@ -38,3 +38,6 @@ New folder/
 _archive/
 Decoration/
 /.agents
+
+Windows System
+*.ini
