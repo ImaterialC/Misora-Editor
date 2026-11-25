@@ -543,6 +543,41 @@ def best_contrast_fg(
     return light_fg if c_light >= c_dark else dark_fg
 
 
+def _ensure_wcag_fg(
+    preferred_hex: str,
+    bg_hex: str,
+    dark_fg: str = "#14141a",
+    light_fg: str = "#ffffff",
+    min_ratio: float = 4.5,
+) -> str:
+    """Return `preferred_hex` if it achieves >= `min_ratio` on `bg_hex`, else `best_contrast_fg`."""
+    if HEX_COLOR_RE.match(preferred_hex) and HEX_COLOR_RE.match(bg_hex):
+        if wcag_contrast_ratio(preferred_hex, bg_hex) >= min_ratio:
+            return preferred_hex
+    return best_contrast_fg(bg_hex, dark_fg, light_fg)
+
+
+def _wcag_muted_fg(
+    muted_hex: str,
+    bg_hex: str,
+    fallback_fg: str,
+    min_ratio: float = 4.6,
+) -> str:
+    """Adjust `muted_hex` toward `fallback_fg` only as needed to reach WCAG `min_ratio` on `bg_hex`."""
+    if not (HEX_COLOR_RE.match(muted_hex) and HEX_COLOR_RE.match(bg_hex) and HEX_COLOR_RE.match(fallback_fg)):
+        return fallback_fg
+    if wcag_contrast_ratio(muted_hex, bg_hex) >= min_ratio:
+        return muted_hex
+    mr, mg, mb = int(muted_hex[1:3], 16), int(muted_hex[3:5], 16), int(muted_hex[5:7], 16)
+    fr, fg_c, fb = int(fallback_fg[1:3], 16), int(fallback_fg[3:5], 16), int(fallback_fg[5:7], 16)
+    for step in range(1, 21):
+        alpha = step / 20.0
+        cand = f"#{int(mr + (fr - mr) * alpha):02x}{int(mg + (fg_c - mg) * alpha):02x}{int(mb + (fb - mb) * alpha):02x}"
+        if wcag_contrast_ratio(cand, bg_hex) >= min_ratio:
+            return cand
+    return fallback_fg
+
+
 def init_process_dpi_awareness() -> None:
     """Set process DPI awareness once at application startup before creating Tk root (Rule 23).
 
@@ -1624,7 +1659,16 @@ class MisoraApp(tk.Tk):
         self._mtl_drawer_cache: "collections.OrderedDict[Tuple[str, str], str]" = collections.OrderedDict()
         self._mtl_drawer_mode: str = "dialogue"
         self._mtl_drawer_cards: Dict[str, Dict[str, Any]] = {}
+        if not hasattr(self, "_mtl_drawer_enabled_engines") or not isinstance(self._mtl_drawer_enabled_engines, dict):
+            self._mtl_drawer_enabled_engines: Dict[str, bool] = {
+                eng: (eng in ("XUAT Cache", "Google"))
+                for eng in self._MTL_DRAWER_ENGINE_ORDER
+            }
         self._mtl_drawer_engine_vars: Dict[str, tk.BooleanVar] = {}
+        for eng in self._MTL_DRAWER_ENGINE_ORDER:
+            enabled = bool(self._mtl_drawer_enabled_engines.get(eng, eng in ("XUAT Cache", "Google")))
+            self._mtl_drawer_enabled_engines[eng] = enabled
+            self._mtl_drawer_engine_vars[eng] = tk.BooleanVar(master=self, value=enabled)
         self._mtl_drawer_active_context: Optional[Tuple[str, int, Any, str]] = None
         self._mtl_all_req_seqs: Dict[Tuple[Any, str], int] = {}
         self._mtl_all_results: Dict[Tuple[str, int, Any, str], str] = {}
@@ -1636,14 +1680,6 @@ class MisoraApp(tk.Tk):
         self._mtl_all_batch_cancel: Optional[threading.Event] = None
         self._mtl_all_batch_gen: int = 0
         self._mtl_all_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
-        if not hasattr(self, "_mtl_drawer_enabled_engines") or not isinstance(self._mtl_drawer_enabled_engines, dict):
-            self._mtl_drawer_enabled_engines: Dict[str, bool] = {
-                "XUAT Cache": True,
-                "Google": True,
-                "DeepL": False,
-                "Local / Sugoi": False,
-                "LLM / OpenAI": False,
-            }
 
         # Native Win32 Drag & Drop references (kept alive to prevent GC)
         self._wndprocs: Dict[int, Tuple[Any, Any]] = {}
@@ -2247,7 +2283,7 @@ class MisoraApp(tk.Tk):
                 "window_geometry": self.geometry() if hasattr(self, "geometry") else "",
                 "continuous_view": bool(self.var_continuous_view.get()) if hasattr(self, "var_continuous_view") else False,
                 "sync_xuat": bool(self.var_sync_xuat.get()) if hasattr(self, "var_sync_xuat") else True,
-                "show_ngui_ribbon": bool(self.var_show_ngui_ribbon.get()) if hasattr(self, "var_show_ngui_ribbon") else getattr(self, "_saved_show_ngui_ribbon", True),
+                "show_ngui_ribbon": bool(self.var_show_ngui_ribbon.get()) if hasattr(self, "var_show_ngui_ribbon") else getattr(self, "_saved_show_ngui_ribbon", False),
                 "mtl_drawer_enabled_engines": dict(getattr(self, "_mtl_drawer_enabled_engines", {})),
             }
             # In-memory serialization before file write ensures DPAPISecurityError never truncates config (BUG-33)
@@ -2438,30 +2474,41 @@ class MisoraApp(tk.Tk):
                         activeforeground=grn,
                     )
                 elif role == "check_panel":
+                    panel_dis_fg = _wcag_muted_fg(t["fg_muted"], t["bg_panel"], panel_fg)
+                    panel_chk_fg = _ensure_wcag_fg(panel_fg, t["bg_dark"], t["fg_text"], "#ffffff")
                     w.configure(
                         bg=t["bg_panel"],
-                        fg=panel_fg,
+                        fg=panel_chk_fg,
                         selectcolor=t["bg_dark"],
                         activebackground=t["bg_panel"],
-                        activeforeground=panel_fg,
+                        activeforeground=panel_chk_fg,
+                        disabledforeground=panel_dis_fg,
                         font=("Segoe UI", u_sz),
                     )
                 elif role == "check_accent":
+                    panel_dis_fg = _wcag_muted_fg(t["fg_muted"], t["bg_panel"], panel_fg)
+                    panel_chk_fg = _ensure_wcag_fg(panel_fg, t["bg_dark"], t["fg_text"], "#ffffff")
+                    accent_chk_fg = _ensure_wcag_fg(t["misora_pink"], t["bg_panel"], t["fg_text"], "#ffffff")
                     w.configure(
                         bg=t["bg_panel"],
-                        fg=panel_fg,
+                        fg=panel_chk_fg,
                         selectcolor=t["bg_dark"],
                         activebackground=t["bg_panel"],
-                        activeforeground=t["misora_pink"],
+                        activeforeground=accent_chk_fg,
+                        disabledforeground=panel_dis_fg,
                         font=("Segoe UI", max(8, u_sz - 1), "bold"),
                     )
                 elif role == "check_ribbon":
+                    editor_dis_fg = _wcag_muted_fg(t["fg_muted"], t["bg_editor"], editor_fg)
+                    editor_chk_fg = _ensure_wcag_fg(editor_fg, t["bg_panel"], t["fg_text"], "#ffffff")
+                    ribbon_act_fg = _ensure_wcag_fg(t["misora_pink"], t["bg_editor"], t["fg_text"], "#ffffff")
                     w.configure(
                         bg=t["bg_editor"],
-                        fg=editor_fg,
+                        fg=editor_chk_fg,
                         selectcolor=t["bg_panel"],
                         activebackground=t["bg_editor"],
-                        activeforeground=t["misora_pink"],
+                        activeforeground=ribbon_act_fg,
+                        disabledforeground=editor_dis_fg,
                         font=("Segoe UI", max(8, u_sz - 1), "bold"),
                     )
                 elif role == "entry_editor":
@@ -3503,23 +3550,72 @@ class MisoraApp(tk.Tk):
         style.configure("Header.TLabel", font=("Segoe UI", u_sz + 1, "bold"), foreground=t["misora_pink"])
         style.configure("Muted.TLabel", foreground=t["fg_muted"], font=("Segoe UI", max(8, u_sz - 1)))
 
-        style.configure("TCheckbutton", background=t["bg_dark"], foreground=fg_on_dark, font=("Segoe UI", u_sz))
-        style.configure("Panel.TCheckbutton", background=t["bg_panel"], foreground=fg_on_panel, font=("Segoe UI", u_sz))
-        style.map("Panel.TCheckbutton",
-            background=[("active", t["bg_panel"]), ("!active", t["bg_panel"])],
-            foreground=[("active", t["misora_pink"]), ("!active", fg_on_panel)],
-        )
-        style.configure("Accent.TCheckbutton", background=t["bg_panel"], foreground=t["misora_pink"], font=("Segoe UI", max(8, u_sz - 1), "bold"))
-        style.map("Accent.TCheckbutton",
-            background=[("active", t["bg_panel"]), ("!active", t["bg_panel"])],
-            foreground=[("active", t["misora_pink_hover"]), ("!active", t["misora_pink"])],
-        )
-        style.configure("TRadiobutton", background=t["bg_dark"], foreground=fg_on_dark, font=("Segoe UI", u_sz))
-        style.configure("Panel.TRadiobutton", background=t["bg_panel"], foreground=fg_on_panel, font=("Segoe UI", u_sz))
-        style.map("Panel.TRadiobutton",
-            background=[("active", t["bg_panel"]), ("!active", t["bg_panel"])],
-            foreground=[("active", fg_on_panel), ("!active", fg_on_panel)],
-        )
+        # WCAG-safe Checkbox & Radiobutton clarity across Light & Dark themes (U21)
+        ind_bg_unsel = t["bg_editor"]
+        ind_fg_unsel = best_contrast_fg(ind_bg_unsel, t["fg_text"], "#ffffff")
+        ind_bg_sel = t["misora_pink"]
+        ind_fg_sel = best_contrast_fg(ind_bg_sel)
+        ind_bg_dis = self._shift_hex(t["bg_panel"], 18 if dark_panel else -18)
+        ind_fg_dis = _wcag_muted_fg(t["fg_muted"], ind_bg_dis, best_contrast_fg(ind_bg_dis, t["fg_text"], "#ffffff"))
+
+        def _configure_toggle_style(
+            style_name: str,
+            surface_bg: str,
+            fg_norm: str,
+            fg_act: str,
+            font_spec: Tuple[Any, ...],
+        ) -> None:
+            fg_dis = _wcag_muted_fg(t["fg_muted"], surface_bg, fg_norm)
+            style.configure(
+                style_name,
+                background=surface_bg,
+                foreground=fg_norm,
+                font=font_spec,
+                focuscolor=t["misora_pink"],
+                indicatorsize=14,
+                indicatormargin=(2, 2, 6, 2),
+                indicatorrelief="flat",
+                indicatorbackground=ind_bg_unsel,
+                indicatorforeground=ind_fg_unsel,
+                upperbordercolor=t["border"],
+                lowerbordercolor=t["border"],
+            )
+            style.map(
+                style_name,
+                background=[("disabled", surface_bg), ("active", surface_bg), ("!active", surface_bg)],
+                foreground=[("disabled", fg_dis), ("active", fg_act), ("focus", fg_act), ("!active", fg_norm)],
+                indicatorbackground=[
+                    ("disabled", ind_bg_dis),
+                    ("selected", ind_bg_sel),
+                    ("!selected", ind_bg_unsel),
+                ],
+                indicatorforeground=[
+                    ("disabled", ind_fg_dis),
+                    ("selected", ind_fg_sel),
+                    ("!selected", ind_fg_unsel),
+                ],
+                upperbordercolor=[
+                    ("selected", accent_press),
+                    ("active", t["misora_pink"]),
+                    ("!selected", t["border"]),
+                ],
+                lowerbordercolor=[
+                    ("selected", accent_press),
+                    ("active", t["misora_pink"]),
+                    ("!selected", t["border"]),
+                ],
+            )
+
+        accent_panel_fg = _ensure_contrast_fg = _ensure_wcag_fg(t["misora_pink"], t["bg_panel"], t["fg_text"], "#ffffff")
+        accent_panel_hover = _ensure_wcag_fg(t["misora_pink_hover"], t["bg_panel"], t["fg_text"], "#ffffff")
+        panel_hover_fg = _ensure_wcag_fg(t["misora_pink"], t["bg_panel"], t["fg_text"], "#ffffff")
+        dark_hover_fg = _ensure_wcag_fg(t["misora_pink"], t["bg_dark"], t["fg_text"], "#ffffff")
+
+        _configure_toggle_style("TCheckbutton", t["bg_dark"], fg_on_dark, dark_hover_fg, ("Segoe UI", u_sz))
+        _configure_toggle_style("Panel.TCheckbutton", t["bg_panel"], fg_on_panel, panel_hover_fg, ("Segoe UI", u_sz))
+        _configure_toggle_style("Accent.TCheckbutton", t["bg_panel"], accent_panel_fg, accent_panel_hover, ("Segoe UI", max(8, u_sz - 1), "bold"))
+        _configure_toggle_style("TRadiobutton", t["bg_dark"], fg_on_dark, dark_hover_fg, ("Segoe UI", u_sz))
+        _configure_toggle_style("Panel.TRadiobutton", t["bg_panel"], fg_on_panel, panel_hover_fg, ("Segoe UI", u_sz))
 
         # Primary Accent Action Button
         style.configure(
@@ -3548,7 +3644,7 @@ class MisoraApp(tk.Tk):
             ],
         )
 
-        # Distinct Box Navigation Buttons (< Prev / Next >) (#4)
+        # Distinct Box Navigation Buttons (< Prev / Next >) (#4 / U13 compact)
         style.configure(
             "Nav.TButton",
             background=btn_bg,
@@ -3558,8 +3654,8 @@ class MisoraApp(tk.Tk):
             lightcolor=t["misora_pink"],
             borderwidth=1,
             relief="raised",
-            font=("Segoe UI", u_sz, "bold"),
-            padding=(9, 3),
+            font=("Segoe UI", max(8, u_sz - 1), "bold"),
+            padding=(5, 2),
         )
         style.map(
             "Nav.TButton",
@@ -3777,7 +3873,8 @@ class MisoraApp(tk.Tk):
 
         self.var_continuous_view = tk.BooleanVar(master=self, value=False)
         self.var_preview_compiled = tk.BooleanVar(master=self, value=False)
-        self.var_show_ngui_ribbon = tk.BooleanVar(master=self, value=getattr(self, "_saved_show_ngui_ribbon", True))
+        self.var_show_ngui_ribbon = tk.BooleanVar(master=self, value=getattr(self, "_saved_show_ngui_ribbon", False))
+        self.var_show_left_panel = tk.BooleanVar(master=self, value=True)
         self._all_menus: List[tk.Menu] = []
 
         menubar = tk.Menu(
@@ -3866,6 +3963,12 @@ class MisoraApp(tk.Tk):
             selectcolor=t["misora_pink"]
         )
         view_menu.add_separator()
+        view_menu.add_checkbutton(
+            label="Show Left Panel",
+            variable=self.var_show_left_panel,
+            command=self._on_toggle_left_panel,
+            selectcolor=t["misora_pink"],
+        )
         view_menu.add_command(label="Toggle Customization Panel", command=lambda: self._toggle_side_drawer("customize"), accelerator="Ctrl+,")
         view_menu.add_command(label="Toggle NGUI Glossary Panel", command=lambda: self._toggle_side_drawer("glossary"), accelerator="F1")
         view_menu.add_separator()
@@ -4000,7 +4103,7 @@ class MisoraApp(tk.Tk):
         self._all_menus.append(folders_menu)
 
         # TRANSLATOR MENU
-        translator_menu = tk.Menu(
+        self.translator_menu = translator_menu = tk.Menu(
             menubar,
             tearoff=0,
             bg=t["bg_panel"],
@@ -4022,6 +4125,23 @@ class MisoraApp(tk.Tk):
             label="Batch Translate Story...",
             command=self.on_batch_translate,
         )
+        self.mtl_engines_menu = tk.Menu(
+            translator_menu,
+            tearoff=0,
+            bg=t["bg_panel"],
+            fg=panel_fg,
+            activebackground=t["misora_pink"],
+            activeforeground=accent_fg,
+        )
+        for eng in self._MTL_DRAWER_ENGINE_ORDER:
+            self.mtl_engines_menu.add_checkbutton(
+                label=eng,
+                variable=self._mtl_drawer_engine_vars[eng],
+                command=lambda e=eng: self._on_mtl_drawer_engine_toggled(e),
+                selectcolor=t["misora_pink"],
+            )
+        translator_menu.add_cascade(label="Enabled Engines", menu=self.mtl_engines_menu)
+        self._all_menus.append(self.mtl_engines_menu)
         translator_menu.add_separator()
         translator_menu.add_command(
             label="Configure MTL Sources & Keys...",
@@ -4390,6 +4510,7 @@ class MisoraApp(tk.Tk):
             command=lambda: self._switch_dock_tab("search"),
         )
         self.btn_tab_search.pack(side="left", padx=(2, 2))
+        self.btn_tab_search.bind("<Double-Button-1>", lambda _e: self.on_show_find())
 
         self.btn_tab_files = tk.Button(
             self.dock_tab_bar,
@@ -4405,13 +4526,13 @@ class MisoraApp(tk.Tk):
 
         self.btn_dock_pin = ttk.Button(
             self.dock_tab_bar,
-            text="📌",
+            text="◀",
             style="Small.TButton",
             command=self._toggle_dock_collapse,
-            width=3,
+            width=2,
         )
         self.btn_dock_pin.pack(side="right", padx=(2, 2))
-        self._dock_pin_tooltip = create_tooltip(self.btn_dock_pin, "Collapse Left Panel")
+        self._dock_pin_tooltip = create_tooltip(self.btn_dock_pin, "Hide Left Panel")
 
         # --- TAB 1: Search Results ---
         self.tab_search_frame = self._tag_role(tk.Frame(self.left_frame, bg=t["bg_panel"]), "panel")
@@ -4565,7 +4686,17 @@ class MisoraApp(tk.Tk):
 
         # CENTER PANEL: Dual-View Editor (Vertical Splitter)
         right_frame = self._tag_role(tk.Frame(self.h_paned, bg=t["bg_panel"]), "panel")
+        self.right_frame = right_frame
         self.h_paned.add(right_frame, minsize=420, stretch="always")
+
+        self.btn_reopen_left = ttk.Button(
+            right_frame,
+            text="▶",
+            style="Small.TButton",
+            width=2,
+            command=self._toggle_dock_collapse,
+        )
+        create_tooltip(self.btn_reopen_left, "Show Left Panel")
 
         self.v_paned = self._tag_role(
             tk.PanedWindow(
@@ -4578,7 +4709,7 @@ class MisoraApp(tk.Tk):
             ),
             "sash"
         )
-        self.v_paned.pack(fill="both", expand=True)
+        self.v_paned.pack(side="left", fill="both", expand=True)
 
         # TOP VIEW: Game Display View (Page-by-Page OR Continuous Dialog Stream)
         top_view = self._tag_role(tk.Frame(self.v_paned, bg=t["bg_panel"]), "panel")
@@ -4586,7 +4717,26 @@ class MisoraApp(tk.Tk):
         self.v_paned.add(top_view, minsize=140, height=400, stretch="always")
 
         gd_header = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
-        gd_header.pack(fill="x", padx=8, pady=(4, 2))
+        gd_header.pack(fill="x", padx=6, pady=(4, 2))
+
+        # Row 1 Left: Borderless Lock immediately before 'Dialogue' (U22)
+        self.btn_lock_box = tk.Button(
+            gd_header,
+            text="🔓",
+            font=("Segoe UI", max(8, u_sz - 1)),
+            bg=t["bg_panel"],
+            fg=best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff"),
+            activebackground=t["highlight_bg"],
+            bd=0,
+            relief="flat",
+            highlightthickness=0,
+            cursor="hand2",
+            command=self.on_toggle_lock_current_box,
+            padx=2,
+            pady=0,
+        )
+        self.btn_lock_box.pack(side="left", padx=(0, 3))
+        create_tooltip(self.btn_lock_box, "Translation Lock (Ctrl+L) — Protect box from batch/paste/replace")
 
         self.lbl_gd_title = self._tag_role(
             tk.Label(
@@ -4618,11 +4768,12 @@ class MisoraApp(tk.Tk):
             "check_panel"
         )
 
+        # Row 1 Right (packed right-to-left): [VIEW group] [MTL] [AI] [Prev] [Next] [Overflow] [Box: N / M]
         self.lbl_box_counter = self._tag_role(
             tk.Label(gd_header, text="Box: 0 / 0", font=("Segoe UI", u_sz), bg=t["bg_panel"], fg=t["fg_muted"]),
             "label_muted"
         )
-        self.lbl_box_counter.pack(side="right", padx=(6, 0))
+        self.lbl_box_counter.pack(side="right", padx=(4, 0))
 
         self.lbl_char_overflow = tk.Label(
             gd_header,
@@ -4631,7 +4782,7 @@ class MisoraApp(tk.Tk):
             bg=t["bg_panel"],
             fg=t["fg_muted"],
         )
-        self.lbl_char_overflow.pack(side="right", padx=(6, 4))
+        self.lbl_char_overflow.pack(side="right", padx=(4, 2))
         create_tooltip(
             self.lbl_char_overflow,
             "Native 50 x 3 dialogue rule: <= 50 digit-widths without linebreak AND < 3 linebreaks (<= 3 lines).\n"
@@ -4640,27 +4791,120 @@ class MisoraApp(tk.Tk):
 
         self.ico_next = self.get_icon("nav_next", (14, 14))
         self.btn_next = ttk.Button(gd_header, text="Next ", image=self.ico_next, compound="right", style="Nav.TButton", command=self.on_next_box)
-        self.btn_next.pack(side="right", padx=(2, 0))
+        self.btn_next.pack(side="right", padx=(1, 0))
         create_tooltip(self.btn_next, "Next Dialogue Box (Alt+Right / Alt+Down)")
 
         self.ico_prev = self.get_icon("nav_prev", (14, 14))
         self.btn_prev = ttk.Button(gd_header, text=" Prev", image=self.ico_prev, compound="left", style="Nav.TButton", command=self.on_prev_box)
-        self.btn_prev.pack(side="right", padx=(4, 2))
+        self.btn_prev.pack(side="right", padx=(2, 1))
         create_tooltip(self.btn_prev, "Previous Dialogue Box (Alt+Left / Alt+Up)")
 
         self.ico_ai = self.get_icon("ai", (16, 16))
-        self.btn_ai_prompt = ttk.Button(gd_header, text=" AI Prompt", image=self.ico_ai, compound="left", style="Small.TButton", command=self.on_copy_ai_prompt)
-        self.btn_ai_prompt.pack(side="right", padx=(4, 2))
+        self.btn_ai_prompt = ttk.Button(
+            gd_header,
+            text="AI Prompt",
+            image=self.ico_ai,
+            compound="none" if self.ico_ai else "left",
+            style="Small.TButton",
+            command=self.on_copy_ai_prompt,
+        )
+        self.btn_ai_prompt.pack(side="right", padx=(2, 2))
         create_tooltip(self.btn_ai_prompt, "Copy AI Translation Prompt (Ctrl+Shift+T)")
 
         self.ico_mtl = self.get_icon("mtl", (16, 16))
-        self.btn_translate = ttk.Button(gd_header, text=" MTL", image=self.ico_mtl, compound="left", style="Small.TButton", command=self.on_open_translator_assistant)
+        self.btn_translate = ttk.Button(
+            gd_header,
+            text="MTL",
+            image=self.ico_mtl,
+            compound="none" if self.ico_mtl else "left",
+            style="Small.TButton",
+            command=self.on_open_translator_assistant,
+        )
         self.btn_translate.pack(side="right", padx=(2, 2))
         create_tooltip(self.btn_translate, "Toggle MTL Drawer (Ctrl+T)")
 
-        # Row 1: Speaker Controls (Left) + Unified VIEW Group (Right) (#7, #10, FEAT-02, FEAT-03, BUG-39)
+        # Unified VIEW Group (Select Box, All Script, Preview) in Row 1 left of MTL/AI (U11)
+        self.view_group = self._tag_role(
+            tk.Frame(gd_header, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
+            "ribbon"
+        )
+        self.view_group.pack(side="right", padx=(2, 3))
+
+        self.ico_sel_box = self.get_icon("box", (14, 14))
+        self.cb_sel_box = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" Select Box",
+                image=self.ico_sel_box,
+                compound="left" if self.ico_sel_box else "none",
+                variable=self.var_select_box_mode,
+                command=self._on_toggle_select_box_mode,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                padx=1,
+                pady=0,
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_sel_box.pack(side="left", padx=1, pady=0)
+        create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
+
+        self.ico_all_script = self.get_icon("all_script", (14, 14))
+        self.cb_cont = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" All Script",
+                image=self.ico_all_script,
+                compound="left" if self.ico_all_script else "none",
+                variable=self.var_continuous_view,
+                command=self._on_toggle_continuous_view,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                padx=1,
+                pady=0,
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_cont.pack(side="left", padx=1, pady=0)
+        create_tooltip(self.cb_cont, "Toggle All Script / Continuous Stream View")
+
+        self.ico_preview = self.get_icon("preview", (14, 14))
+        self.cb_compiled = self._tag_role(
+            tk.Checkbutton(
+                self.view_group,
+                text=" Preview",
+                image=self.ico_preview,
+                compound="left" if self.ico_preview else "none",
+                variable=self.var_preview_compiled,
+                command=self._on_toggle_preview_compiled,
+                font=("Segoe UI", max(8, u_sz - 2), "bold"),
+                bg=t["bg_editor"],
+                fg=t["fg_text"],
+                selectcolor=t["bg_panel"],
+                activebackground=t["bg_editor"],
+                activeforeground=t["misora_pink"],
+                padx=1,
+                pady=0,
+                cursor="hand2",
+            ),
+            "check_ribbon"
+        )
+        self.cb_compiled.pack(side="left", padx=1, pady=0)
+        create_tooltip(self.cb_compiled, "Toggle Compiled Attribute Preview (read-only)")
+
+        # Row 2: Speaker Controls (Left) + Edit Group Toolbar (Right) (U09, U10, U12, 4.2)
         self.speaker_view_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
-        self.speaker_view_row.pack(fill="x", padx=8, pady=(2, 4))
+        self.speaker_view_row.pack(fill="x", padx=6, pady=(2, 4))
 
         self._tag_role(
             tk.Label(self.speaker_view_row, text="Speaker:", bg=t["bg_panel"], fg=t["fg_muted"]),
@@ -4680,7 +4924,7 @@ class MisoraApp(tk.Tk):
                 selectforeground=t["misora_pink"],
                 bd=1,
                 relief="solid",
-                width=14
+                width=13
             ),
             "entry_speaker"
         )
@@ -4716,7 +4960,6 @@ class MisoraApp(tk.Tk):
         self.btn_pin_speaker.pack(side="left", padx=(1, 4))
         create_tooltip(self.btn_pin_speaker, "Pin Speaker (locks current speaker across box navigation)")
 
-        # Player Button: icon-only (player.png), moved out of NGUI ribbon into speaker row (FEAT-02)
         dark_p = self._is_dark_color(t["bg_panel"])
         btn_bg = self._shift_hex(t["bg_panel"], 10 if dark_p else -8)
         btn_hover = self._shift_hex(t["bg_panel"], 22 if dark_p else -16)
@@ -4724,30 +4967,6 @@ class MisoraApp(tk.Tk):
         accent_bg = t["misora_pink"]
         accent_hover = t["misora_pink_hover"]
         fg_accent = best_contrast_fg(accent_bg)
-
-        self.ico_player = self.get_icon("player", (14, 14))
-        self.btn_player = self._tag_role(
-            tk.Button(
-                self.speaker_view_row,
-                text="👤",
-                image=self.ico_player,
-                compound="none" if self.ico_player else "left",
-                font=("Segoe UI", max(8, u_sz - 1)),
-                bg=btn_bg,
-                fg=btn_fg,
-                activebackground=btn_hover,
-                activeforeground=btn_fg,
-                bd=1,
-                relief="raised",
-                padx=2,
-                pady=0,
-                cursor="hand2",
-                command=self.on_insert_playername,
-            ),
-            "ribbon_btn",
-        )
-        self.btn_player.pack(side="left", padx=(1, 4))
-        create_tooltip(self.btn_player, "Insert Player Name tag ({0} / {playername}) (Ctrl+P)")
 
         self.lbl_voice_cue = self._tag_role(
             tk.Label(self.speaker_view_row, text="", bg=t["bg_panel"], fg=t["accent_blue"], font=("Segoe UI", max(8, u_sz - 1))),
@@ -4761,99 +4980,9 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_segs_badge.pack(side="left", padx=(2, 4))
 
-        # Translation Lock Toggle Button (Rule 20 D8 / TRANSLATION-LOCK)
-        self.btn_lock_box = tk.Button(
-            self.speaker_view_row,
-            text="🔓",
-            font=("Segoe UI", max(8, u_sz - 1)),
-            bg=t["bg_panel"],
-            activebackground=t["highlight_bg"],
-            bd=1,
-            relief="solid",
-            cursor="hand2",
-            command=self.on_toggle_lock_current_box,
-            padx=3,
-            pady=0,
-        )
-        self.btn_lock_box.pack(side="left", padx=(2, 4))
-        create_tooltip(self.btn_lock_box, "Translation Lock (Ctrl+L) — Protect box from batch/paste/replace")
-
-        # Unified VIEW Group (Select Box, All Script, Preview) docked on right side of Speaker row (FEAT-03)
-        self.view_group = self._tag_role(
-            tk.Frame(self.speaker_view_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
-            "ribbon"
-        )
-        self.view_group.pack(side="right", padx=(4, 0))
-
-        self.ico_sel_box = self.get_icon("box", (14, 14))
-        self.cb_sel_box = self._tag_role(
-            tk.Checkbutton(
-                self.view_group,
-                text=" Select Box",
-                image=self.ico_sel_box,
-                compound="left" if self.ico_sel_box else "none",
-                variable=self.var_select_box_mode,
-                command=self._on_toggle_select_box_mode,
-                font=("Segoe UI", max(8, u_sz - 2), "bold"),
-                bg=t["bg_editor"],
-                fg=t["fg_text"],
-                selectcolor=t["bg_panel"],
-                activebackground=t["bg_editor"],
-                activeforeground=t["misora_pink"],
-                cursor="hand2",
-            ),
-            "check_ribbon"
-        )
-        self.cb_sel_box.pack(side="left", padx=2, pady=1)
-        create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
-
-        self.ico_all_script = self.get_icon("all_script", (14, 14))
-        self.cb_cont = self._tag_role(
-            tk.Checkbutton(
-                self.view_group,
-                text=" All Script",
-                image=self.ico_all_script,
-                compound="left" if self.ico_all_script else "none",
-                variable=self.var_continuous_view,
-                command=self._on_toggle_continuous_view,
-                font=("Segoe UI", max(8, u_sz - 2), "bold"),
-                bg=t["bg_editor"],
-                fg=t["fg_text"],
-                selectcolor=t["bg_panel"],
-                activebackground=t["bg_editor"],
-                activeforeground=t["misora_pink"],
-                cursor="hand2",
-            ),
-            "check_ribbon"
-        )
-        self.cb_cont.pack(side="left", padx=2, pady=1)
-        create_tooltip(self.cb_cont, "Toggle All Script / Continuous Stream View")
-
-        self.ico_preview = self.get_icon("preview", (14, 14))
-        self.cb_compiled = self._tag_role(
-            tk.Checkbutton(
-                self.view_group,
-                text=" Preview",
-                image=self.ico_preview,
-                compound="left" if self.ico_preview else "none",
-                variable=self.var_preview_compiled,
-                command=self._on_toggle_preview_compiled,
-                font=("Segoe UI", max(8, u_sz - 2), "bold"),
-                bg=t["bg_editor"],
-                fg=t["fg_text"],
-                selectcolor=t["bg_panel"],
-                activebackground=t["bg_editor"],
-                activeforeground=t["misora_pink"],
-                cursor="hand2",
-            ),
-            "check_ribbon"
-        )
-        self.cb_compiled.pack(side="left", padx=2, pady=1)
-        create_tooltip(self.cb_compiled, "Toggle Compiled Attribute Preview (read-only)")
-
-        # Row 2: Collapsible NGUI Ribbon (Left) + Text & Box Actions Toolbar (Right) (BUG-39, FEAT-04)
+        # Row 3: Collapsible NGUI Ribbon ONLY (default hidden via var_show_ngui_ribbon=False)
         self.ribbon_actions_row = self._tag_role(tk.Frame(top_view, bg=t["bg_panel"]), "panel")
-        self.ribbon_actions_row.pack(fill="x", padx=8, pady=(0, 4))
+        self.ribbon_actions_row.pack(fill="x", padx=6, pady=(0, 4))
 
         self.ribbon_frame = self._tag_role(
             tk.Frame(self.ribbon_actions_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
@@ -5040,55 +5169,12 @@ class MisoraApp(tk.Tk):
         self.btn_size.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_size, "Change Font Size (<size=...>)")
 
-        self._tag_role(tk.Label(self.ribbon_frame, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
-
-        # History: Undo & Redo with illustrated icons
-        self.ico_undo = self.get_icon("undo", (16, 16))
-        self.btn_ribbon_undo = self._tag_role(
-            tk.Button(
-                self.ribbon_frame,
-                text="↶",
-                image=self.ico_undo,
-                fg=btn_fg,
-                bg=btn_bg,
-                activebackground=btn_hover,
-                activeforeground=btn_fg,
-                bd=1,
-                relief="raised",
-                cursor="hand2",
-                command=self.on_undo,
-            ),
-            "ribbon_undo_btn",
-        )
-        self.btn_ribbon_undo.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_ribbon_undo, "Undo (Ctrl+Z)")
-
-        self.ico_redo = self.get_icon("redo", (16, 16))
-        self.btn_ribbon_redo = self._tag_role(
-            tk.Button(
-                self.ribbon_frame,
-                text="↷",
-                image=self.ico_redo,
-                fg=btn_fg,
-                bg=btn_bg,
-                activebackground=btn_hover,
-                activeforeground=btn_fg,
-                bd=1,
-                relief="raised",
-                cursor="hand2",
-                command=self.on_redo,
-            ),
-            "ribbon_redo_btn",
-        )
-        self.btn_ribbon_redo.pack(side="left", padx=1, pady=1)
-        create_tooltip(self.btn_ribbon_redo, "Redo (Ctrl+Y)")
-
-        # Text & Box Actions Toolbar (docked on right side of ribbon_actions_row)
+        # Edit Group Toolbar (docked on right side of Row 2 speaker_view_row: Text | Box | Player | Undo/Redo)
         self.actions_bar = self._tag_role(
-            tk.Frame(self.ribbon_actions_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
+            tk.Frame(self.speaker_view_row, bg=t["bg_editor"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
             "actions_toolbar"
         )
-        self.actions_bar.pack(side="right", padx=(2, 0))
+        self.actions_bar.pack(side="right", padx=(4, 0))
 
         # Text Actions Group (Select Whole Story, Cut, Copy, Paste)
         self.ico_sel_story = self.get_icon("select_story", (16, 16))
@@ -5158,9 +5244,80 @@ class MisoraApp(tk.Tk):
         self.btn_box_paste.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_box_paste, "Paste Box(es) (Ctrl+Alt+V)")
 
+        self._tag_role(tk.Label(self.actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # Player Button inside Edit Group right after Box Actions (U10, U12)
+        self.ico_player = self.get_icon("player", (16, 16))
+        self.btn_player = self._tag_role(
+            tk.Button(
+                self.actions_bar,
+                text="👤",
+                image=self.ico_player,
+                compound="none" if self.ico_player else "left",
+                font=("Segoe UI", max(8, u_sz - 1)),
+                bg=btn_bg,
+                fg=btn_fg,
+                activebackground=btn_hover,
+                activeforeground=btn_fg,
+                bd=1,
+                relief="raised",
+                padx=2,
+                pady=0,
+                cursor="hand2",
+                command=self.on_insert_playername,
+            ),
+            "ribbon_btn",
+        )
+        self.btn_player.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_player, "Insert Player Name tag ({0} / {playername}) (Ctrl+P)")
+
+        self._tag_role(tk.Label(self.actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
+
+        # History: Undo & Redo at far right of Edit Group (U09, 4.2)
+        self.ico_undo = self.get_icon("undo", (16, 16))
+        self.btn_ribbon_undo = self._tag_role(
+            tk.Button(
+                self.actions_bar,
+                text="↶",
+                image=self.ico_undo,
+                fg=btn_fg,
+                bg=btn_bg,
+                activebackground=btn_hover,
+                activeforeground=btn_fg,
+                bd=1,
+                relief="raised",
+                cursor="hand2",
+                command=self.on_undo,
+            ),
+            "ribbon_undo_btn",
+        )
+        self.btn_ribbon_undo.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_ribbon_undo, "Undo (Ctrl+Z)")
+
+        self.ico_redo = self.get_icon("redo", (16, 16))
+        self.btn_ribbon_redo = self._tag_role(
+            tk.Button(
+                self.actions_bar,
+                text="↷",
+                image=self.ico_redo,
+                fg=btn_fg,
+                bg=btn_bg,
+                activebackground=btn_hover,
+                activeforeground=btn_fg,
+                bd=1,
+                relief="raised",
+                cursor="hand2",
+                command=self.on_redo,
+            ),
+            "ribbon_redo_btn",
+        )
+        self.btn_ribbon_redo.pack(side="left", padx=1, pady=1)
+        create_tooltip(self.btn_ribbon_redo, "Redo (Ctrl+Y)")
+
         # Respect initial ribbon visibility toggle without triggering premature preferences save
         if hasattr(self, "var_show_ngui_ribbon") and not self.var_show_ngui_ribbon.get():
             self.ribbon_frame.pack_forget()
+            self.ribbon_actions_row.pack_forget()
 
         gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
@@ -6091,16 +6248,22 @@ class MisoraApp(tk.Tk):
         self.lbl_gd_title.config(text=title)
 
     def _on_toggle_ngui_ribbon(self) -> None:
-        """Toggle visibility of the NGUI formatting ribbon docked in ribbon_actions_row (FEAT-04)."""
+        """Toggle visibility of the NGUI formatting ribbon docked in ribbon_actions_row (FEAT-04, U12)."""
         if not hasattr(self, "ribbon_frame"):
             return
         if self.var_show_ngui_ribbon.get():
-            if hasattr(self, "actions_bar") and self.actions_bar.winfo_manager():
-                self.ribbon_frame.pack(side="left", padx=(0, 4), before=self.actions_bar)
-            else:
+            if hasattr(self, "ribbon_actions_row") and self.ribbon_actions_row.winfo_exists():
+                if not self._is_widget_packed(self.ribbon_actions_row):
+                    if hasattr(self, "speaker_view_row") and self._is_widget_packed(self.speaker_view_row):
+                        self.ribbon_actions_row.pack(fill="x", padx=6, pady=(0, 4), after=self.speaker_view_row)
+                    else:
+                        self.ribbon_actions_row.pack(fill="x", padx=6, pady=(0, 4))
+            if not self._is_widget_packed(self.ribbon_frame):
                 self.ribbon_frame.pack(side="left", padx=(0, 4))
         else:
             self.ribbon_frame.pack_forget()
+            if hasattr(self, "ribbon_actions_row") and self.ribbon_actions_row.winfo_exists():
+                self.ribbon_actions_row.pack_forget()
         self._save_user_prefs(silent=True)
 
     def _on_dialogue_preview_configure(self, event: Optional[tk.Event] = None) -> None:
@@ -6845,14 +7008,26 @@ class MisoraApp(tk.Tk):
         self._render_glossary_list()
 
     def _open_side_drawer(self, tab: str = "customize") -> None:
+        if not hasattr(self, "h_paned") or not self.h_paned.winfo_exists():
+            return
+        if not hasattr(self, "side_drawer") or not self.side_drawer.winfo_exists():
+            return
+        panes = [str(p) for p in self.h_paned.panes()]
         if not self._side_drawer_visible:
-            self.h_paned.add(self.side_drawer, minsize=260, width=330, stretch="never")
+            if str(self.side_drawer) not in panes:
+                self.h_paned.add(self.side_drawer, minsize=260, width=330, stretch="never")
             self._side_drawer_visible = True
         self._switch_side_drawer_tab(tab)
 
     def _close_side_drawer(self) -> None:
+        if not hasattr(self, "h_paned") or not self.h_paned.winfo_exists():
+            self._side_drawer_visible = False
+            return
         if self._side_drawer_visible:
-            self.h_paned.forget(self.side_drawer)
+            if hasattr(self, "side_drawer") and self.side_drawer.winfo_exists():
+                panes = [str(p) for p in self.h_paned.panes()]
+                if str(self.side_drawer) in panes:
+                    self.h_paned.forget(self.side_drawer)
             self._side_drawer_visible = False
 
     def _toggle_side_drawer(self, tab: str) -> None:
@@ -8338,11 +8513,17 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "lbl_segs_badge"):
             self.lbl_segs_badge.config(text=f"{len(box.segs)} segs" if len(box.segs) > 1 else "")
 
-        if hasattr(self, "btn_lock_box"):
+        if hasattr(self, "btn_lock_box") and self.btn_lock_box.winfo_exists():
             is_locked = self.current_box_idx in self._locked_boxes
+            lock_bg = self.theme["accent_yellow"] if is_locked else self.theme["bg_panel"]
+            lock_fg = best_contrast_fg(lock_bg, self.theme["fg_text"], "#ffffff")
             self.btn_lock_box.config(
                 text="🔒" if is_locked else "🔓",
-                bg=self.theme["accent_yellow"] if is_locked else self.theme["bg_panel"]
+                bg=lock_bg,
+                fg=lock_fg,
+                bd=0,
+                relief="flat",
+                highlightthickness=0,
             )
 
         if hasattr(self, "btn_prev"):
@@ -9016,7 +9197,10 @@ class MisoraApp(tk.Tk):
         sel_count = len(self._selected_boxes)
         self.cb_dialogue_select.config(text=f"Select Box #{b_num} ({sel_count} selected)")
         if not self.cb_dialogue_select.winfo_ismapped():
-            self.cb_dialogue_select.pack(side="left", padx=(10, 0))
+            if hasattr(self, "lbl_gd_title") and self.lbl_gd_title.winfo_exists():
+                self.cb_dialogue_select.pack(side="left", padx=(10, 0), after=self.lbl_gd_title)
+            else:
+                self.cb_dialogue_select.pack(side="left", padx=(10, 0))
 
     def _on_dialogue_box_sel_toggle(self) -> None:
         """Toggle selection of current box in Dialogue view."""
@@ -13295,53 +13479,55 @@ class MisoraApp(tk.Tk):
             self.btn_tab_search.configure(bg=t["misora_pink"], fg=active_fg)
             self.btn_tab_files.configure(bg=t["bg_panel"], fg=normal_fg)
 
-    def _toggle_dock_collapse(self) -> None:
-        """Toggle left dock between collapsed and expanded width strictly via h_paned."""
-        if getattr(self, "_dock_collapsed", False):
-            # Expand dock
+    def _set_left_panel_visible(self, visible: bool) -> None:
+        """Show or hide left_frame via h_paned.forget/add without destroying child widgets or rebuilding views (U03)."""
+        if not hasattr(self, "h_paned") or not self.h_paned.winfo_exists():
+            return
+        if not hasattr(self, "left_frame") or not self.left_frame.winfo_exists():
+            return
+        panes = [str(p) for p in self.h_paned.panes()]
+        if visible:
             self._dock_collapsed = False
-            target_w = getattr(self, "_left_dock_width", 340) or 340
-            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
-                self.btn_dock_pin.pack_forget()
-            if hasattr(self, "btn_tab_search") and self.btn_tab_search.winfo_exists():
-                self.btn_tab_search.pack(side="left", padx=(2, 2))
-            if hasattr(self, "btn_tab_files") and self.btn_tab_files.winfo_exists():
-                self.btn_tab_files.pack(side="left", padx=(2, 2))
-            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
-                self.btn_dock_pin.pack(side="right", padx=(2, 2))
-                self.btn_dock_pin.configure(text="📌")
-            if hasattr(self, "_dock_pin_tooltip"):
-                self._dock_pin_tooltip.text = "Collapse Left Panel"
-            if getattr(self, "_left_dock_tab", "search") == "files":
-                if hasattr(self, "tab_files_frame") and not self.tab_files_frame.winfo_ismapped():
-                    self.tab_files_frame.pack(fill="both", expand=True)
-            else:
-                if hasattr(self, "tab_search_frame") and not self.tab_search_frame.winfo_ismapped():
-                    self.tab_search_frame.pack(fill="both", expand=True)
-            self.h_paned.paneconfigure(self.left_frame, minsize=160)
-            self.h_paned.sash_place(0, target_w, 0)
+            if hasattr(self, "var_show_left_panel"):
+                self.var_show_left_panel.set(True)
+            if hasattr(self, "btn_reopen_left") and self.btn_reopen_left.winfo_exists():
+                self.btn_reopen_left.pack_forget()
+            target_w = max(160, int(getattr(self, "_left_dock_width", 340) or 340))
+            if str(self.left_frame) not in panes:
+                if hasattr(self, "right_frame") and self.right_frame.winfo_exists() and str(self.right_frame) in panes:
+                    self.h_paned.add(self.left_frame, before=self.right_frame, minsize=160, width=target_w, stretch="never")
+                else:
+                    self.h_paned.add(self.left_frame, minsize=160, width=target_w, stretch="never")
+            self.h_paned.paneconfigure(self.left_frame, minsize=160, width=target_w)
+            try:
+                self.h_paned.sash_place(0, target_w, 0)
+            except Exception:
+                pass
         else:
-            # Collapse dock
-            current_w = self.left_frame.winfo_width()
-            if current_w >= 100:
-                self._left_dock_width = current_w
+            if str(self.left_frame) in panes:
+                current_w = self.left_frame.winfo_width()
+                if current_w >= 100:
+                    self._left_dock_width = current_w
+                self.h_paned.forget(self.left_frame)
             self._dock_collapsed = True
-            if hasattr(self, "btn_tab_search") and self.btn_tab_search.winfo_exists():
-                self.btn_tab_search.pack_forget()
-            if hasattr(self, "btn_tab_files") and self.btn_tab_files.winfo_exists():
-                self.btn_tab_files.pack_forget()
-            if hasattr(self, "tab_search_frame") and self.tab_search_frame.winfo_ismapped():
-                self.tab_search_frame.pack_forget()
-            if hasattr(self, "tab_files_frame") and self.tab_files_frame.winfo_ismapped():
-                self.tab_files_frame.pack_forget()
-            if hasattr(self, "btn_dock_pin") and self.btn_dock_pin.winfo_exists():
-                self.btn_dock_pin.pack_forget()
-                self.btn_dock_pin.pack(side="left", padx=2, pady=2)
-                self.btn_dock_pin.configure(text="▶")
-            if hasattr(self, "_dock_pin_tooltip"):
-                self._dock_pin_tooltip.text = "Expand Left Panel"
-            self.h_paned.paneconfigure(self.left_frame, minsize=0)
-            self.h_paned.sash_place(0, 36, 0)
+            if hasattr(self, "var_show_left_panel"):
+                self.var_show_left_panel.set(False)
+            if hasattr(self, "btn_reopen_left") and self.btn_reopen_left.winfo_exists():
+                if not self._is_widget_packed(self.btn_reopen_left):
+                    if hasattr(self, "v_paned") and self.v_paned.winfo_exists() and self._is_widget_packed(self.v_paned):
+                        self.btn_reopen_left.pack(side="left", anchor="n", padx=(2, 2), pady=(6, 2), before=self.v_paned)
+                    else:
+                        self.btn_reopen_left.pack(side="left", anchor="n", padx=(2, 2), pady=(6, 2))
+
+    def _on_toggle_left_panel(self) -> None:
+        """Toggle Left Panel visibility from View > Show Left Panel menu checkbutton (U03)."""
+        show = bool(self.var_show_left_panel.get()) if hasattr(self, "var_show_left_panel") else True
+        self._set_left_panel_visible(show)
+
+    def _toggle_dock_collapse(self) -> None:
+        """Toggle left dock between hidden (0px forgotten from h_paned) and expanded (U03)."""
+        is_collapsed = bool(getattr(self, "_dock_collapsed", False))
+        self._set_left_panel_visible(is_collapsed)
 
     def _refresh_opened_files_list(self) -> None:
         """Re-render the list of cached opened files in the Opened Files dock tab."""
@@ -14417,9 +14603,12 @@ class MisoraApp(tk.Tk):
         self.btn_mtl_mode_all_script.pack(side="left", padx=(0, 4))
         create_tooltip(self.btn_mtl_mode_all_script, "All Script batch MTL (2-widget list + scratchpad)")
 
+        self.ico_refresh = self.get_icon("refresh", (14, 14))
         self.btn_mtl_refresh_all = ttk.Button(
             hdr,
-            text="↻ Refresh All",
+            text="Refresh All" if self.ico_refresh else "↻ Refresh All",
+            image=self.ico_refresh,
+            compound="left" if self.ico_refresh else "none",
             style="Pink.TButton",
             command=self._on_mtl_drawer_refresh_all,
         )
@@ -14451,44 +14640,7 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_mtl_source_preview.pack(fill="x", pady=(2, 0))
 
-        # Engine visibility toggles
-        eng_bar = self._tag_role(
-            tk.Frame(parent, bg=t["bg_panel"], bd=1, relief="solid", highlightbackground=t["border"], highlightthickness=1),
-            "panel_box",
-        )
-        eng_bar.pack(fill="x", padx=6, pady=(0, 4))
-        self._mtl_dialogue_eng_bar = eng_bar
-
-        self._tag_role(
-            tk.Label(eng_bar, text="Enabled Engines:", bg=t["bg_panel"], fg=t["fg_muted"], anchor="w"),
-            "label_muted",
-        ).pack(fill="x", padx=6, pady=(4, 2))
-
-        toggles_wrap = self._tag_role(tk.Frame(eng_bar, bg=t["bg_panel"]), "panel")
-        toggles_wrap.pack(fill="x", padx=4, pady=(0, 4))
-
-        self._mtl_drawer_engine_vars.clear()
-        for eng in self._MTL_DRAWER_ENGINE_ORDER:
-            enabled = bool(self._mtl_drawer_enabled_engines.get(eng, eng in ("XUAT Cache", "Google")))
-            self._mtl_drawer_enabled_engines[eng] = enabled
-            var = tk.BooleanVar(master=self, value=enabled)
-            self._mtl_drawer_engine_vars[eng] = var
-            cb = self._tag_role(
-                tk.Checkbutton(
-                    toggles_wrap,
-                    text=eng,
-                    variable=var,
-                    bg=t["bg_panel"],
-                    fg=best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff"),
-                    selectcolor=t["bg_dark"],
-                    activebackground=t["bg_panel"],
-                    command=lambda e=eng: self._on_mtl_drawer_engine_toggled(e),
-                ),
-                "check_panel",
-            )
-            cb.pack(side="left", padx=(0, 4))
-
-        # Scrollable vertical stack of enabled engine cards
+        # Scrollable vertical stack of enabled engine cards (engine toggles live in Translator > Enabled Engines)
         wrap = self._tag_role(tk.Frame(parent, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
         wrap.pack(fill="both", expand=True, padx=4, pady=(0, 6))
         self._mtl_dialogue_wrap = wrap
@@ -14555,7 +14707,9 @@ class MisoraApp(tk.Tk):
 
         self.btn_mtl_all_refresh_sel = ttk.Button(
             act_bar,
-            text="↻ Refresh Selected",
+            text="Refresh Selected" if getattr(self, "ico_refresh", None) else "↻ Refresh Selected",
+            image=getattr(self, "ico_refresh", None),
+            compound="left" if getattr(self, "ico_refresh", None) else "none",
             style="Small.TButton",
             command=self._on_mtl_all_script_refresh_selected,
         )
@@ -14564,7 +14718,7 @@ class MisoraApp(tk.Tk):
 
         self.btn_mtl_all_apply_sel = ttk.Button(
             act_bar,
-            text="→ Apply Selected",
+            text="← Apply Selected",
             style="TButton",
             command=self._on_mtl_all_script_apply_selected,
         )
@@ -14698,7 +14852,7 @@ class MisoraApp(tk.Tk):
                 self.btn_mtl_mode_all_script.configure(style="Pink.TButton")
             if hasattr(self, "btn_mtl_refresh_all") and self._is_widget_packed(self.btn_mtl_refresh_all):
                 self.btn_mtl_refresh_all.pack_forget()
-            for w_name in ("_mtl_dialogue_ctx_bar", "_mtl_dialogue_eng_bar", "_mtl_dialogue_wrap"):
+            for w_name in ("_mtl_dialogue_ctx_bar", "_mtl_dialogue_wrap"):
                 w = getattr(self, w_name, None)
                 if w is not None and w.winfo_exists() and self._is_widget_packed(w):
                     w.pack_forget()
@@ -14729,8 +14883,6 @@ class MisoraApp(tk.Tk):
             self.btn_mtl_refresh_all.pack(side="right")
         if hasattr(self, "_mtl_dialogue_ctx_bar") and not self._is_widget_packed(self._mtl_dialogue_ctx_bar):
             self._mtl_dialogue_ctx_bar.pack(fill="x", padx=6, pady=(0, 4))
-        if hasattr(self, "_mtl_dialogue_eng_bar") and not self._is_widget_packed(self._mtl_dialogue_eng_bar):
-            self._mtl_dialogue_eng_bar.pack(fill="x", padx=6, pady=(0, 4))
         if hasattr(self, "_mtl_dialogue_wrap") and not self._is_widget_packed(self._mtl_dialogue_wrap):
             self._mtl_dialogue_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 6))
         self._rebuild_mtl_drawer_cards()
@@ -14742,12 +14894,14 @@ class MisoraApp(tk.Tk):
         if engine_name in self._mtl_drawer_engine_vars:
             self._mtl_drawer_engine_vars[engine_name].set(bool(enabled))
         self._rebuild_mtl_drawer_cards()
+        self._save_user_prefs(silent=True)
 
     def _on_mtl_drawer_engine_toggled(self, engine_name: str) -> None:
         var = self._mtl_drawer_engine_vars.get(engine_name)
         if var is not None:
             self._mtl_drawer_enabled_engines[engine_name] = bool(var.get())
         self._rebuild_mtl_drawer_cards()
+        self._save_user_prefs(silent=True)
 
     def _rebuild_mtl_drawer_cards(self) -> None:
         """Rebuild vertical card stack strictly for currently enabled engines."""
@@ -14766,7 +14920,7 @@ class MisoraApp(tk.Tk):
             self._tag_role(
                 tk.Label(
                     body,
-                    text="No engines enabled. Enable an engine above to translate.",
+                    text="No engines enabled. Enable engines in Translator > Enabled Engines.",
                     bg=t["bg_panel"],
                     fg=t["fg_muted"],
                     wraplength=260,
@@ -14806,7 +14960,7 @@ class MisoraApp(tk.Tk):
 
             btn_apply = ttk.Button(
                 card_hdr,
-                text="→",
+                text="←",
                 style="Pink.TButton",
                 width=3,
                 command=lambda e=eng: self._on_mtl_drawer_apply_engine(e),
@@ -14814,9 +14968,12 @@ class MisoraApp(tk.Tk):
             btn_apply.pack(side="right", padx=(2, 0))
             create_tooltip(btn_apply, f"Apply {eng} translation to active box (preserves whitespace)")
 
+            ico_ref = getattr(self, "ico_refresh", None)
             btn_refresh = ttk.Button(
                 card_hdr,
                 text="↻",
+                image=ico_ref,
+                compound="none" if ico_ref else "left",
                 style="Small.TButton",
                 width=3,
                 command=lambda e=eng: self._on_mtl_drawer_refresh_engine(e),

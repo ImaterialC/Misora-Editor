@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 
+### S04 (v1.4.4) — Ribbon & Header Layout (`U09`–`U14`, `U22`, `4.2`), Left Drawer True 0px Minimize (`U03`, `4.4`), Search Double-Click (`U-1`), MTL Controls (`U-2`, `U-6`), & Checkbox Clarity (`U21`)
+- **3-Row Header & Ribbon Restructuring (`misora.py`, `U09`–`U14`, `U22`, `4.2`):**
+  - **Row 1 (`gd_header`):** Relocated `btn_lock_box` immediately before `lbl_gd_title` (`"Dialogue"`) with flat borderless styling (`bd=0`, `relief="flat"`, `highlightthickness=0`) and contrast-safe foreground across locked/unlocked states; moved `view_group` (`Select Box`, `All Script`, `Preview`) onto Row 1 left of `btn_translate` and `btn_ai_prompt`; converted `btn_translate` and `btn_ai_prompt` to compact icon-only buttons (`compound="none"` with accessible fallback text & `Ctrl+T` / `Ctrl+Shift+T` tooltips); tightened `Nav.TButton` padding for compact `Prev` / `Next` buttons.
+  - **Row 2 (`speaker_view_row`):** Moved `actions_bar` (Edit Group) onto Row 2 right-aligned, containing Text Actions `|` Box Actions `|` `btn_player` `|` `btn_ribbon_undo` and `btn_ribbon_redo` at the **far right**.
+  - **Row 3 (`ribbon_actions_row`):** Contains `ribbon_frame` (NGUI formatting buttons only); changed `show_ngui_ribbon` default to `False` (unmapping both `ribbon_frame` and `ribbon_actions_row` when hidden while preserving `View > Toggle NGUI Ribbon` and config persistence).
+- **Left Drawer True `0 px` Minimize & Lifecycle Safety (`misora.py`, `U03`, `4.4`):**
+  - Replaced the 36px pin-strip collapse with `_set_left_panel_visible()` using `h_paned.forget(self.left_frame)` (true `0 px` collapse without destroying child widgets) + `btn_dock_pin` (`◀`, `'Hide Left Panel'`) + discoverable `btn_reopen_left` (`▶`, `'Show Left Panel'`) docked at `right_frame` left edge + `View > Show Left Panel` (`var_show_left_panel`).
+  - Added `winfo_exists()` guards on drawer toggles and confirmed zero `_update_views()`, `_render_continuous_view()`, or `_update_raw_view()` rebuilds during Left/Right drawer visibility toggles.
+- **Search Results Double-Click (`misora.py`, `U-1`):**
+  - Bound `<Double-Button-1>` on `btn_tab_search` to `on_show_find()`, opening the Find bar while preserving active `scope_var`.
+- **MTL Drawer Controls Cleanup (`misora.py`, `assets/icons/refresh.png`, `U-2`, `U-6`):**
+  - Initialized `_mtl_drawer_engine_vars` in `__init__` before `_build_menu()`, removed `_mtl_dialogue_eng_bar` from inside the MTL drawer, and added `Translator > Enabled Engines` cascade submenu (`translator_menu`, `mtl_engines_menu`) with config persistence on toggle.
+  - Created 32x32 RGBA `assets/icons/refresh.png` and attached via `get_icon("refresh", (14, 14))` to `btn_mtl_refresh_all`, `btn_mtl_all_refresh_sel`, and per-card `btn_refresh` (preserving `↻` fallback); flipped MTL Apply arrows from `→` to `←` (`btn_apply`, `btn_mtl_all_apply_sel`).
+- **Checkbox & Radio Button Visual Clarity (`misora.py`, `U21`):**
+  - Added `_ensure_wcag_fg()` and `_wcag_muted_fg()` helpers; configured `clam` `indicatorbackground`, `indicatorforeground`, `upperbordercolor`, `lowerbordercolor`, `indicatorsize`, `focuscolor`, and `foreground` across `normal`/`active`/`focus`/`disabled`/`selected`/`!selected` states for `TCheckbutton`, `Panel.TCheckbutton`, `Accent.TCheckbutton`, `TRadiobutton`, and `Panel.TRadiobutton`, plus `tk.Checkbutton` roles (`check_panel`, `check_accent`, `check_ribbon`) with WCAG >= 4.5 contrast across Light & Dark themes.
+- **Tests & Versioning (`__init__.py`, `tests/`):**
+  - Bumped `__version__` to `"1.4.4"`. Verified `tests/test_v15_s04_layout_drawer_controls.py` (6 failing-first probes + 2 guards: 8/8 pass post-patch) and aligned `tests/test_p3_s14_toolbar_search_ui.py`, `tests/test_p3_s15_selection_drawer_open.py`, and `tests/test_s8b4_ui_polishing.py` (`31/31` pass).
+
 ### S03 (v1.4.3) — All Script Technique A Overhaul (`U08`, `U-7`), Leaked 3rd Window Fix, Precision Priconne Preview (`U-5`), & Lossless `BoxSnapshot` Paste Insert/Replace (`4.1`)
 - **Leaked 3rd Window & Redundant Rebuild Fixes (`misora.py`, `U08`):**
   - Updated `_update_empty_state_visibility()` to inspect `var_continuous_view` before packing `gd_scroll_wrap` or `continuous_wrap`, preventing Dialogue View from leaking below All Script above Raw Commands.

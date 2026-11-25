@@ -3,8 +3,8 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.3 — S03)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.3"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Target release: v1.5.0 (Current session build: v1.4.4 — S04)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.4"`; unified across UI, splash, MTL engine, and tests (`U00`).
 Starting baseline pinned at commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` (+ pre-existing local S24 working-tree state).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
@@ -41,12 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S03 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s03_all_script_preview_paste -v
-Result: Ran 10 tests (10 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S04 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s04_layout_drawer_controls -v
+Result: Ran 8 tests (8 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 373 tests across 48 modules (330 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.3 bump; 0 S03 regressions)
+Result: Ran 381 tests across 49 modules (338 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.4 bump; 0 S04 regressions)
 
 Test suites included in the 344 tests (exact disk discovery):
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -112,6 +112,23 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S04 (`v1.4.4`) — Ribbon & Header Layout (`U09`–`U14`, `U22`, `4.2`), Left Drawer True 0px Minimize (`U03`, `4.4`), Search Double-Click (`U-1`), MTL Controls (`U-2`, `U-6`), & Checkbox Clarity (`U21`) (2026-11-26)
+- **3-Row Header & Ribbon Restructuring (`misora.py`):**
+  - Row 1 (`gd_header`): Flat borderless `btn_lock_box` (`bd=0, relief="flat", highlightthickness=0`) placed before `lbl_gd_title` (`"Dialogue"`), `view_group` (`Select Box | All Script | Preview`) moved onto Row 1 left of compact icon-only `btn_translate` (MTL) and `btn_ai_prompt` (AI Prompt) with `Nav.TButton` compact `Prev`/`Next`.
+  - Row 2 (`speaker_view_row`): `actions_bar` moved to Row 2 right side with `btn_player` + `btn_ribbon_undo` + `btn_ribbon_redo` at the far right (`U09`, `U10`, `U12`, `4.2`).
+  - Row 3 (`ribbon_actions_row`): NGUI formatting buttons only; `show_ngui_ribbon` defaults to `False` (`View > Toggle NGUI Ribbon` toggles cleanly).
+- **Left Drawer True `0 px` Minimize & Lifecycle (`misora.py`, `U03`, `4.4`):**
+  - `_set_left_panel_visible()` uses `h_paned.forget(self.left_frame)` (preserving child widgets) + `btn_reopen_left` (`▶`) docked in `right_frame` + `View > Show Left Panel` (`var_show_left_panel`), with zero `_update_views()`, `_render_continuous_view()`, or `_update_raw_view()` rebuilds on Left/Right drawer toggles.
+- **Search Tab Double-Click & MTL Drawer Cleanup (`misora.py`, `assets/icons/refresh.png`, `U-1`, `U-2`, `U-6`):**
+  - Bound `<Double-Button-1>` on `btn_tab_search` to `on_show_find()` preserving active scope.
+  - Moved `Enabled Engines` from `_mtl_dialogue_eng_bar` into `Translator > Enabled Engines` (`translator_menu`, `mtl_engines_menu`) with config persistence; generated 32x32 RGBA `assets/icons/refresh.png` and attached to MTL refresh buttons; flipped MTL Apply arrows to `←`.
+- **Checkbox & Radio Clarity (`misora.py`, `U21`):**
+  - Configured `clam` `indicatorbackground`/`indicatorforeground`/`upperbordercolor`/`lowerbordercolor`/`foreground` across `normal`/`active`/`focus`/`disabled`/`selected`/`!selected` states + `tk.Checkbutton` roles (`check_panel`, `check_accent`, `check_ribbon`) with WCAG >= 4.5 contrast across Light & Dark themes.
+- **Manual Windows QA Pending (Project Lead):**
+  - Verify layout at 1280x720, 1400x900, and 125%/150% Windows DPI with both Left Drawer and Right MTL Drawer open (zero clipped buttons).
+  - Minimize/reopen Left Drawer and Right Drawer repeatedly, resize & minimize/restore window, and confirm zero flicker or lost edits.
+  - Visually check checkboxes & radio buttons in both Light and Dark themes (checked, unchecked, hover, disabled).
 
 ### v1.5 S03 (`v1.4.3`) — All Script Technique A Overhaul (`U08`, `U-7`), Leaked 3rd Window Fix, Precision Priconne Preview (`U-5`), & Lossless `BoxSnapshot` Paste Insert/Replace (`4.1`) (2026-11-26)
 - **Leaked 3rd Window & Redundant Rebuild Fixes (`misora.py`, `U08`):**
