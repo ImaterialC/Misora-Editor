@@ -38,10 +38,23 @@ def _get_app_version() -> str:
                         return parts[1].strip().strip('"\'')
     except Exception:
         pass
-    return "1.4.0"
+    return "0.0.0-unknown"
 
 
 APP_VERSION = _get_app_version()
+
+_shared_ssl_ctx: Optional[ssl.SSLContext] = None
+_shared_ssl_lock = threading.Lock()
+
+
+def _get_shared_ssl_context() -> ssl.SSLContext:
+    """Return a shared module-level SSLContext (avoids per-instance Windows cert store reloads)."""
+    global _shared_ssl_ctx
+    if _shared_ssl_ctx is None:
+        with _shared_ssl_lock:
+            if _shared_ssl_ctx is None:
+                _shared_ssl_ctx = ssl.create_default_context()
+    return _shared_ssl_ctx
 
 # Default system prompt for LLM translation
 DEFAULT_LLM_PROMPT = (
@@ -127,7 +140,7 @@ class MTLEngine:
     def __init__(self, config: Optional[MTLConfig] = None):
         self.config: MTLConfig = config or MTLConfig()
         # Enforce valid TLS certificate and hostname verification on all outbound requests (Rule 18)
-        self._ssl_ctx = ssl.create_default_context()
+        self._ssl_ctx = _get_shared_ssl_context()
 
     def translate(self, text: str, config: Optional[MTLConfig] = None, xuat_cache: Optional[Any] = None) -> str:
         """Translate a single text string using the configured active engine."""
@@ -370,17 +383,24 @@ def translate_async(
     *,
     out_queue: Optional[queue.Queue] = None,
     metadata: Optional[Any] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> threading.Thread:
     """Run translation in a background worker thread (Rule 15 Tk-free contract)."""
     def worker():
+        if cancel_event is not None and cancel_event.is_set():
+            return
         try:
             engine = MTLEngine(config)
             result = engine.translate(text, config=config, xuat_cache=xuat_cache)
+            if cancel_event is not None and cancel_event.is_set():
+                return
             if out_queue is not None:
                 out_queue.put(("success", metadata, result))
             if on_success is not None:
                 on_success(result)
         except Exception as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             if out_queue is not None:
                 out_queue.put(("error", metadata, str(exc)))
             if on_error is not None:

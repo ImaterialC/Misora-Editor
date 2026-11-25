@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] (Target: v1.4.1)
+## [Unreleased] (Target: v1.5.0)
+
+> **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
+
+### S01 (v1.4.1) — Baseline Reconciliation, Stability & Memory Remediation (`BUG-01..06`, `BONUS-01..03`), Version Policy (`U00`) & Product Rebrand (`U04`)
+- **Baseline & Session-State Reconciliation:**
+  - Pinned starting snapshot at `main` / `origin/main` commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` plus pre-existing local S24 working-tree state (`CHANGELOG.md`, `PROJECT_STATE.md`, `tests/test_phase4_import_export_preview.py`, `D misora_config.default.json`, and existing untracked files preserved intact).
+- **Stability & Memory Remediation (`core/bundle_io.py`, `core/logger.py`, `core/mtl_engine.py`, `core/search_engine.py`, `core/xunity_sync.py`, `misora.py`):**
+  - **`BUG-01`:** Replaced shared mutable `search_cancel_flag` race with per-job `threading.Event` (`_search_cancel_event`) captured per search closure; bounded `search_queue(maxsize=2048)` with cancellation-aware `_put_queue_cancellable()`; enforced 5-stage cancellation across `os.walk()`, directory/file loops, `search_file()`, queue submission, and app shutdown (`_on_root_destroy()`, `destroy()`).
+  - **`BUG-02` & `BONUS-02`:** Cached one thread-safe module-level SSL context (`_get_shared_ssl_context()`) in `core/mtl_engine.py`; replaced unbounded per-box thread spawning in `All Script` `Translate All` with a background dispatcher feeding a bounded `ThreadPoolExecutor(max_workers=3)` gated by `threading.Semaphore(8)` pending backpressure, per-batch `threading.Event` cancellation, automatic cancellation on document close/reload/engine switch/shutdown, interruptible `rate_limit_delay`, stale `batch_gen` rejection, and clean `executor.shutdown(wait=False, cancel_futures=True)` teardown. Documented cooperative cancellation guarantee for blocking `urllib` socket reads.
+  - **`BUG-03` & `BONUS-01`:** Added `_prune_document_caches()` and `XUnitySyncManager.unregister_jp_keys()` invoked on `close_file()`, `_close_all_documents_without_prompt()`, and `open_file(..., reload_from_disk=True)` to prune document-scoped `_mtl_all_*`, `_latest_applied_mtl_seq`, and `jp_source_cache` entries without affecting other open documents, and guarded `_poll_mtl_drawer_queue()` against late repopulation.
+  - **`BUG-04`:** Wrapped post-load TextAsset discovery, extraction, and `StoryDocument.from_binary()` in `load_bundle_story()` with `try ... except Exception: dispose_unity_env(env); raise` while keeping live `env` intact on success.
+  - **`BUG-05`:** Added `_stop_event` and `_closed` to `MisoraLogger` so post-close `log()` neither enqueues nor restarts `_writer_thread`; updated `_file_writer_loop()` to exit cleanly on `_stop_event` even when `_file_queue` is full; made `close()` idempotent and cleared `_writer_thread` only after confirming the thread is no longer alive.
+  - **`BUG-06`:** Moved `out_path.parent.mkdir()` and `tmp_path` initialization inside `try:` in `save_bundle_story()` so `_is_saving` is always reset to `False` in `finally:`.
+  - **`BONUS-03`:** Switched `_search_poll_job` and `_mtl_poll_job` to on-demand polling while work is active/queued, and eliminated the redundant second `load_bundle_story()` call in `_apply_delta(BulkFileDelta)` by completing in-loop cache/checkpoint/JP-key/UI synchronization.
+- **Version Policy (`U00`) & Product Rebrand (`U04`):**
+  - Bumped root `__init__.py` `__version__` to `"1.4.1"` (sole version source of truth; removed `"1.4.0"` fallback literals in `misora.py`, `core/mtl_engine.py`, `assets/splash.py`; updated `tests/test_p3_s02_hygiene.py::test_guard_1_root_version_untouched` to dynamic parity).
+  - Rebranded user-visible titles, `assets/splash.py`, `on_about()`, `README.md`, `AGENTS.md`, `PROJECT_STATE.md`, and `CHANGELOG.md` to **`Misora: Story Editor`** while preserving internal namespaces (`misora`, `MisoraApp`), `.misora`, `misora_config.json`, `misora.bat`, and ProgID `Misora.Unity3dBundle`.
+- **Tests:** Added `tests/test_v15_s01_stability_remediation.py` (8 failing-first Defect Probes + 3 Regression Guards; 11/11 pass post-patch). Full suite: `Ran 355 tests` (`313 pass`, `35 skipped` missing fixture, `5 failures`, `2 errors` — 0 S01 regressions).
+
+### S24 — Final Acceptance Audit & Release Gate (Hold at v1.4.0)
+- **Session Scope:** Final Acceptance Audit (All 63 Active IDs + `DEF-01..10` + `NO-01..12`) & Release Gate (`MF-S24`, `GPT-1`, `GPT-2`).
+- **Single-Source Version Test (`MF-S24`):**
+  - Updated `tests/test_phase4_import_export_preview.py::test_01_version_unification` to derive `expected_version` dynamically from root `__init__.__version__` while preserving all cross-module consistency assertions (`root == misora.__version__ == _get_app_version() == splash._load_app_version() == splash._VERSION == About "Version X"`).
+- **85-ID Acceptance Audit Summary (`PROJECT_STATE.md`):**
+  - **63 Active IDs (`BUG-01..41`, `FEAT-01..14`, `HYG-01..08`):** `62 PASS` (all automated probes/guards green at `1.4.0`); `BUG-09` synthetic non-target verification `PASS`, real production `.unity3d` bundle check **`BLOCKED`** (missing `storydata_1001005.unity3d`).
+  - **`DEF-01..10` (Deferred/Untouched):** `5 DEFERRED` (`DEF-01`, `DEF-03`, `DEF-04`, `DEF-06`, `DEF-10` verified preserved/untouched); `5 BLOCKED` (`DEF-02` real production `.unity3d` check missing fixture; `DEF-05`, `DEF-07..09` missing `Phase_2.5_Canonical_Ledger_LOCKED.md` on disk/git).
+  - **`NO-01..12` (Non-Goals):** `6 PASS` (0 violations across `NO-01`, `NO-02`, `NO-03`, `NO-07`, `NO-09`, `NO-12`); `6 BLOCKED` (`NO-04..06`, `NO-08`, `NO-10..11` missing `Phase_2.5_Canonical_Ledger_LOCKED.md` on disk/git).
+- **Release Gate Hold Decision (`__version__` remains `"1.4.0"`):**
+  - Per Part 2B Release Gate, `## [Unreleased] (Target: v1.4.1)` is **NOT** promoted to `## [1.4.1]` and `__init__.__version__` remains `"1.4.0"` because: (1) `BUG-09` real `.unity3d` bundle verification (`test_s8b2_memory_guards` 3 failures/2 errors + 35 fixture skips) remains `BLOCKED` without fixture or Project Lead risk waiver; (2) mandatory manual Windows QA (`AGENTS.md` §29 Ribbon Cut, Paste Box in both Dialogue & All Script views, DPI/snapped layout, `Import from XUAT`) is not yet confirmed; (3) `tests/test_p3_s02_hygiene.py::test_guard_1_root_version_untouched` hardcodes `"1.4.0"` outside S24 Allowed Files; and (4) `Phase_2.5_Canonical_Ledger_LOCKED.md` is absent on disk for `DEF-05,07..09` and `NO-04..06,08,10..11`.
+- **Tests:** `tests/test_phase4_import_export_preview.py` (5/5 pass). Zero edits to `core/*.py`, `misora.py`, `assets/splash.py`, `__init__.py`, or `README.md`.
 
 ### S23 — Final Grep-Proven Dead Code & Misleading Label Cleanup (`HYG-08`)
 - **Session Scope:** `HYG-08` (Track 2 · Final Hygiene — standalone per Grok R1/R2; `RF-5`).

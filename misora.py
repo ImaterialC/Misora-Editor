@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Misora: Unity3D Revision Tool & Story Editor
-=============================================
+Misora: Story Editor
+====================
 A specialized GUI text editor for inspecting, searching, and in-place patching
 of Princess Connect! Re:Dive Unity3D story bundles (.unity3d) and XUAT translation files.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import collections
 import colorsys
+import concurrent.futures
 import copy
 import ctypes
 import hashlib
@@ -26,7 +27,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import colorchooser, filedialog, font as tkfont, messagebox, ttk
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 try:
     from PIL import Image, ImageGrab, ImageTk
@@ -100,9 +101,34 @@ try:
 except ImportError:
     from core.security import DPAPISecurityError
 
+_ORIG_TRANSLATE_ASYNC = translate_async
+
 CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
 DEBUG_LOG_PATH = SCRIPT_DIR / "misora_debug.log"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _put_queue_cancellable(
+    q: queue.Queue,
+    item: Any,
+    cancel_event: Optional[threading.Event] = None,
+    legacy_flag_getter: Optional[Callable[[], bool]] = None,
+) -> bool:
+    """Put item into a bounded queue with cooperative cancellation on queue.Full (BUG-01)."""
+    while True:
+        cancelled = (cancel_event is not None and cancel_event.is_set()) or (
+            legacy_flag_getter is not None and legacy_flag_getter()
+        )
+        try:
+            q.put(item, timeout=0.05)
+            return True
+        except queue.Full:
+            cancelled = (cancel_event is not None and cancel_event.is_set()) or (
+                legacy_flag_getter is not None and legacy_flag_getter()
+            )
+            if cancelled:
+                return False
+
 
 def _get_app_version() -> str:
     """Retrieve application version string from root __init__.py as single source of truth (Rule 21)."""
@@ -122,7 +148,7 @@ def _get_app_version() -> str:
                         return parts[1].strip().strip('"\'')
     except Exception:
         pass
-    return "1.4.0"
+    return "0.0.0-unknown"
 
 __version__ = _get_app_version()
 
@@ -1419,11 +1445,11 @@ class _ReplaceRowProxy:
 
 
 class MisoraApp(tk.Tk):
-    """Main Application Window for Misora: Unity3D Revision Tool."""
+    """Main Application Window for Misora: Story Editor."""
 
     def __init__(self, initial_path: Optional[str] = None, show_splash: bool = True, _progress_callback=None, restore_session: bool = True):
         super().__init__()
-        self.title("Misora Editor: Unity3D Revision Tool & Story Editor")
+        self.title("Misora: Story Editor")
         self.geometry("1280x820")
         self.minsize(980, 620)
         self.withdraw()   # stay hidden until splash closes or ready
@@ -1576,6 +1602,9 @@ class MisoraApp(tk.Tk):
         self._mtl_all_selected_uid: Any = None
         self._mtl_all_block_ranges: List[Tuple[int, int, Any]] = []
         self._mtl_all_last_ctx: Optional[Tuple[str, int, Any, str]] = None
+        self._mtl_all_batch_cancel: Optional[threading.Event] = None
+        self._mtl_all_batch_gen: int = 0
+        self._mtl_all_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         if not hasattr(self, "_mtl_drawer_enabled_engines") or not isinstance(self._mtl_drawer_enabled_engines, dict):
             self._mtl_drawer_enabled_engines: Dict[str, bool] = {
                 "XUAT Cache": True,
@@ -1605,8 +1634,11 @@ class MisoraApp(tk.Tk):
         # Background search worker & highlighting state
         self.search_engine = ProjectSearchEngine()
         self.sync_manager = XUnitySyncManager()
-        self.search_queue: queue.Queue = queue.Queue()
+        self.search_queue: queue.Queue = queue.Queue(maxsize=2048)
+        self._search_cancel_event: threading.Event = threading.Event()
         self.search_cancel_flag: bool = False
+        self._is_searching: bool = False
+        self._search_poll_job: Optional[str] = None
         self.active_search_results: List[SearchResult] = []
         self.active_search_options: Optional[SearchOptions] = None
         self.search_file_groups: List[Dict[str, Any]] = []
@@ -1618,6 +1650,7 @@ class MisoraApp(tk.Tk):
         # Background MTL worker queue and request sequencing (Rule 15 / BUG-27)
         self._mtl_queue: queue.Queue = queue.Queue()
         self._mtl_request_seq: int = 0
+        self._mtl_pending: int = 0
         self._latest_applied_mtl_seq: Dict[Any, int] = {}
         self._mtl_poll_job: Optional[str] = None
         self._hash_mtl_source = _hash_mtl_source
@@ -1651,9 +1684,9 @@ class MisoraApp(tk.Tk):
         # Enable native OS Drag & Drop safely on the outer frame HWND
         self._init_drag_and_drop()
 
-        # Start periodic poll for background tasks
-        self._search_poll_job = self.after(100, self._process_search_queue)
-        self._mtl_poll_job = self.after(50, self._poll_mtl_queue)
+        # Background polling starts on-demand when work is dispatched (BONUS-03)
+        self._search_poll_job = None
+        self._mtl_poll_job = None
 
         # Restore saved window geometry and view toggles (Bug #2 / S9c)
         if hasattr(self, "_saved_geometry") and self._saved_geometry:
@@ -1818,6 +1851,17 @@ class MisoraApp(tk.Tk):
     def _on_root_destroy(self, event: tk.Event) -> None:
         if event.widget is self:
             self._destroyed = True
+            self.search_cancel_flag = True
+            if hasattr(self, "_search_cancel_event") and self._search_cancel_event is not None:
+                try:
+                    self._search_cancel_event.set()
+                except Exception:
+                    pass
+            if hasattr(self, "_cancel_mtl_all_batch"):
+                try:
+                    self._cancel_mtl_all_batch()
+                except Exception:
+                    pass
             try:
                 for job_id in self.tk.call("after", "info"):
                     try:
@@ -1872,6 +1916,17 @@ class MisoraApp(tk.Tk):
 
     def destroy(self) -> None:
         self._destroyed = True
+        self.search_cancel_flag = True
+        if hasattr(self, "_search_cancel_event") and self._search_cancel_event is not None:
+            try:
+                self._search_cancel_event.set()
+            except Exception:
+                pass
+        if hasattr(self, "_cancel_mtl_all_batch"):
+            try:
+                self._cancel_mtl_all_batch()
+            except Exception:
+                pass
         # Sweep all pending Tk after jobs first (BUG-32)
         try:
             for job_id in self.tk.call("after", "info"):
@@ -3976,7 +4031,7 @@ class MisoraApp(tk.Tk):
         help_menu = tk.Menu(menubar, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
         help_menu.add_command(label="NGUI & Ruby Glossary", command=lambda: self._open_side_drawer("glossary"), accelerator="F1")
         help_menu.add_separator()
-        help_menu.add_command(label="About Misora", command=self.on_about)
+        help_menu.add_command(label="About Misora: Story Editor", command=self.on_about)
         menubar.add_cascade(label="Help", menu=help_menu)
         self._all_menus.append(help_menu)
 
@@ -7720,6 +7775,8 @@ class MisoraApp(tk.Tk):
 
         self._save_active_document_state()
         self._exit_raw_edit_mode(refresh=False)
+        if hasattr(self, "_cancel_mtl_all_batch"):
+            self._cancel_mtl_all_batch()
 
         doc = staged["doc"]
         is_bundle = staged["is_bundle"]
@@ -7787,16 +7844,24 @@ class MisoraApp(tk.Tk):
         self.recent_files.insert(0, file_path)
         self.recent_files = self.recent_files[:15]
         self.last_opened_dir = file_path.parent
-        self.title(f"Misora Editor - {file_path.name}")
+        self.title(f"Misora: Story Editor - {file_path.name}")
 
         if staged["kind"] == "cache":
             entry = staged["entry"]
             self.is_dirty = bool(entry.get("dirty", False))
         else:
-            # Dispose prior UnityPy environment and clear prior entry on reload (BUG-34)
+            # Dispose prior UnityPy environment and clear prior entry on reload (BUG-34 / BUG-03)
             if reload_from_disk and file_path in self.open_documents:
                 prior_entry = self.open_documents.get(file_path)
                 if isinstance(prior_entry, dict):
+                    prior_doc = prior_entry.get("doc")
+                    prior_jp_uids = (
+                        prior_entry.get("original_jp_by_uid", {}).keys()
+                        if isinstance(prior_entry.get("original_jp_by_uid"), dict)
+                        else ()
+                    )
+                    if hasattr(self, "_prune_document_caches"):
+                        self._prune_document_caches(file_path, prior_doc, extra_uids=prior_jp_uids)
                     if prior_entry.get("env"):
                         dispose_unity_env(prior_entry["env"])
                     prior_entry.clear()
@@ -8742,7 +8807,7 @@ class MisoraApp(tk.Tk):
         dirty_marker = "*" if self.is_dirty else ""
         file_name = self.current_file_path.name if self.current_file_path else "Untitled"
         try:
-            self.title(f"Misora Editor - {file_name}{dirty_marker}")
+            self.title(f"Misora: Story Editor - {file_name}{dirty_marker}")
         except Exception:
             pass
 
@@ -10807,6 +10872,8 @@ class MisoraApp(tk.Tk):
         self.btn_cancel.config(state="normal")
         self.progress_bar.pack(fill="x", padx=8, pady=(0, 2))
         self.progress_bar["value"] = 0
+        cancel_event = threading.Event()
+        self._search_cancel_event = cancel_event
         self.search_cancel_flag = False
         self._search_seq = getattr(self, "_search_seq", 0) + 1
         current_seq = self._search_seq
@@ -10850,18 +10917,26 @@ class MisoraApp(tk.Tk):
             has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
             has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
 
-            if has_varargs or len(params) >= 6:
-                t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped)
+            if has_varargs or len(params) >= 7:
+                t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped, cancel_event)
                 t_kwargs = {}
+            elif len(params) == 6:
+                t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped)
+                t_kwargs = {"cancel_event": cancel_event} if has_varkw else {}
             elif has_varkw:
                 t_args = (target_paths, opts, mem_docs)
-                t_kwargs = {"search_seq": current_seq, "skip_paths": skip_paths, "initial_skipped": initial_skipped}
+                t_kwargs = {
+                    "search_seq": current_seq,
+                    "skip_paths": skip_paths,
+                    "initial_skipped": initial_skipped,
+                    "cancel_event": cancel_event,
+                }
             else:
-                avail_args = [target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped]
+                avail_args = [target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped, cancel_event]
                 t_args = tuple(avail_args[:len(params)])
                 t_kwargs = {}
         except Exception:
-            t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped)
+            t_args = (target_paths, opts, mem_docs, current_seq, skip_paths, initial_skipped, cancel_event)
             t_kwargs = {}
 
         t = threading.Thread(
@@ -10872,6 +10947,8 @@ class MisoraApp(tk.Tk):
         )
         self._search_thread = t
         t.start()
+        if getattr(self, "_search_poll_job", None) is None and self.winfo_exists():
+            self._search_poll_job = self.after(100, self._process_search_queue)
 
     def _reset_search_results_state(self) -> None:
         self.active_search_results.clear()
@@ -10887,6 +10964,8 @@ class MisoraApp(tk.Tk):
 
     def on_cancel_search(self) -> None:
         self.search_cancel_flag = True
+        if hasattr(self, "_search_cancel_event") and self._search_cancel_event is not None:
+            self._search_cancel_event.set()
         self._is_searching = False
         self.btn_cancel.config(state="disabled")
         self.lbl_status.config(text="Cancelling search...")
@@ -10900,20 +10979,40 @@ class MisoraApp(tk.Tk):
         search_seq: int = 1,
         skip_paths: Optional[set] = None,
         initial_skipped: Optional[List[Tuple[Path, str]]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> None:
-        """Executed inside a background daemon thread (Rule 15, Part B.8)."""
+        """Executed inside a background daemon thread (Rule 15, Part B.8, BUG-01)."""
         total_found = 0
         skipped_entries: List[Tuple[Path, str]] = list(initial_skipped or [])
 
+        if cancel_event is not None:
+            def _is_cancelled() -> bool:
+                return cancel_event.is_set() or bool(getattr(self, "_destroyed", False))
+        else:
+            def _is_cancelled() -> bool:
+                ev = getattr(self, "_search_cancel_event", None)
+                return (
+                    (ev is not None and ev.is_set())
+                    or bool(getattr(self, "search_cancel_flag", False))
+                    or bool(getattr(self, "_destroyed", False))
+                )
+
         def on_prog(cur, tot, filename):
-            self.search_queue.put(("progress", cur, tot, filename, search_seq))
+            if _is_cancelled():
+                return
+            _put_queue_cancellable(
+                self.search_queue,
+                ("progress", cur, tot, filename, search_seq),
+                cancel_event=cancel_event,
+                legacy_flag_getter=_is_cancelled if cancel_event is None else None,
+            )
 
         def on_err(fp, reason):
             skipped_entries.append((Path(fp), str(reason)))
 
         try:
             for target in paths:
-                if self.search_cancel_flag:
+                if _is_cancelled():
                     break
                 try:
                     if not target.exists():
@@ -10926,22 +11025,39 @@ class MisoraApp(tk.Tk):
                         mem_doc = None
                         if mem_docs:
                             mem_doc = mem_docs.get(target) or mem_docs.get(resolved_target)
-                        results = self.search_engine.search_file(target, options, doc=mem_doc, on_error=on_err)
+                        results = self.search_engine.search_file(
+                            target,
+                            options,
+                            doc=mem_doc,
+                            on_error=on_err,
+                            should_cancel=_is_cancelled,
+                        )
                     else:
                         results = self.search_engine.search_directory(
                             target, options, recursive=True,
                             on_progress=on_prog,
-                            should_cancel=lambda: self.search_cancel_flag,
+                            should_cancel=_is_cancelled,
                             in_memory_docs=mem_docs,
                             on_error=on_err,
                             skip_paths=skip_paths,
                         )
                     total_found += len(results)
-                    self.search_queue.put(("batch", results, search_seq))
+                    if not _put_queue_cancellable(
+                        self.search_queue,
+                        ("batch", results, search_seq),
+                        cancel_event=cancel_event,
+                        legacy_flag_getter=_is_cancelled if cancel_event is None else None,
+                    ):
+                        break
                 except Exception as ex:
                     skipped_entries.append((Path(target), str(ex)))
         finally:
-            self.search_queue.put(("finished", total_found, skipped_entries, search_seq))
+            _put_queue_cancellable(
+                self.search_queue,
+                ("finished", total_found, skipped_entries, search_seq),
+                cancel_event=cancel_event,
+                legacy_flag_getter=_is_cancelled if cancel_event is None else None,
+            )
 
     def _process_search_queue(self) -> None:
         """Polls results from background worker thread and renders highlighted hits."""
@@ -10994,7 +11110,8 @@ class MisoraApp(tk.Tk):
                     total = len(self.active_search_results)
                     skipped = msg[2] if len(msg) > 2 else []
                     skip_count = len(skipped)
-                    is_cancelled = getattr(self, "search_cancel_flag", False)
+                    cancel_ev = getattr(self, "_search_cancel_event", None)
+                    is_cancelled = (cancel_ev is not None and cancel_ev.is_set()) or bool(getattr(self, "search_cancel_flag", False))
 
                     if is_cancelled:
                         skip_info = f" ({skip_count} skipped)" if skip_count else ""
@@ -11033,10 +11150,18 @@ class MisoraApp(tk.Tk):
         except queue.Empty:
             pass
 
+        self._search_poll_job = None
         try:
             if getattr(self, "_destroyed", False) or not self.winfo_exists():
                 return
-            self._search_poll_job = self.after(100, self._process_search_queue)
+            search_th = getattr(self, "_search_thread", None)
+            keep_polling = (
+                bool(getattr(self, "_is_searching", False))
+                or (search_th is not None and search_th.is_alive())
+                or (not self.search_queue.empty())
+            )
+            if keep_polling:
+                self._search_poll_job = self.after(100, self._process_search_queue)
         except Exception:
             pass
 
@@ -12196,6 +12321,8 @@ class MisoraApp(tk.Tk):
                 self._update_views()
         elif isinstance(delta, BulkFileDelta):
             applied_files: List[Tuple[Path, bool, Any, Optional[str], bool, Optional[str]]] = []
+            active_k = self._find_open_doc_key(self.current_file_path) if self.current_file_path else None
+            active_updated = False
             try:
                 for item in delta.per_file:
                     is_bundle = len(item) >= 4 and bool(item[3])
@@ -12209,24 +12336,59 @@ class MisoraApp(tk.Tk):
                         self._restore_bundle_atomic(src_bak, fp)
                         applied_files.append((fp, True, prev_bak, None, False, None))
 
-                        # S9b & S09: Synchronize in-memory cache using canonical keys 'env' and 'obj'
+                        # S9b & S09 & S01 BONUS-03: Synchronize in-memory cache using canonical keys 'env' and 'obj'
                         open_k = self._find_open_doc_key(fp)
                         if open_k and open_k in self.open_documents:
                             try:
                                 b_doc, b_env, b_obj, _ = load_bundle_story(fp)
-                                old_env = self.open_documents[open_k].get("env")
+                                entry = self.open_documents[open_k]
+                                old_doc = entry.get("doc")
+                                old_env = entry.get("env")
+                                old_jp_uids = (
+                                    entry.get("original_jp_by_uid", {}).keys()
+                                    if isinstance(entry.get("original_jp_by_uid"), dict)
+                                    else ()
+                                )
+                                if hasattr(self, "_prune_document_caches"):
+                                    self._prune_document_caches(open_k, old_doc, extra_uids=old_jp_uids)
                                 if old_env is not None and old_env is not b_env:
                                     dispose_unity_env(old_env)
-                                self.open_documents[open_k]["doc"] = b_doc
-                                self.open_documents[open_k]["env"] = b_env
-                                self.open_documents[open_k]["obj"] = b_obj
-                                self.open_documents[open_k]["dirty"] = False
+                                new_jp_by_uid = (
+                                    {_get_box_uid(b): b.clean_text for b in b_doc.boxes if _get_box_uid(b) is not None}
+                                    if b_doc and b_doc.boxes
+                                    else {}
+                                )
+                                if hasattr(self, "sync_manager") and self.sync_manager is not None:
+                                    for b_uid, jp_txt in new_jp_by_uid.items():
+                                        self.sync_manager.register_jp_key(b_uid, jp_txt)
+                                entry["doc"] = b_doc
+                                entry["env"] = b_env
+                                entry["obj"] = b_obj
+                                entry["dirty"] = False
+                                entry["boxes_count"] = len(b_doc.boxes)
+                                entry["original_jp_by_uid"] = dict(new_jp_by_uid)
+                                entry["modified_box_uids"] = set()
+                                if b_doc.boxes:
+                                    entry["current_box_idx"] = max(0, min(int(entry.get("current_box_idx", 0)), len(b_doc.boxes) - 1))
+                                else:
+                                    entry["current_box_idx"] = 0
+                                    entry["is_box0_active"] = False
                                 self._record_saved_checkpoint(open_k, b_doc)
-                                if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                                if open_k == active_k:
                                     self.current_doc = b_doc
                                     self.current_unity_env = b_env
                                     self.current_text_obj = b_obj
+                                    self.is_bundle_file = True
+                                    self._plain_text_content = ""
                                     self.is_dirty = False
+                                    self._original_jp_by_uid = dict(new_jp_by_uid)
+                                    self._modified_box_uids = set()
+                                    self._modified_boxes = set()
+                                    self.current_box_idx = entry["current_box_idx"]
+                                    self.is_box0_active = bool(entry.get("is_box0_active", False) and b_doc.has_metadata())
+                                    if hasattr(self, "_resync_box_indices_from_uids"):
+                                        self._resync_box_indices_from_uids()
+                                    active_updated = True
                             except Exception as ex_load:
                                 self.logger.error("File I/O", f"Failed reloading bundle cache for {fp}: {ex_load}")
                     else:
@@ -12257,12 +12419,42 @@ class MisoraApp(tk.Tk):
 
                         # S5 & S09: Synchronize in-memory cache and checkpoints if open
                         if open_k and open_k in self.open_documents:
-                            self.open_documents[open_k]["plain_text"] = text_to_set
-                            self.open_documents[open_k]["dirty"] = False
+                            entry = self.open_documents[open_k]
+                            if text_to_set.startswith("#!priconne-story") and entry.get("doc") is not None:
+                                try:
+                                    v2_doc = StoryDocument.from_v2_text(text_to_set)
+                                    old_doc = entry.get("doc")
+                                    if hasattr(self, "_prune_document_caches"):
+                                        self._prune_document_caches(open_k, old_doc)
+                                    entry["doc"] = v2_doc
+                                    entry["plain_text"] = ""
+                                    entry["dirty"] = False
+                                    entry["boxes_count"] = len(v2_doc.boxes)
+                                    new_jp_by_uid = {
+                                        _get_box_uid(b): b.clean_text
+                                        for b in v2_doc.boxes
+                                        if _get_box_uid(b) is not None
+                                    }
+                                    entry["original_jp_by_uid"] = dict(new_jp_by_uid)
+                                    self._record_saved_checkpoint(open_k, v2_doc)
+                                    if open_k == active_k:
+                                        self.current_doc = v2_doc
+                                        self._plain_text_content = ""
+                                        self.is_dirty = False
+                                        self._original_jp_by_uid = dict(new_jp_by_uid)
+                                        if hasattr(self, "_resync_box_indices_from_uids"):
+                                            self._resync_box_indices_from_uids()
+                                        active_updated = True
+                                    continue
+                                except Exception:
+                                    pass
+                            entry["plain_text"] = text_to_set
+                            entry["dirty"] = False
                             self._record_saved_checkpoint(open_k, None, plain_text=text_to_set)
-                            if open_k == (Path(self.current_file_path).resolve() if self.current_file_path else None):
+                            if open_k == active_k:
                                 self._plain_text_content = text_to_set
                                 self.is_dirty = False
+                                active_updated = True
             except Exception as ex:
                 self.logger.error("File I/O", f"Failed applying bulk delta: {ex}")
                 # S5/S9b: Rollback applied files in reverse order to ensure all-or-nothing transaction safety
@@ -12309,8 +12501,11 @@ class MisoraApp(tk.Tk):
                 )
                 raise
 
-            if self.current_file_path and self._find_open_doc_key(self.current_file_path) is not None:
-                self.open_file(self.current_file_path, reload_from_disk=True)
+            if active_updated and refresh_ui:
+                self._update_views()
+                self._dirty_state_changed()
+                if hasattr(self, "_sync_edit_menu_states"):
+                    self._sync_edit_menu_states()
 
         if prev_caret:
             try:
@@ -12454,6 +12649,92 @@ class MisoraApp(tk.Tk):
                 self.open_file(fpath)
         return "break"
 
+    def _prune_document_caches(
+        self,
+        file_path: Optional[Union[str, Path]],
+        doc: Optional[Any],
+        extra_uids: Optional[Iterable[Any]] = None,
+    ) -> None:
+        """Prune all document-scoped MTL & XUAT JP caches for a closed or reloaded document (BUG-03 / BONUS-01)."""
+        fp_str = str(Path(file_path).resolve()) if file_path else ""
+        doc_id = id(doc) if doc is not None else None
+
+        doc_uids: Set[Any] = set()
+        if doc is not None and getattr(doc, "boxes", None):
+            for b in doc.boxes:
+                u = _get_box_uid(b)
+                if u is not None:
+                    doc_uids.add(u)
+        if extra_uids is not None:
+            for u in extra_uids:
+                if u is not None:
+                    doc_uids.add(u)
+
+        # Exclude any UIDs still referenced by other open documents
+        other_uids: Set[Any] = set()
+        for open_p, open_entry in getattr(self, "open_documents", {}).items():
+            if fp_str and str(Path(open_p).resolve()) == fp_str:
+                continue
+            if not isinstance(open_entry, dict):
+                continue
+            other_doc = open_entry.get("doc")
+            if other_doc is doc:
+                continue
+            if other_doc is not None and getattr(other_doc, "boxes", None):
+                for ob in other_doc.boxes:
+                    ou = _get_box_uid(ob)
+                    if ou is not None:
+                        other_uids.add(ou)
+            other_jp = open_entry.get("original_jp_by_uid")
+            if isinstance(other_jp, dict):
+                other_uids.update(other_jp.keys())
+        uids_to_prune = doc_uids - other_uids
+
+        def _matches_ctx(k: Any) -> bool:
+            if not isinstance(k, tuple) or len(k) < 2:
+                return False
+            if fp_str and k[0] == fp_str:
+                return True
+            if doc_id is not None and k[1] == doc_id:
+                return True
+            return False
+
+        for attr in ("_mtl_all_results", "_mtl_all_statuses", "_mtl_all_errors"):
+            mapping = getattr(self, attr, None)
+            if isinstance(mapping, dict):
+                for k in [key for key in mapping if _matches_ctx(key)]:
+                    mapping.pop(k, None)
+
+        req_seqs = getattr(self, "_mtl_all_req_seqs", None)
+        if isinstance(req_seqs, dict) and uids_to_prune:
+            for k in [key for key in req_seqs if isinstance(key, tuple) and key and key[0] in uids_to_prune]:
+                req_seqs.pop(k, None)
+
+        latest_seq_map = getattr(self, "_latest_applied_mtl_seq", None)
+        if isinstance(latest_seq_map, dict) and uids_to_prune:
+            for u in uids_to_prune:
+                latest_seq_map.pop(u, None)
+
+        last_ctx = getattr(self, "_mtl_all_last_ctx", None)
+        if last_ctx is not None and _matches_ctx(last_ctx):
+            self._mtl_all_last_ctx = None
+
+        is_active_match = (
+            (fp_str and str(getattr(self, "current_file_path", "") or "") == fp_str)
+            or (doc is not None and getattr(self, "current_doc", None) is doc)
+        )
+        if is_active_match:
+            self._mtl_all_selected_uid = None
+            self._mtl_all_block_ranges = []
+            self._mtl_all_last_ctx = None
+            self._mtl_drawer_active_context = None
+            if hasattr(self, "_mtl_drawer_latest_seq") and isinstance(self._mtl_drawer_latest_seq, dict):
+                self._mtl_drawer_latest_seq.clear()
+
+        if hasattr(self, "sync_manager") and self.sync_manager is not None and uids_to_prune:
+            if hasattr(self.sync_manager, "unregister_jp_keys"):
+                self.sync_manager.unregister_jp_keys(uids_to_prune)
+
     def close_file(self, file_path: Path) -> bool:
         """Close an opened file from in-memory cache, prompting if dirty (S3).
 
@@ -12479,13 +12760,29 @@ class MisoraApp(tk.Tk):
                 if not self._save_document_entry(file_path):
                     return False
 
+        if file_path == self.current_file_path and hasattr(self, "_cancel_mtl_all_batch"):
+            self._cancel_mtl_all_batch()
+
         closed_env = None
+        closed_doc = None
+        closed_jp_uids: Iterable[Any] = ()
         if file_path in self.open_documents:
-            closed_env = self.open_documents[file_path].get("env") if isinstance(self.open_documents[file_path], dict) else None
+            entry_dict = self.open_documents[file_path] if isinstance(self.open_documents[file_path], dict) else {}
+            closed_env = entry_dict.get("env")
+            closed_doc = entry_dict.get("doc")
+            orig_jp = entry_dict.get("original_jp_by_uid")
+            if isinstance(orig_jp, dict):
+                closed_jp_uids = list(orig_jp.keys())
             del self.open_documents[file_path]
             self.undo_journal.prune_file(str(file_path))
             if closed_env is not None:
                 dispose_unity_env(closed_env)
+
+        if file_path == self.current_file_path and closed_doc is None:
+            closed_doc = getattr(self, "current_doc", None)
+        if file_path == self.current_file_path and not closed_jp_uids:
+            closed_jp_uids = list(getattr(self, "_original_jp_by_uid", {}).keys())
+        self._prune_document_caches(file_path, closed_doc, extra_uids=closed_jp_uids)
 
         self._saved_state_checkpoints.pop(str(file_path), None)
 
@@ -12542,14 +12839,26 @@ class MisoraApp(tk.Tk):
 
     def _close_all_documents_without_prompt(self) -> None:
         """Close all open documents cleanly without prompting (used after ProjectDiffDialog confirmation)."""
+        if hasattr(self, "_cancel_mtl_all_batch"):
+            self._cancel_mtl_all_batch()
         for p, info in list(self.open_documents.items()):
             env = info.get("env") if isinstance(info, dict) else None
+            doc = info.get("doc") if isinstance(info, dict) else None
+            jp_uids = list(info.get("original_jp_by_uid", {}).keys()) if isinstance(info, dict) and isinstance(info.get("original_jp_by_uid"), dict) else ()
+            if hasattr(self, "_prune_document_caches"):
+                self._prune_document_caches(p, doc, extra_uids=jp_uids)
             if env is not None:
                 dispose_unity_env(env)
             if hasattr(self, "undo_journal"):
                 self.undo_journal.prune_file(str(p))
             if hasattr(self, "_saved_state_checkpoints"):
                 self._saved_state_checkpoints.pop(str(p), None)
+        if hasattr(self, "_prune_document_caches") and (self.current_file_path or self.current_doc):
+            self._prune_document_caches(
+                self.current_file_path,
+                self.current_doc,
+                extra_uids=getattr(self, "_original_jp_by_uid", {}).keys(),
+            )
         self.open_documents.clear()
         if self.current_unity_env is not None:
             dispose_unity_env(self.current_unity_env)
@@ -12591,6 +12900,8 @@ class MisoraApp(tk.Tk):
             return False
         self._save_active_document_state()
         self._exit_raw_edit_mode(refresh=False)
+        if hasattr(self, "_cancel_mtl_all_batch"):
+            self._cancel_mtl_all_batch()
 
         ws_path = Path(workspace_path).resolve()
         ws_dir = ws_path.parent
@@ -13661,6 +13972,8 @@ class MisoraApp(tk.Tk):
             return
 
         self._flush_mtl_all_scratchpad()
+        if hasattr(self, "_cancel_mtl_all_batch"):
+            self._cancel_mtl_all_batch()
         self._mtl_drawer_mode = "dialogue"
         if hasattr(self, "btn_mtl_mode_dialogue"):
             self.btn_mtl_mode_dialogue.configure(style="Pink.TButton")
@@ -14013,13 +14326,20 @@ class MisoraApp(tk.Tk):
                 file_p, doc_id, b_uid, src_hash, req_seq, eng = req_meta[:6]
                 mode_tag = req_meta[6] if len(req_meta) >= 7 else "dialogue"
 
-                # Stale identity guard: discard if document or path changed
+                # Stale identity guard: discard if document, path, openness, or batch generation changed (BUG-03 / BONUS-01)
                 if not self.current_doc or id(self.current_doc) != doc_id:
                     continue
                 if str(self.current_file_path or "") != file_p:
                     continue
+                if file_p and getattr(self, "open_documents", None):
+                    resolved_fp = Path(file_p).resolve()
+                    if resolved_fp not in self.open_documents:
+                        continue
 
                 if mode_tag == "all_script":
+                    batch_gen = req_meta[7] if len(req_meta) >= 8 else None
+                    if batch_gen is not None and batch_gen != getattr(self, "_mtl_all_batch_gen", 0):
+                        continue
                     target_box = None
                     for b in self.current_doc.boxes:
                         if _get_box_uid(b) == b_uid:
@@ -14078,7 +14398,7 @@ class MisoraApp(tk.Tk):
         except queue.Empty:
             pass
 
-        if self._mtl_drawer_pending > 0 and self.winfo_exists() and not getattr(self, "_destroyed", False):
+        if (self._mtl_drawer_pending > 0 or not self._mtl_drawer_queue.empty()) and self.winfo_exists() and not getattr(self, "_destroyed", False):
             self._mtl_drawer_poll_id = self.after(50, self._poll_mtl_drawer_queue)
 
     def _on_mtl_drawer_apply_engine(self, engine_name: str) -> bool:
@@ -14220,8 +14540,31 @@ class MisoraApp(tk.Tk):
             self.txt_mtl_all_scratchpad.insert("1.0", val)
         self.txt_mtl_all_scratchpad.edit_reset()
 
+    def _cancel_mtl_all_batch(self) -> None:
+        """Cooperatively cancel any in-flight All Script Translate All batch and shut down its executor.
+
+        Note: Blocking urllib socket reads already in flight cannot always be forcefully killed
+        mid-flight; pending queued items abort immediately, no new requests start, and any late
+        in-flight reply is discarded by batch_gen/doc_id/req_seq guards on arrival.
+        """
+        self._mtl_all_batch_gen = getattr(self, "_mtl_all_batch_gen", 0) + 1
+        cancel_ev = getattr(self, "_mtl_all_batch_cancel", None)
+        if cancel_ev is not None:
+            try:
+                cancel_ev.set()
+            except Exception:
+                pass
+        executor = getattr(self, "_mtl_all_executor", None)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            self._mtl_all_executor = None
+
     def _on_mtl_all_engine_changed(self, _event=None) -> None:
         self._flush_mtl_all_scratchpad()
+        self._cancel_mtl_all_batch()
         self._refresh_mtl_all_script_view()
 
     def _on_mtl_all_list_click(self, event: tk.Event) -> str:
@@ -14451,7 +14794,7 @@ class MisoraApp(tk.Tk):
         return True
 
     def _on_mtl_all_script_translate_all(self) -> None:
-        """Batch-translate all unlocked, non-empty boxes using the selected engine."""
+        """Batch-translate all unlocked, non-empty boxes using bounded workers + finite pending backpressure (BUG-02)."""
         doc = getattr(self, "current_doc", None)
         if not doc or not doc.boxes:
             self.show_toast("Open a story document to translate.")
@@ -14474,8 +14817,112 @@ class MisoraApp(tk.Tk):
                 if not ok:
                     return
 
+        self._cancel_mtl_all_batch()
+        batch_cancel = threading.Event()
+        self._mtl_all_batch_cancel = batch_cancel
+        batch_gen = self._mtl_all_batch_gen
+
+        file_p_str = str(self.current_file_path or "")
+        doc_id = id(doc)
+        xuat_cache = getattr(self, "xuat_entries", None)
+        base_cfg = MTLConfig.from_dict(self.mtl_config.to_dict())
+        base_cfg.active_engine = eng
+        base_cfg.protect_tags = True
+
+        tasks: List[Tuple[str, Tuple[Any, ...]]] = []
         for idx, box in enumerate(doc.boxes):
-            self._dispatch_mtl_all_box(idx, box, eng, bypass_cache=False)
+            b_uid = _get_box_uid(box)
+            ctx = self._mtl_all_ctx_key(b_uid, eng)
+            orig_text = box.clean_text
+            if self.is_box_locked(idx):
+                self._mtl_all_statuses[ctx] = "locked"
+                continue
+            if self._is_mtl_empty_or_punct(orig_text):
+                self._mtl_all_statuses[ctx] = "empty"
+                continue
+            src_hash = _hash_mtl_source(orig_text)
+            if (eng, src_hash) in self._mtl_drawer_cache:
+                self._mtl_drawer_cache.move_to_end((eng, src_hash))
+                self._mtl_all_results[ctx] = self._mtl_drawer_cache[(eng, src_hash)]
+                self._mtl_all_statuses[ctx] = "ready"
+                continue
+
+            self._mtl_all_statuses[ctx] = "translating"
+            self._mtl_drawer_req_seq += 1
+            req_seq = self._mtl_drawer_req_seq
+            self._mtl_all_req_seqs[(b_uid, eng)] = req_seq
+            req_meta = (file_p_str, doc_id, b_uid, src_hash, req_seq, eng, "all_script", batch_gen)
+            tasks.append((orig_text, req_meta))
+
+        if tasks:
+            self._mtl_drawer_pending += len(tasks)
+            out_q = self._mtl_drawer_queue
+            use_monkeypatched_async = translate_async is not _ORIG_TRANSLATE_ASYNC
+            pending_sem = threading.Semaphore(8)  # Finite pending-work bound (never 100s of queued Futures)
+            worker_local = threading.local()
+
+            def _run_one(orig_text: str, req_meta: Tuple[Any, ...]) -> None:
+                try:
+                    if batch_cancel.is_set():
+                        return
+                    count = getattr(worker_local, "count", 0)
+                    delay = float(getattr(base_cfg, "rate_limit_delay", 0.0) or 0.0)
+                    if count > 0 and delay > 0.0:
+                        if batch_cancel.wait(delay):
+                            return
+                    worker_local.count = count + 1
+                    if use_monkeypatched_async:
+                        t = translate_async(
+                            orig_text,
+                            base_cfg,
+                            out_queue=out_q,
+                            metadata=req_meta,
+                            xuat_cache=xuat_cache,
+                        )
+                        if isinstance(t, threading.Thread) and t.is_alive():
+                            t.join()
+                    else:
+                        try:
+                            engine = MTLEngine(base_cfg)
+                            res = engine.translate(orig_text, config=base_cfg, xuat_cache=xuat_cache)
+                            if not batch_cancel.is_set():
+                                out_q.put(("success", req_meta, res))
+                        except Exception as exc:
+                            if not batch_cancel.is_set():
+                                out_q.put(("error", req_meta, str(exc)))
+                finally:
+                    pending_sem.release()
+
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="MisoraMTLAll")
+            self._mtl_all_executor = executor
+
+            def _dispatch_loop() -> None:
+                try:
+                    for orig_text, req_meta in tasks:
+                        if batch_cancel.is_set():
+                            break
+                        while not pending_sem.acquire(timeout=0.05):
+                            if batch_cancel.is_set():
+                                return
+                        if batch_cancel.is_set():
+                            pending_sem.release()
+                            break
+                        try:
+                            executor.submit(_run_one, orig_text, req_meta)
+                        except RuntimeError:
+                            pending_sem.release()
+                            break
+                finally:
+                    try:
+                        executor.shutdown(wait=False, cancel_futures=batch_cancel.is_set())
+                    except Exception:
+                        pass
+                    if getattr(self, "_mtl_all_executor", None) is executor:
+                        self._mtl_all_executor = None
+
+            threading.Thread(target=_dispatch_loop, name="MisoraMTLDispatcher", daemon=True).start()
+            if self._mtl_drawer_poll_id is None and self.winfo_exists():
+                self._mtl_drawer_poll_id = self.after(50, self._poll_mtl_drawer_queue)
 
         self._refresh_mtl_all_script_view(preserve_scroll=True)
 
@@ -14594,6 +15041,7 @@ class MisoraApp(tk.Tk):
         def on_error(err: str):
             mtl_q.put(("box_error", req_meta, str(err), engine_name))
 
+        self._mtl_pending = getattr(self, "_mtl_pending", 0) + 1
         translate_async(
             orig_text,
             self.mtl_config,
@@ -14601,15 +15049,19 @@ class MisoraApp(tk.Tk):
             on_error=on_error,
             xuat_cache=getattr(self, "xuat_entries", None),
         )
+        if getattr(self, "_mtl_poll_job", None) is None and self.winfo_exists():
+            self._mtl_poll_job = self.after(50, self._poll_mtl_queue)
 
     def _poll_mtl_queue(self) -> None:
-        """Poll queued machine translation results on the main UI thread (Rule 15 / BUG-27)."""
-        if not self.winfo_exists():
+        """Poll queued machine translation results on the main UI thread (Rule 15 / BUG-27 / BONUS-03)."""
+        self._mtl_poll_job = None
+        if not self.winfo_exists() or getattr(self, "_destroyed", False):
             return
 
         try:
             while True:
                 msg = self._mtl_queue.get_nowait()
+                self._mtl_pending = max(0, getattr(self, "_mtl_pending", 0) - 1)
                 kind = msg[0]
                 if kind in ("box_success", "success"):
                     if kind == "box_success":
@@ -14701,7 +15153,11 @@ class MisoraApp(tk.Tk):
         except queue.Empty:
             pass
         finally:
-            if self.winfo_exists():
+            if (
+                (getattr(self, "_mtl_pending", 0) > 0 or not self._mtl_queue.empty())
+                and self.winfo_exists()
+                and not getattr(self, "_destroyed", False)
+            ):
                 self._mtl_poll_job = self.after(50, self._poll_mtl_queue)
 
     def on_batch_translate(self) -> None:
@@ -15253,13 +15709,13 @@ class MisoraApp(tk.Tk):
     def on_about(self) -> None:
         """Show application information dialog."""
         about_text = (
-            "Misora: Unity3D Revision Tool & Story Editor\n"
+            "Misora: Story Editor\n"
             f"Version {__version__}\n\n"
             "A specialized GUI text editor for Princess Connect! Re:Dive\n"
             "Unity3D story bundles (.unity3d) and XUAT translation files.\n\n"
             "MIT License — Created for the Priconne Modding Community."
         )
-        messagebox.showinfo("About Misora", about_text)
+        messagebox.showinfo("About Misora: Story Editor", about_text)
 
 
 # =============================================================================
@@ -16429,7 +16885,10 @@ class MTLSettingsDialog(tk.Toplevel):
             except Exception:
                 pass
             self._poll_job = None
+        prev_engine = getattr(self.app.mtl_config, "active_engine", None)
         self.app.mtl_config = self._get_draft_config()
+        if prev_engine != self.app.mtl_config.active_engine and hasattr(self.app, "_cancel_mtl_all_batch"):
+            self.app._cancel_mtl_all_batch()
         if self.app.mtl_config.use_xuat_cache and getattr(self.app, "xuat_index", None) is None:
             if hasattr(self.app, "_refresh_xuat_index_async"):
                 self.app._refresh_xuat_index_async()

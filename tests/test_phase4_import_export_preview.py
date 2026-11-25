@@ -79,16 +79,17 @@ class TestPhase4ImportExportPreview(unittest.TestCase):
         return StoryDocument(recs)
 
     def test_01_version_unification(self):
-        """Single source of truth for version in root __init__.__version__ (Rule 21)."""
-        expected_version = "1.4.0"
-
+        """Single source of truth for version in root __init__.__version__ (Rule 21 / MF-S24)."""
         root_init_path = SCRIPT_DIR / "__init__.py"
         self.assertTrue(root_init_path.is_file())
         spec = importlib.util.spec_from_file_location("misora_root", str(root_init_path))
         root_mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(root_mod)
 
-        self.assertEqual(getattr(root_mod, "__version__", None), expected_version)
+        expected_version = getattr(root_mod, "__version__", None)
+        self.assertIsInstance(expected_version, str)
+        self.assertRegex(expected_version, r"^\d+\.\d+\.\d+$")
+
         self.assertEqual(misora.__version__, expected_version)
         self.assertEqual(misora._get_app_version(), expected_version)
         self.assertEqual(splash._load_app_version(), expected_version)

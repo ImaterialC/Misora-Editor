@@ -285,8 +285,11 @@ class ProjectSearchEngine:
         options: SearchOptions,
         doc: Optional[Union[StoryDocument, str]] = None,
         on_error: Optional[Callable[[Path, str], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> List[SearchResult]:
         """Search inside a single file (.unity3d bundle or plain text), optionally using in-memory StoryDocument or text."""
+        if should_cancel and should_cancel():
+            return []
         file_path = Path(file_path)
         if not file_path.is_file() and doc is None:
             return []
@@ -297,6 +300,8 @@ class ProjectSearchEngine:
 
         # 1. Search in Unity3D bundle
         if (ext in (".unity3d", ".asset") or (doc is not None and isinstance(doc, StoryDocument))) and options.include_bundles:
+            if should_cancel and should_cancel():
+                return results
             try:
                 story_doc = doc if isinstance(doc, StoryDocument) else None
                 if story_doc is None:
@@ -331,6 +336,8 @@ class ProjectSearchEngine:
                             ))
 
                 for box_idx, box in enumerate(story_doc.boxes):
+                    if should_cancel and should_cancel():
+                        break
                     # Check dialogue text matches
                     diag_matches = matcher(box.clean_text)
                     if not diag_matches and box.text != box.clean_text:
@@ -395,6 +402,8 @@ class ProjectSearchEngine:
                     decoded = read_text_file_strictly(file_path)
                     lines = decoded.text.splitlines()
                 for line_idx, line in enumerate(lines, 1):
+                    if should_cancel and should_cancel():
+                        break
                     matches = matcher(line)
                     for start, end, _match_text in matches:
                         snippet, hs, he = self._build_highlighted_snippet(line, start, end)
@@ -448,8 +457,13 @@ class ProjectSearchEngine:
             if on_error:
                 on_error(Path(err.filename or directory), f"Filesystem walk error: {err}")
 
-        for root, _, files in os.walk(directory, onerror=_on_walk_error):
+        for root, dirs, files in os.walk(directory, onerror=_on_walk_error):
+            if should_cancel and should_cancel():
+                dirs[:] = []
+                break
             for f in files:
+                if should_cancel and should_cancel():
+                    break
                 ext = Path(f).suffix.lower()
                 if ext in exts:
                     all_files.append(Path(root) / f)
@@ -470,7 +484,7 @@ class ProjectSearchEngine:
             mem_doc = None
             if in_memory_docs:
                 mem_doc = in_memory_docs.get(fp) or in_memory_docs.get(resolved_fp)
-            res = self.search_file(fp, options, doc=mem_doc, on_error=on_error)
+            res = self.search_file(fp, options, doc=mem_doc, on_error=on_error, should_cancel=should_cancel)
             all_results.extend(res)
 
         return all_results

@@ -2,13 +2,13 @@
   <img src="assets/banner.jpg" alt="Misora Banner" width="100%">
 </p>
 
-# Misora: Unity3D Revision Tool & Story Editor
+# Misora: Story Editor
 
 <p align="center">
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-pink.svg" alt="License: MIT"></a>
   <a href="https://github.com/K0lb3/UnityPy"><img src="https://img.shields.io/badge/UnityPy-1.20+-green.svg" alt="UnityPy"></a>
-  <img src="https://img.shields.io/badge/version-1.4.0-brightgreen.svg" alt="Version 1.4.0">
+  <img src="https://img.shields.io/badge/version-1.4.1-brightgreen.svg" alt="Version 1.4.1">
   <img src="https://img.shields.io/badge/tests-234%20passed-success.svg" alt="234 Tests Passed">
 </p>
 

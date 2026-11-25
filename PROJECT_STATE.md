@@ -1,11 +1,11 @@
-# Misora Editor — Canonical Project State
+# Misora: Story Editor — Canonical Project State
 
 Last updated: 2026-11-25
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.4.1 (Phase 2.5 Track 2)
-Current code baseline: root `__init__.py` reports `version = "1.4.0"`; unified across UI, splash, dialogs, and tests.
-Starting baseline pinned at commit `683724edaf2afac89d2695a80e30a471a0da9195`.
+Target release: v1.5.0 (Current session build: v1.4.1 — S01)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.1"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` (+ pre-existing local S24 working-tree state).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -38,12 +38,15 @@ Pillow Availability: Available
 Fixture Availability: storydata_1001005.unity3d intentionally excluded from repository root; local docs/ intentionally removed and excluded via .gitignore.
 
 Compile Check:
-py -3.12 -m compileall -q misora.py core assets tests
+py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S23 Verification Baseline — 2026-11-25):
-py -3.12 -m unittest discover -s tests
-Result: Ran 344 tests across 45 modules (304 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Unit Test Suite (v1.5 S01 Verification Baseline — 2026-11-25):
+py -3.12 -m unittest tests.test_v15_s01_stability_remediation -v
+Result: Ran 11 tests (11 pass, 0 failures, 0 errors, exit code 0)
+
+py -3.12 -m unittest discover -s tests -v
+Result: Ran 355 tests across 46 modules (313 pass, 35 skipped, 5 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json)
 
 Test suites included in the 344 tests (exact disk discovery):
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -73,7 +76,7 @@ Test suites included in the 344 tests (exact disk discovery):
   tests/test_phase1_manual_verification.py  — 8 Page and Continuous view verified workflows (all pass)
   tests/test_phase2_required.py             — 13 GUI-level required tests (all pass)
   tests/test_phase3_performance_config.py   — 6 startup, lazy-load, async logger, config tests (all pass)
-  tests/test_phase4_import_export_preview.py— 5 import/export, paste preview, tooltip, version tests (all pass)
+  tests/test_phase4_import_export_preview.py— 5 import/export, paste preview, tooltip, single-source version (MF-S24) tests (all pass)
   tests/test_phase5_mtl_security_preview.py — 7 NGUI tag, DPAPI, TLS verify, DeepL usage, lock, preview tests (all pass)
   tests/test_script_codec.py                — 14 CSIF codec unit tests (all pass)
   tests/test_s1_open_file_safety.py         — 7 staged open-file & multi-format tests (all pass)
@@ -110,9 +113,161 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
 
-### Track 2 Progress: Final Hygiene (S23) COMPLETE
-- **Status:** S23 is 100% COMPLETE (`HYG-08`).
-- **Next Session:** S24 (Release Gate & `v1.4.1` Promotion).
+### v1.5 S01 (`v1.4.1`) — Baseline Reconciliation, Stability & Memory Remediation, Version Policy (`U00`) & Rebrand (`U04`) (2026-11-25)
+- **Baseline & Session-State Reconciliation:**
+  - `main` and `origin/main` at `32ad313376343e1e6a2f46970f8081b949f8e0d8` with pre-existing local S24 edits (`CHANGELOG.md`, `PROJECT_STATE.md`, `tests/test_phase4_import_export_preview.py`), `D misora_config.default.json`, and existing untracked files preserved intact.
+- **Stability & Memory Remediation (`BUG-01..06`, `BONUS-01..03`):**
+  - `BUG-01`: Per-job `threading.Event` (`_search_cancel_event`) + bounded `search_queue(maxsize=2048)` + `_put_queue_cancellable()` + 5-stage cancellation across `os.walk()`, directory/file loops, `search_file()`, queue submission, and app shutdown.
+  - `BUG-02` / `BONUS-02`: Module-level shared SSL context (`_get_shared_ssl_context()`), bounded `ThreadPoolExecutor(max_workers=3)` + `threading.Semaphore(8)` pending backpressure in `All Script` `Translate All`, cooperative `batch_cancel`, auto-cancel on close/reload/engine switch/shutdown, interruptible `rate_limit_delay`, stale `batch_gen` rejection, and `executor.shutdown(wait=False, cancel_futures=True)` cleanup. **Honest Cancellation Guarantee:** Blocking `urllib.request.urlopen` socket reads already in flight cannot always be forcefully killed mid-flight; cancellation is cooperative (pending items abort immediately, no new requests start, and late replies are discarded by batch/identity/cancel guards).
+  - `BUG-03` / `BONUS-01`: `_prune_document_caches()` + `XUnitySyncManager.unregister_jp_keys()` on close/reload + anti-repopulation guards in `_poll_mtl_drawer_queue()`.
+  - `BUG-04`: `load_bundle_story()` disposes `env` on every post-load failure path while keeping live `env` intact on success.
+  - `BUG-05`: Idempotent, producer-safe `MisoraLogger.close()` with `_stop_event` and `_closed` guards; exits cleanly even on full `_file_queue`; clears `_writer_thread` only once dead.
+  - `BUG-06`: `save_bundle_story()` initializes `tmp_path = None` before `try:` and moves `mkdir()` inside `try:` so `_is_saving` is always released.
+  - `BONUS-03`: On-demand polling for `_search_poll_job` and `_mtl_poll_job`, plus elimination of redundant second `load_bundle_story()` in `_apply_delta(BulkFileDelta)`.
+- **Versioning (`U00`) & Rebrand (`U04`) & Long-Term Direction:**
+  - `U00`: `A.b.c` policy (`1.4.1`..`1.4.7` session builds -> `1.5.0` official milestone; `BLOCKED`/`REVERTED` without version bump). Root `__init__.py` `__version__ = "1.4.1"`.
+  - `U04`: User-visible product rebranded to **`Misora: Story Editor`**; internal identifiers (`misora`, `MisoraApp`), `.misora`, `misora_config.json`, `misora.bat`, and ProgID `Misora.Unity3dBundle` preserved.
+  - **Architectural Direction (Future):** Future Unit/Monster Editor tools will live in separate repositories sharing core infrastructure (AST/bundle/XUAT/UI patterns) with variable-aware XUAT regex support.
+- **Manual Windows QA Pending (Project Lead):**
+  - Open & close 10+ `.unity3d` files in Windows Task Manager and confirm RAM reaches a stable plateau after close.
+  - Start a large folder search -> press Cancel -> immediately start a second search -> close app cleanly (confirm zero lingering `python.exe`).
+  - Confirm window title, Splash Screen, and About dialog display `Misora: Story Editor` v1.4.1.
+
+### S24 Final Acceptance Audit & Release Gate — Audit-Only Hold at `v1.4.0` (2026-11-25)
+- **Session Scope:** Final Acceptance Audit (63 Active IDs + `DEF-01..10` + `NO-01..12`) & `v1.4.1` Release Gate (`MF-S24`, `GPT-1`, `GPT-2`).
+- **Single-Source Version Fix (`MF-S24`):**
+  - Updated `tests/test_phase4_import_export_preview.py::test_01_version_unification` to derive `expected_version` dynamically from root `__init__.__version__` while preserving all cross-module consistency assertions (`root == misora.__version__ == misora._get_app_version() == splash._load_app_version() == splash._VERSION == About "Version X"`). Verified `py -3.12 -m unittest tests.test_phase4_import_export_preview -v` (`Ran 5 tests`, `OK`, exit code `0`).
+- **Release Gate Status (`v1.4.1` Bump HELD at `1.4.0`):**
+  - **Automated Suite:** `py -3.12 -m compileall -q misora.py core assets tests` exits `0`; `py -3.12 -m unittest discover -s tests -v` runs `344` tests (`304 pass`, `35 skipped`, `3 failures`, `2 errors` — all `5` failures/errors in `tests/test_s8b2_memory_guards.py` and all `35` skips due to intentionally excluded `storydata_1001005.unity3d`).
+  - **Hold Blocker 1 (`BUG-09` P1 / `DEF-02`):** `storydata_1001005.unity3d` is absent on disk (`Test-Path` = `False`); real production `.unity3d` bundle verification remains **`BLOCKED`** without fixture or explicit Project Lead risk acceptance.
+  - **Hold Blocker 2 (`AGENTS.md` §29 Manual Windows QA):** No Project Lead confirmation or written risk waiver received yet for:
+    1. **Ribbon Cut (`AGENTS.md` §29 blocker):** `PENDING MANUAL CONFIRMATION`
+    2. **Paste Box in BOTH Dialogue and All Script views (`AGENTS.md` §29 blocker):** `PENDING MANUAL CONFIRMATION`
+    3. **DPI & snapped half-screen layout (`BUG-39`/`FEAT-04`):** `PENDING MANUAL CONFIRMATION`
+    4. **`Import from XUAT` (`FEAT-14`) smoke test on `BepInEx\Translation\en\Text`:** `PENDING MANUAL CONFIRMATION`
+  - **Hold Blocker 3 (`tests/test_p3_s02_hygiene.py`):** `test_guard_1_root_version_untouched` hardcodes `_read_root_version() == "1.4.0"` outside S24 Allowed Files.
+  - **Hold Blocker 4 (Missing Canonical Ledger File):** `Phase_2.5_Canonical_Ledger_LOCKED.md` (git blob `e51291724d485eebbe18142f68ecdc4fdf4a7c1b`) is absent from disk and local Git object store, leaving `DEF-05`, `DEF-07..09` and `NO-04..06`, `NO-08`, `NO-10..11` **`BLOCKED`** for text definition verification.
+
+#### Final Acceptance Audit Matrix (All 85 Canonical IDs)
+
+> Verification commands used for every `PASS` / `DEFERRED` entry below:
+> - `py -3.12 -m compileall -q misora.py core assets tests` -> exit `0`
+> - `py -3.12 -m unittest tests.test_phase4_import_export_preview -v` -> `Ran 5 tests` (`OK`, exit `0`)
+> - `py -3.12 -m unittest discover -s tests -v` -> `Ran 344 tests` (`304 pass`, `35 skipped` fixture-gated, `3 failures` & `2 errors` in `test_s8b2_memory_guards` due to missing `storydata_1001005.unity3d`, exit `1`)
+
+##### A. Active Bugs (`BUG-01..BUG-41` — 41 IDs: 40 `PASS`, 1 `BLOCKED`)
+
+| ID | Session | Evidence (Module / Test Methods / Symbol) | Status |
+|---|---|---|---|
+| `BUG-01` | S03 | `tests/test_p3_s03_binary_v2.py::test_probe_1_bug01_strict_binary_parse_validation` (pass); `StoryDocument.from_binary()`, `load_bundle_story()` | **PASS** |
+| `BUG-02` | S04 | `tests/test_p3_s04_ast_mutations.py::test_probe_1_bug02_kind_conversion_box_separation_no_collapse` (pass); `set_box_kind()`, `inject_box()` | **PASS** |
+| `BUG-03` | S03 | `tests/test_p3_s03_binary_v2.py::test_probe_2_bug03_*`, `test_probe_3_bug03_*`, `test_probe_6_bug03_*` (all pass); `to_binary()`, `escape_arg()`, `_update_raw_view()` | **PASS** |
+| `BUG-04` | S03 | `tests/test_p3_s03_binary_v2.py::test_probe_4_bug04_*`, `test_guard_2_*` (all pass); `_INV_CMD_MAP`, `DEFAULT_BREAKER_IDS` | **PASS** |
+| `BUG-05` | S04 | `tests/test_p3_s04_ast_mutations.py::test_probe_2_bug05_structural_ownership_voice_and_breakers` (pass); `insert_box()`, `delete_boxes()`, `move_box()` | **PASS** |
+| `BUG-06` | S04 | `tests/test_p3_s04_ast_mutations.py::test_probe_3_bug06_multisegment_undo_and_internal_box_paste` (pass); `BoxEditDelta`, `BoxSnapshot` | **PASS** |
+| `BUG-07` | S05 | `tests/test_p3_s05_treeview_csif.py::test_probe_2_bug07_atomic_sparse_csif_and_metadata` (pass); `apply_to_document()`, `ScriptPastePreviewDialog` | **PASS** |
+| `BUG-08` | S05 | `tests/test_p3_s05_treeview_csif.py::test_probe_3_bug08_backslash_parity_csif_roundtrip` (pass); `core/script_codec.py` | **PASS** |
+| `BUG-09` | S03 | Synthetic non-target SHA-256 check `tests/test_p3_s03_binary_v2.py::test_probe_5_bug09_*` passes; **real production `.unity3d` verification (`storydata_1001005.unity3d`) & `test_s8b2_memory_guards` `test_01..05` missing fixture** | **BLOCKED** |
+| `BUG-10` | S07 | `tests/test_p3_s07_undo_locks_raw.py::test_probe_1_bug10_caret_paste_dirty_and_lock` (pass); `_on_card_paste_caret()` | **PASS** |
+| `BUG-11` | S06 | `tests/test_p3_s06_doc_state_save.py::test_probe_1_bug11_plain_text_preview_save_preserves_tags` (pass); `on_save()` | **PASS** |
+| `BUG-12` | S06 | `tests/test_p3_s06_doc_state_save.py::test_probe_2_bug12_per_document_state_locks_and_inactive_save` (pass); `_locked_box_uids`, `_save_document_entry()` | **PASS** |
+| `BUG-13` | S07 | `tests/test_p3_s07_undo_locks_raw.py::test_probe_2_bug13_mutate_before_undo_error_surfaced` (pass); `_commit_widget_edit()`, `report_callback_exception()` | **PASS** |
+| `BUG-14` | S11 | `tests/test_p3_s11_mtl_threading.py::test_probe_2_bug14_batch_cancel_tracks_batch_open_and_ends_once` (pass); `BatchTranslateDialog` | **PASS** |
+| `BUG-15` | S07 | `tests/test_p3_s07_undo_locks_raw.py::test_probe_3_bug15_non_contiguous_cut_undo_redo_and_locks` (pass); `BoxStructuralDelta.indices` | **PASS** |
+| `BUG-16` | S07 | `tests/test_p3_s07_undo_locks_raw.py::test_probe_4_bug16_lock_enforcement_skeleton_and_translator` (pass); `is_box_locked()` | **PASS** |
+| `BUG-17` | S04 | `tests/test_p3_s04_ast_mutations.py::test_probe_4_bug17_uid_coalesce_and_seg_texts_propagation` (pass); `MasterUndoJournal.record()` | **PASS** |
+| `BUG-18` | S06 | `tests/test_p3_s06_doc_state_save.py::test_probe_3_bug18_write_atomic_encoded_lf_and_export_script` (pass); `write_atomic_encoded()` | **PASS** |
+| `BUG-19` | S06 | `tests/test_p3_s06_doc_state_save.py::test_probe_4_bug19_zero_box_story_saves_cleanly` (pass); `on_save()` | **PASS** |
+| `BUG-20` | S09 | `tests/test_p3_s09_replace_all_backups.py::test_probe_2_collision_resistant_backups`, `test_guard_1_*` (pass); `make_collision_resistant_backup_path()` | **PASS** |
+| `BUG-21` | S08 | `tests/test_p3_s08_search_roots_focus.py::test_probe_1_bug_21_case_sensitive_whitespace_search` (pass); `norm_search()`, `_compile_matcher()` | **PASS** |
+| `BUG-22` | S08 | `tests/test_p3_s08_search_roots_focus.py::test_probe_2_bug_22_errors_snapshots_sequences_spans` (pass); `search_file()`, `_search_seq` | **PASS** |
+| `BUG-23` | S08 | `tests/test_p3_s08_search_roots_focus.py::test_probe_3_bug_23_bounded_project_roots_and_replacement` (pass); `_resolve_project_search_roots()` | **PASS** |
+| `BUG-24` | S09 | `tests/test_p3_s09_replace_all_backups.py::test_probe_1a..1f`, `test_guard_2_*` (all 7 pass); `on_replace_all()`, `_apply_delta()`, `_confirm_closed_files_for_op()` | **PASS** |
+| `BUG-25` | S10 | `tests/test_p3_s10_xuat_integrity.py::test_probe_1_bug25_immutable_jp_key_and_conflict_preview_gate` (pass); `_sync_modified_boxes_to_xuat()` | **PASS** |
+| `BUG-26` | S10 | `tests/test_p3_s10_xuat_integrity.py::test_probe_2_bug26_find_and_update_atomic_write_preserves_bom_and_crlf` (pass); `XUnitySyncManager.find_and_update()` | **PASS** |
+| `BUG-27` | S11/S20 | `tests/test_p3_s11_mtl_threading.py::test_probe_1..1f` (6 pass) & `tests/test_p3_s20_mtl_drawer_dialogue.py::test_probe_2_*` (pass) | **PASS** |
+| `BUG-28` | S13 | `tests/test_p3_s13_ribbon_shortcuts.py::test_probe_01_bug28_ribbon_and_size_commit_targets` (pass); `_insert_text_wrapper()`, `on_insert_font_size()` | **PASS** |
+| `BUG-29` | S13 | `tests/test_p3_s13_ribbon_shortcuts.py::test_probe_02_bug29_hyg07_shortcut_table_reconciliation` (pass); `_on_misora_shortcut()`, `_bind_shortcuts()` | **PASS** |
+| `BUG-30` | S08 | `tests/test_p3_s08_search_roots_focus.py::test_probe_4_bug_30_search_focus_gutter_and_noop_keyrelease` (pass) | **PASS** |
+| `BUG-31` | S05 | `tests/test_p3_s05_treeview_csif.py::test_probe_1_bug31_treeview_theme_contrast` (pass); `_apply_styles()` | **PASS** |
+| `BUG-32` | S12 | `tests/test_p3_s12_lifecycle_security.py::test_01_logger_flush_barrier_and_app_teardown` (pass); `MisoraLogger.flush()`, `destroy()` | **PASS** |
+| `BUG-33` | S12 | `tests/test_p3_s12_lifecycle_security.py::test_02_dpapi_fail_closed_and_ciphertext_preservation` (pass); `DPAPISecurityError` | **PASS** |
+| `BUG-34` | S12 | `tests/test_p3_s12_lifecycle_security.py::test_03_reload_from_disk_disposes_prior_env` (pass); `open_file(reload_from_disk=True)` | **PASS** |
+| `BUG-35` | S12 | `tests/test_p3_s12_lifecycle_security.py::test_04_deferred_startup_restore_after_deiconify` (pass); `_deferred_restore` | **PASS** |
+| `BUG-36` | S12 | `tests/test_p3_s12_lifecycle_security.py::test_05_splash_images_sort_key_guards_non_numeric` (pass); `_splash_sort_key()` | **PASS** |
+| `BUG-37` | S07/S19 | `tests/test_p3_s07_undo_locks_raw.py::test_probe_5_bug37_raw_view_read_only` & `tests/test_p3_s19_raw_commands_edit.py::test_guard_1_*` (pass) | **PASS** |
+| `BUG-38` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_01_bug38_search_grid_alignment` (pass); `self.search_grid` | **PASS** |
+| `BUG-39` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_04_bug39_feat04_responsive_rows_and_ngui_toggle` (pass; manual Windows DPI/snapped check pending) | **PASS** |
+| `BUG-40` | S17 | `tests/test_p3_s17_pixel_rulers.py::test_01_probe_pixel_measure_rulers_and_overflow` (pass); `_measure_dialogue_metrics()` | **PASS** |
+| `BUG-41` | S15 | `tests/test_p3_s15_selection_drawer_open.py::test_probe_1_bug41_feat05_select_box_both_views_and_reserved_slot` (pass) | **PASS** |
+
+##### B. Track 2 Features (`FEAT-01..FEAT-14` — 14 IDs: 14 `PASS`)
+
+| ID | Session | Evidence (Module / Test Methods / Symbol) | Status |
+|---|---|---|---|
+| `FEAT-01` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_02_feat01_scope_current_unmaps_path_widgets` (pass); `_sync_scope_widgets()` | **PASS** |
+| `FEAT-02` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_03_feat02_feat03_player_ribbon_headers` (pass); `btn_player` | **PASS** |
+| `FEAT-03` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_03_feat02_feat03_player_ribbon_headers` (pass); `_update_top_header_title()`, `lbl_raw_title` | **PASS** |
+| `FEAT-04` | S14 | `tests/test_p3_s14_toolbar_search_ui.py::test_probe_04_bug39_feat04_responsive_rows_and_ngui_toggle` (pass); `var_show_ngui_ribbon` | **PASS** |
+| `FEAT-05` | S15 | `tests/test_p3_s15_selection_drawer_open.py::test_probe_1_bug41_feat05_select_box_both_views_and_reserved_slot` (pass); `slot_cb`, `lbl_lock` | **PASS** |
+| `FEAT-06` | S15 | `tests/test_p3_s15_selection_drawer_open.py::test_probe_2_feat06_collapsible_left_drawer` (pass); `_toggle_dock_collapse()` | **PASS** |
+| `FEAT-07` | S15 | `tests/test_p3_s15_selection_drawer_open.py::test_probe_3_feat07_empty_state_and_batched_multi_open` (pass); `empty_state_frame`, `on_open_file()` | **PASS** |
+| `FEAT-08` | S16 | `tests/test_p3_s16_misora_workspace.py::test_probe_1..3` (3 pass); `core/workspace.py`, `ProjectDiffDialog` | **PASS** |
+| `FEAT-09` | S17 | `tests/test_p3_s17_pixel_rulers.py::test_01_probe_pixel_measure_rulers_and_overflow`, `test_02_guard_*` (2 pass); `ruler_clean`, `ruler_cont` | **PASS** |
+| `FEAT-10` | S18 | `tests/test_p3_s18_game_preview.py::test_01..03` (3 pass); `dialogue_preview_canvas`, `_sweep_cstyle_tags()` | **PASS** |
+| `FEAT-11` | S19 | `tests/test_p3_s19_raw_commands_edit.py::test_probe_1..3`, `test_guard_1` (4 pass); `_parse_and_validate_raw_v2()`, `DocumentRecordsDelta` | **PASS** |
+| `FEAT-12` | S20 | `tests/test_p3_s20_mtl_drawer_dialogue.py::test_probe_1..2`, `test_guard_1` (3 pass); `'mtl'` drawer tab | **PASS** |
+| `FEAT-13` | S21 | `tests/test_p3_s21_mtl_drawer_all_script.py::test_probe_1..2`, `test_guard_1` (3 pass); `txt_mtl_all_list`, `txt_mtl_all_scratchpad` | **PASS** |
+| `FEAT-14` | S22 | `tests/test_p3_s22_import_xuat.py::test_probe_1..3`, `test_guard_1` (4 pass); `core/xuat_index.py`, `ImportFromXUATDialog` | **PASS** |
+
+##### C. Hygiene Items (`HYG-01..HYG-08` — 8 IDs: 8 `PASS`)
+
+| ID | Session | Evidence (Module / Test Methods / Disk Check) | Status |
+|---|---|---|---|
+| `HYG-01` | S01 | `PROJECT_STATE.md`, `README.md`, `AGENTS.md` reconciled; `CHANGELOG.md` created (`### S01..S24` verified on disk) | **PASS** |
+| `HYG-02` | S02 | `tests/test_p3_s02_hygiene.py::test_probe_3_hyg02_backups_isolation_on_save` (pass); `backups/` entry count unchanged (`937`) | **PASS** |
+| `HYG-03` | S13 | `tests/test_p3_s13_ribbon_shortcuts.py::test_probe_03_hyg03_ribbon_tooltips_and_fallbacks` (pass) | **PASS** |
+| `HYG-04` | S04 | `tests/test_p3_s04_ast_mutations.py::test_probe_5_hyg04_bounded_removed_records` (pass); `prune_removed_records()` | **PASS** |
+| `HYG-05` | S02 | `tests/test_p3_s02_hygiene.py::test_probe_1_hyg05_search_engine_type_hints` (pass); `core/search_engine.py` | **PASS** |
+| `HYG-06` | S02 | `tests/test_p3_s02_hygiene.py::test_probe_2_hyg06_deepl_user_agent_single_version`, `test_guard_2_*` (pass); `core/mtl_engine.py` | **PASS** |
+| `HYG-07` | S13 | `tests/test_p3_s13_ribbon_shortcuts.py::test_probe_02_bug29_hyg07_*` & `tests/test_phase2_required.py::test_31_*` (pass); `_on_ctrl_h()` | **PASS** |
+| `HYG-08` | S23 | `tests/test_p3_s23_dead_code_cleanup.py::test_probe_hyg08_*`, `test_guard_update_gutter_clean_intact` (4 pass) | **PASS** |
+
+##### D. Deferred / Untouched Items (`DEF-01..DEF-10` — 10 IDs: 5 `DEFERRED`, 5 `BLOCKED`)
+
+| ID | Verification Evidence | Status |
+|---|---|---|
+| `DEF-01` | Empty binary argument single-space sentinel `" "` intact (`tests/test_p3_s03_binary_v2.py::test_guard_3_existing_core_suite_and_empty_arg_sentinel_intact` pass) | **DEFERRED** |
+| `DEF-02` | `cmd_id` 35/32 synthetic binary/v2 preservation passes (`test_p3_s03::test_guard_1`, `test_p3_s19::test_probe_1`), **real production `.unity3d` fixture missing** | **BLOCKED** |
+| `DEF-03` | Multi-TextAsset targeting deferred (`core/bundle_io.py:load_bundle_story` untouched single primary story TextAsset) | **DEFERRED** |
+| `DEF-04` | Box 0 Summary overflow unmeasured/deferred (`tests/test_p3_s18_game_preview.py::test_01` pass) | **DEFERRED** |
+| `DEF-05` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `DEF-06` | `_is_speaker_pinned` preserved untouched (`misora.py:1542, 8504, 8522, 8637-8650, 8883`) | **DEFERRED** |
+| `DEF-07` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `DEF-08` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `DEF-09` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `DEF-10` | `misora.py` kept monolithic during Phase 2.5/3 cycle (`17,315` lines; `.agents/rules/misora-safety.md` §5) | **DEFERRED** |
+
+##### E. Rejected Non-Goals (`NO-01..NO-12` — 12 IDs: 6 `PASS`, 6 `BLOCKED`)
+
+| ID | Verification Evidence | Status |
+|---|---|---|
+| `NO-01` | No drafts, `.unity3d` blobs, or runtime `Record.uid` in `.misora` v1 (`tests/test_p3_s16_misora_workspace.py::test_probe_1` pass) | **PASS** |
+| `NO-02` | No `AtlasAdv` sprites in Preview (`tests/test_p3_s18_game_preview.py::test_01..02` pass; `misora.py:5121`) | **PASS** |
+| `NO-03` | No `ttk.Treeview` or per-box `tk.Text` in `All Script` MTL (`tests/test_p3_s21_mtl_drawer_all_script.py::test_probe_1` pass) | **PASS** |
+| `NO-04` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-05` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-06` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-07` | No command-specific arity rejection in Raw Commands v2 (`misora.py:8101`; `tests/test_p3_s19_raw_commands_edit.py` pass) | **PASS** |
+| `NO-08` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-09` | No `conflict_manager` / global XUAT `.txt` pruning (`tests/test_p3_s22_import_xuat.py::test_probe_3` pass) | **PASS** |
+| `NO-10` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-11` | Definition unavailable (`Phase_2.5_Canonical_Ledger_LOCKED.md` missing from disk/git) | **BLOCKED** |
+| `NO-12` | No auto-shrink in Preview (`test_p3_s18::test_01..02` pass) & no `Record.uid`/drafts in `.misora` (`test_p3_s16::test_probe_1` pass) | **PASS** |
+
+### Track 2 Progress: Final Hygiene (S23) COMPLETE & S24 Audit Hold
+- **Status:** S23 (`HYG-08`) is COMPLETE; S24 Part A acceptance audit & `MF-S24` single-source fix are COMPLETE. Part B (`v1.4.1` stamp) is **HELD** at `__version__ = "1.4.0"` pending Part 2B closure/waivers.
+- **Next Action:** Project Lead review of `BUG-09` (`BLOCKED`), manual Windows QA (`AGENTS.md` §29 Ribbon Cut, Paste Box both views, DPI/snapped layout, `Import from XUAT`), `test_p3_s02_hygiene.py::test_guard_1` authorization, and optional `Phase_2.5_Canonical_Ledger_LOCKED.md` verification before promoting `v1.4.1`.
 
 ### S23 Final Grep-Proven Dead Code & Misleading Label Cleanup (2026-11-25)
 - **Session Scope:** `HYG-08` (Track 2 · Final Hygiene — standalone per Grok R1/R2; `RF-5`).

@@ -1,4 +1,4 @@
-# Misora Editor — Agent Rules
+# Misora: Story Editor — Agent Rules
 
 ## 1. Source of truth
 - Read `PROJECT_STATE.md` before every task. It is the canonical ledger and roadmap.
@@ -123,6 +123,7 @@
 - Colors use theme + `best_contrast_fg()`.
 - Icon-only controls have tooltips and text fallback when icons are unavailable.
 - `__version__` in root `__init__.py` is the single version source.
+- Versioning policy (`U00` — `A.b.c`): `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 - Native overflow rule: 50 digit-widths without a linebreak OR 3 or more linebreaks (4 or more lines). Note that editor font is a proxy/estimate of the in-game font.
 
 ## 22. Startup

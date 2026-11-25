@@ -3,7 +3,7 @@
 """
 misora.assets.splash - Minimal, Lightweight Splash Screen
 ==========================================================
-Displays a fast 600x400 placeholder window while Misora Editor initializes.
+Displays a fast 600x400 placeholder window while Misora: Story Editor initializes.
 Uses lightweight 600x400 JPEG artwork (Splash_1.jpg, Splash_2.jpg, Splash_3.jpg)
 with zero resizing overhead and minimal canvas elements so it displays instantly.
 """
@@ -33,7 +33,7 @@ def _load_app_version() -> str:
                         return parts[1].strip().strip('"\'')
     except Exception:
         pass
-    return "1.4.0"
+    return "0.0.0-unknown"
 
 _VERSION = _load_app_version()
 
@@ -56,7 +56,7 @@ SPLASH_H = 400
 
 class MisoraSplashScreen:
     """
-    Lightweight, instant splash placeholder for Misora Editor.
+    Lightweight, instant splash placeholder for Misora: Story Editor.
     Fixed 600x400 window with minimal text and a thin progress line.
     Can run as a Toplevel of the main MisoraApp or standalone Tk.
     """
@@ -101,19 +101,19 @@ class MisoraSplashScreen:
         self._canvas.create_rectangle(0, SPLASH_H - 80, SPLASH_W, SPLASH_H, fill="#120624", outline="")
         self._canvas.create_line(0, SPLASH_H - 80, SPLASH_W, SPLASH_H - 80, fill="#7b42bc", width=1)
 
-        # Title: "Misora Editor" (prominent, with shadow)
+        # Title: "Misora: Story Editor" (prominent, with shadow)
         self._canvas.create_text(
             21, SPLASH_H - 51,
             anchor="w",
-            text="Misora Editor",
-            font=("Segoe UI", 20, "bold"),
+            text="Misora: Story Editor",
+            font=("Segoe UI", 18, "bold"),
             fill="#0a0314",
         )
         self._canvas.create_text(
             20, SPLASH_H - 52,
             anchor="w",
-            text="Misora Editor",
-            font=("Segoe UI", 20, "bold"),
+            text="Misora: Story Editor",
+            font=("Segoe UI", 18, "bold"),
             fill="#ffffff",
         )
 

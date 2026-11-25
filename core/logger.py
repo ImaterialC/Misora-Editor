@@ -70,9 +70,13 @@ class MisoraLogger:
         self._file_queue: "queue.Queue[Optional[LogEntry]]" = queue.Queue(maxsize=10000)
         self._writer_thread: Optional[threading.Thread] = None
         self._writer_lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._closed: bool = False
 
     def _start_writer_thread_if_needed(self) -> None:
         with self._writer_lock:
+            if self._closed or self._stop_event.is_set():
+                return
             if self._writer_thread is None or not self._writer_thread.is_alive():
                 self._writer_thread = threading.Thread(
                     target=self._file_writer_loop,
@@ -85,7 +89,12 @@ class MisoraLogger:
         """Background worker thread consuming log entries and writing to disk."""
         while True:
             try:
-                entry = self._file_queue.get()
+                entry = self._file_queue.get(timeout=0.1)
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    break
+                continue
+            try:
                 if entry is None:
                     self._file_queue.task_done()
                     break
@@ -111,14 +120,23 @@ class MisoraLogger:
                 time.sleep(0.005)
 
     def close(self) -> None:
-        """Stop background log writer thread cleanly."""
+        """Stop background log writer thread cleanly and idempotently (BUG-05)."""
+        with self._lock:
+            self._closed = True
+        self.flush(timeout=1.0)
+        self._stop_event.set()
         with self._writer_lock:
-            if self._writer_thread and self._writer_thread.is_alive():
+            t = self._writer_thread
+            if t is not None and t.is_alive():
                 try:
                     self._file_queue.put_nowait(None)
-                    self._writer_thread.join(timeout=0.5)
+                except queue.Full:
+                    pass
+                try:
+                    t.join(timeout=1.0)
                 except Exception:
                     pass
+            if t is None or not t.is_alive():
                 self._writer_thread = None
 
     def configure(
@@ -191,12 +209,13 @@ class MisoraLogger:
                 except Exception:
                     pass
 
-            if self.log_to_file:
+            if self.log_to_file and not self._closed and not self._stop_event.is_set():
                 self._start_writer_thread_if_needed()
-                try:
-                    self._file_queue.put_nowait(entry)
-                except queue.Full:
-                    pass
+                if not self._closed and not self._stop_event.is_set():
+                    try:
+                        self._file_queue.put_nowait(entry)
+                    except queue.Full:
+                        pass
 
     def _write_entry_to_file(self, entry: LogEntry) -> None:
         try:

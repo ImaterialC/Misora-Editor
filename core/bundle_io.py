@@ -121,29 +121,33 @@ def load_bundle_story(path: Union[str, Path]) -> Tuple[StoryDocument, Any, Any, 
     except Exception as e:
         raise BundleIOError(f"Failed to open Unity3D bundle '{path.name}': {e}")
 
-    target_obj = None
-    target_name = ""
-
-    for obj in env.objects:
-        if obj.type.name == "TextAsset":
-            try:
-                data = obj.read()
-                nm = getattr(data, "m_Name", "") or ""
-                if nm.startswith("storydata") or "story" in nm.lower() or not target_obj:
-                    target_obj = obj
-                    target_name = nm
-            except Exception:
-                pass
-
-    if not target_obj:
-        raise BundleIOError(f"No TextAsset found inside bundle '{path.name}'.")
-
-    raw_bytes = extract_raw_story_bytes(target_obj)
     try:
-        doc = StoryDocument.from_binary(raw_bytes)
-    except ValueError as ex:
-        raise BundleIOError(f"Corrupted or invalid binary story data: {ex}") from ex
-    return doc, env, target_obj, target_name
+        target_obj = None
+        target_name = ""
+
+        for obj in env.objects:
+            if obj.type.name == "TextAsset":
+                try:
+                    data = obj.read()
+                    nm = getattr(data, "m_Name", "") or ""
+                    if nm.startswith("storydata") or "story" in nm.lower() or not target_obj:
+                        target_obj = obj
+                        target_name = nm
+                except Exception:
+                    pass
+
+        if not target_obj:
+            raise BundleIOError(f"No TextAsset found inside bundle '{path.name}'.")
+
+        raw_bytes = extract_raw_story_bytes(target_obj)
+        try:
+            doc = StoryDocument.from_binary(raw_bytes)
+        except ValueError as ex:
+            raise BundleIOError(f"Corrupted or invalid binary story data: {ex}") from ex
+        return doc, env, target_obj, target_name
+    except Exception:
+        dispose_unity_env(env)
+        raise
 
 
 def _obj_key(o: Any) -> Any:
@@ -190,11 +194,13 @@ def save_bundle_story(
             raise BundleIOError("A bundle save operation is already in progress.")
         _is_saving = True
 
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = out_path.with_name(f"{out_path.name}.{os.getpid()}_{id(doc)}.tmp")
+    tmp_path: Optional[Path] = None
 
     try:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = out_path.with_name(f"{out_path.name}.{os.getpid()}_{id(doc)}.tmp")
+
         source_stat = out_path.stat() if out_path.is_file() else None
         source_fingerprint = (source_stat.st_mtime_ns, source_stat.st_size) if source_stat else None
         target_path_id = getattr(text_asset_obj, "path_id", None)
@@ -310,7 +316,7 @@ def save_bundle_story(
         return out_path.stat().st_size
 
     finally:
-        if tmp_path.exists():
+        if tmp_path is not None and tmp_path.exists():
             try:
                 tmp_path.unlink()
             except Exception:

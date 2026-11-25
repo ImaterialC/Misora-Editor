@@ -13,7 +13,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from .story_ast import norm_search
 from .text_encoding import detect_encoding_and_decode, encode_with_metadata, write_atomic_encoded
@@ -100,6 +100,15 @@ class XUnitySyncManager:
     def clear_jp_keys(self) -> None:
         """Clear cached Japanese source keys."""
         self.jp_source_cache.clear()
+
+    def unregister_jp_keys(self, box_uids: Iterable[Optional[int]]) -> int:
+        """Remove only the specified box UIDs from jp_source_cache without affecting other documents."""
+        removed = 0
+        for uid in box_uids:
+            if uid is not None and uid in self.jp_source_cache:
+                self.jp_source_cache.pop(uid, None)
+                removed += 1
+        return removed
 
     def preview_matches(
         self,

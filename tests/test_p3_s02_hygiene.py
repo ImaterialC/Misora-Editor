@@ -152,8 +152,15 @@ class TestP3S02Hygiene(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_guard_1_root_version_untouched(self):
-        """[Guard 1] Root __init__.__version__ must remain strictly '1.4.0' until S24."""
-        self.assertEqual(_read_root_version(), "1.4.0")
+        """[Guard 1] Single-source __init__.__version__ parity across modules (U00)."""
+        root_ver = _read_root_version()
+        self.assertRegex(root_ver, r"^\d+\.\d+\.\d+$")
+        import assets.splash as splash
+        import core.mtl_engine as mtl_engine
+        import misora
+        self.assertEqual(misora.__version__, root_ver)
+        self.assertEqual(mtl_engine.APP_VERSION, root_ver)
+        self.assertEqual(splash._VERSION, root_ver)
 
     def test_guard_2_mtl_engine_no_circular_misora_import(self):
         """[Guard 2] Importing core.mtl_engine must NEVER import misora.py (checked in isolated process)."""
