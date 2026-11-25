@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 
+### S07 (v1.4.7) — Transactional XUAT Post-Import Cleanup, Mandatory Archival Engine, & `Debug > Safety` (`U01`)
+- **Pure-Python Per-File Transactional XUAT Cleanup & Archival Engine (`core/xuat_cleanup.py`, `core/xuat_index.py`, `core/__init__.py`, `U01`):**
+  - Added zero-Tkinter, zero-`misora` cleanup and archival engine (`core/xuat_cleanup.py`) with injected `backup_path_fn` callback and pure-Python collision-resistant fallback.
+  - Extended `XuatIndex` (`core/xuat_index.py`) with `entries`, `file_fingerprints` (SHA-256 hex digest captured at index/preview time), `lookup_all_by_norm_key()`, `lookup_by_value()`, and `compute_file_sha256()`.
+  - **Stale Source Guard (`StaleSourceError`):** Re-hashes all targeted XUAT files on disk before modifying any file and aborts cleanly if any targeted file changed since import/preview.
+  - **Conservative 3-Tier Classification (`classify_cleanup_candidates`):** `applied` (exact confirmed `(file_path, line_number)`), `duplicate` (exact `normalize_xuat_key()`, never substring, controlled by `selected_only` vs `all_duplicates`), `already_translated_unique` (exact asset dialogue match mapping to strictly 1 unique key & `>= 6` non-space chars), and `uncertain` (`selected=False` by default for short `<6` non-space chars, multi-key ambiguous values, and shared `box.speaker` matches).
+  - **Strict Format & Linebreak Modes:** Preserves UTF-8 BOM, UTF-16 LE/BE BOM, CP932, CRLF/LF/CR, `#`/`//`/`;` comments, `r:`/`sr:` directives, escaped `\=`, whitespace-only values, short JP keys, and EOF trailing-newline semantics under both `keep_blank_line` and `remove_line_break`.
+  - **Mandatory Archive-First Execution & Two Encoding Contracts:** Validates archive destinations via `validate_archive_target()` (refusing source overwrites; warning on `.txt` or `BepInEx\Translation\en\Text` subtrees), writes and verifies archive(s) FIRST (`combined` in canonical UTF-8/LF with structured `encoding`/`bom`/`newline` traceability headers; `per_source_file` preserving raw original encoding, BOM, and newline byte-for-byte without emitting mid-file duplicate BOMs on append), then applies atomic per-file edits (safety backup -> `.tmp` -> strict reopen & verify -> `os.replace()`) with granular `CleanupReport` on partial failures and non-auto-deleting `is_xuat_file_meaningfully_empty()` detection.
+- **`Debug > Safety` Preference (`misora.py`, `U01-E`):**
+  - Added `Debug > Safety` submenu (`self.debug_safety_menu`) with `Auto-backup XUAT files before cleanup edits` (default `True`, persisted under `xuat_cleanup.safety_backup_enabled`, requires confirmation to turn OFF) and `XUAT Cleanup & Archive Settings...` (`XuatCleanupSettingsDialog`, defaulting to `<SCRIPT_DIR>/backups/xuat_archive`, `.xuat.old`, `combined`) with malformed-config recovery.
+- **Post-Import Cleanup & `Tools -> Clean / Archive XUAT...` (`misora.py`, `U01-A..D`):**
+  - `ImportFromXUATDialog._on_apply_import()` tracks confirmed `AppliedXuatRecord` entries and opens `XuatCleanupDialog` non-blockingly ONLY when `applied_count > 0`, leaving XUAT `.txt` files untouched until user execution.
+  - Added `Tools -> Clean / Archive XUAT...` (`MisoraApp.on_clean_archive_xuat()`) reusing `XuatCleanupDialog` (conditional duplicate scope hidden at 0 duplicates, `Debug > Safety` OFF warning banner, separate irreversible confirmation for unarchived opt-out, and 2-step empty-file deletion confirmation quoting exact safety backup paths).
+- **Tests & Versioning (`__init__.py`, `tests/test_v15_s07_xuat_cleanup_archive.py`):**
+  - Bumped `__version__` to `"1.4.7"`. Added `tests/test_v15_s07_xuat_cleanup_archive.py` (7 failing-first probes + 2 regression guards: `9/9` pass post-patch).
+
 ### S06 (v1.4.6) — Top-Level `Tools` Menu & Lossless Pixel-Calibrated Auto Word Wrap (`U07`, `4.5`)
 - **Pure-Python Lossless NGUI & Grapheme-Aware Auto Word Wrap Engine (`core/word_wrap.py`, `core/__init__.py`, `U07`):**
   - Added `wrap_text()`, `iter_graphemes()`, and `WrapResult` with zero Tkinter dependencies, reusing `core.ngui_tags` (`NGUI_TOKEN_RE`, `RUBY_RE`, `PLACEHOLDER_RE`) as the single source of truth (`AGENTS.md` §19).

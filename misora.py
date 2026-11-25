@@ -80,6 +80,11 @@ try:
         compute_workspace_diff, save_workspace, load_workspace,
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
+        DEFAULT_ARCHIVE_EXT, VALID_ARCHIVE_STRATEGIES, VALID_LINEBREAK_POLICIES, VALID_DUPLICATE_SCOPES,
+        StaleSourceError, ArchiveTargetError, AppliedXuatRecord, CleanupCandidate,
+        CleanupAnalysis, ArchiveTargetValidation, EmptyFileInfo, CleanupReport,
+        default_archive_dir, validate_archive_target, apply_duplicate_scope,
+        classify_cleanup_candidates, execute_cleanup, delete_empty_xuat_files,
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
         game_to_xuat, WrapResult, wrap_text,
     )
@@ -116,6 +121,11 @@ except ImportError:
         compute_workspace_diff, save_workspace, load_workspace,
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
+        DEFAULT_ARCHIVE_EXT, VALID_ARCHIVE_STRATEGIES, VALID_LINEBREAK_POLICIES, VALID_DUPLICATE_SCOPES,
+        StaleSourceError, ArchiveTargetError, AppliedXuatRecord, CleanupCandidate,
+        CleanupAnalysis, ArchiveTargetValidation, EmptyFileInfo, CleanupReport,
+        default_archive_dir, validate_archive_target, apply_duplicate_scope,
+        classify_cleanup_candidates, execute_cleanup, delete_empty_xuat_files,
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
         game_to_xuat, WrapResult, wrap_text,
     )
@@ -1569,6 +1579,10 @@ class MisoraApp(tk.Tk):
         self.dnd_batch_threshold: int = 10
         self.dnd_size_threshold_mb: float = 25.0
         self.dnd_filter_binary: bool = True
+        self.xuat_safety_backup_enabled: bool = True
+        self.xuat_archive_dir: Optional[Path] = None
+        self.xuat_archive_ext: str = DEFAULT_ARCHIVE_EXT
+        self.xuat_archive_strategy: str = "combined"
 
         _rpt(0.25, "Loading saved preferences…")
         self.font_manager = FontManager(SCRIPT_DIR / "assets" / "fonts", logger=self.logger)
@@ -1608,8 +1622,11 @@ class MisoraApp(tk.Tk):
         self._xuat_index_poll_id: Optional[str] = None
         self._xuat_index_seq: int = 0
         self._xuat_index_cancel: Optional[threading.Event] = None
+        self._xuat_index_thread: Optional[threading.Thread] = None
         self._xuat_global_choice_overrides: Dict[str, str] = {}
         self._import_xuat_dialog: Optional[Any] = None
+        self._xuat_cleanup_dialog: Optional[Any] = None
+        self._xuat_cleanup_settings_dialog: Optional[Any] = None
         self._ui_ready: bool = False
         self.selected_search_folder: Optional[Path] = None
 
@@ -1703,6 +1720,7 @@ class MisoraApp(tk.Tk):
         self._console_visible: bool = bool(dbg_cfg.get("console_visible", False))
         self.var_console_visible = tk.BooleanVar(master=self, value=self._console_visible)
         self.var_log_to_file = tk.BooleanVar(master=self, value=bool(dbg_cfg.get("log_to_file", False)))
+        self.var_xuat_safety_backup = tk.BooleanVar(master=self, value=bool(self.xuat_safety_backup_enabled))
 
         # Speaker autocomplete popup state (U-3 / U-4)
         self._speaker_popup: Optional[tk.Toplevel] = None
@@ -1984,6 +2002,13 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
                 self._xuat_index_cancel = None
+            if hasattr(self, "_xuat_index_thread") and self._xuat_index_thread is not None:
+                try:
+                    if self._xuat_index_thread.is_alive():
+                        self._xuat_index_thread.join(timeout=1.0)
+                except Exception:
+                    pass
+                self._xuat_index_thread = None
             if hasattr(self, "_xuat_index_poll_id") and self._xuat_index_poll_id:
                 try:
                     self.after_cancel(self._xuat_index_poll_id)
@@ -2062,6 +2087,13 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._xuat_index_cancel = None
+        if hasattr(self, "_xuat_index_thread") and self._xuat_index_thread is not None:
+            try:
+                if self._xuat_index_thread.is_alive():
+                    self._xuat_index_thread.join(timeout=1.0)
+            except Exception:
+                pass
+            self._xuat_index_thread = None
         if hasattr(self, "_xuat_index_poll_id") and self._xuat_index_poll_id:
             try:
                 self.after_cancel(self._xuat_index_poll_id)
@@ -2085,6 +2117,16 @@ class MisoraApp(tk.Tk):
                 self._close_speaker_autocomplete()
             except Exception:
                 pass
+        for dlg_attr in ("_xuat_cleanup_dialog", "_xuat_cleanup_settings_dialog", "_import_xuat_dialog"):
+            dlg_obj = getattr(self, dlg_attr, None)
+            if dlg_obj is not None:
+                try:
+                    safe_grab_release(dlg_obj)
+                    if dlg_obj.winfo_exists():
+                        dlg_obj.destroy()
+                except Exception:
+                    pass
+                setattr(self, dlg_attr, None)
         if hasattr(self, "_speaker_focus_out_after_id") and self._speaker_focus_out_after_id:
             try:
                 self.after_cancel(self._speaker_focus_out_after_id)
@@ -2270,6 +2312,20 @@ class MisoraApp(tk.Tk):
                         if isinstance(val, bool):
                             defaults[eng_name] = val
                     self._mtl_drawer_enabled_engines = defaults
+                raw_xc = raw.get("xuat_cleanup")
+                if isinstance(raw_xc, dict):
+                    if isinstance(raw_xc.get("safety_backup_enabled"), bool):
+                        self.xuat_safety_backup_enabled = raw_xc["safety_backup_enabled"]
+                    arch_dir_str = raw_xc.get("archive_dir")
+                    if isinstance(arch_dir_str, str) and arch_dir_str.strip():
+                        self.xuat_archive_dir = Path(arch_dir_str.strip())
+                    arch_ext_str = raw_xc.get("archive_ext")
+                    if isinstance(arch_ext_str, str) and arch_ext_str.strip():
+                        ext_clean = arch_ext_str.strip()
+                        self.xuat_archive_ext = ext_clean if ext_clean.startswith(".") else "." + ext_clean
+                    arch_strat = raw_xc.get("archive_strategy")
+                    if isinstance(arch_strat, str) and arch_strat in VALID_ARCHIVE_STRATEGIES:
+                        self.xuat_archive_strategy = arch_strat
             except Exception as exc:
                 self.logger.warning("UI / Theme / Config", f"Failed to parse {CONFIG_PATH}: {exc}")
                 try:
@@ -2330,6 +2386,20 @@ class MisoraApp(tk.Tk):
                 "sync_xuat": bool(self.var_sync_xuat.get()) if hasattr(self, "var_sync_xuat") else True,
                 "show_ngui_ribbon": bool(self.var_show_ngui_ribbon.get()) if hasattr(self, "var_show_ngui_ribbon") else getattr(self, "_saved_show_ngui_ribbon", False),
                 "mtl_drawer_enabled_engines": dict(getattr(self, "_mtl_drawer_enabled_engines", {})),
+                "xuat_cleanup": {
+                    "safety_backup_enabled": bool(
+                        self.var_xuat_safety_backup.get()
+                        if hasattr(self, "var_xuat_safety_backup")
+                        else getattr(self, "xuat_safety_backup_enabled", True)
+                    ),
+                    "archive_dir": str(self.xuat_archive_dir) if getattr(self, "xuat_archive_dir", None) else "",
+                    "archive_ext": str(getattr(self, "xuat_archive_ext", DEFAULT_ARCHIVE_EXT) or DEFAULT_ARCHIVE_EXT),
+                    "archive_strategy": (
+                        self.xuat_archive_strategy
+                        if getattr(self, "xuat_archive_strategy", "combined") in VALID_ARCHIVE_STRATEGIES
+                        else "combined"
+                    ),
+                },
             }
             # In-memory serialization before file write ensures DPAPISecurityError never truncates config (BUG-33)
             encoded_payload = json.dumps(payload, indent=2, ensure_ascii=False)
@@ -4046,6 +4116,11 @@ class MisoraApp(tk.Tk):
             label="Auto Word Wrap...",
             command=self.on_open_auto_word_wrap,
         )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Clean / Archive XUAT...",
+            command=self.on_clean_archive_xuat,
+        )
         menubar.add_cascade(label="Tools", menu=tools_menu)
         self._all_menus.append(tools_menu)
 
@@ -4331,6 +4406,27 @@ class MisoraApp(tk.Tk):
         self.debug_menu.add_command(label="Clear Log File", command=self._on_clear_debug_log_file)
         self.debug_menu.add_separator()
         self.debug_menu.add_command(label="Drag & Drop Safety Settings...", command=self._on_dnd_settings_dialog)
+
+        self.debug_safety_menu = tk.Menu(
+            self.debug_menu,
+            tearoff=0,
+            bg=t["bg_panel"],
+            fg=panel_fg,
+            activebackground=t["misora_pink"],
+            activeforeground=accent_fg,
+        )
+        self.debug_safety_menu.add_checkbutton(
+            label="Auto-backup XUAT files before cleanup edits",
+            variable=self.var_xuat_safety_backup,
+            command=self._on_toggle_xuat_safety_backup,
+            selectcolor=t["misora_pink"],
+        )
+        self.debug_safety_menu.add_command(
+            label="XUAT Cleanup & Archive Settings...",
+            command=self._on_xuat_cleanup_settings_dialog,
+        )
+        self.debug_menu.add_cascade(label="Safety", menu=self.debug_safety_menu)
+        self._all_menus.append(self.debug_safety_menu)
 
         menubar.add_cascade(label="Debug", menu=self.debug_menu)
         self._all_menus.append(self.debug_menu)
@@ -16908,7 +17004,7 @@ class MisoraApp(tk.Tk):
         seq = self._xuat_index_seq
         cancel_ev = threading.Event()
         self._xuat_index_cancel = cancel_ev
-        build_xuat_index_async(
+        self._xuat_index_thread = build_xuat_index_async(
             strict_roots,
             out_queue=self._xuat_index_queue,
             metadata=seq,
@@ -16975,6 +17071,86 @@ class MisoraApp(tk.Tk):
 
         dlg = ImportFromXUATDialog(self, idx)
         self._import_xuat_dialog = dlg
+        return dlg
+
+    def _get_xuat_archive_dir(self) -> Path:
+        """Return configured XUAT archive directory, defaulting to SCRIPT_DIR/backups/xuat_archive."""
+        raw_dir = getattr(self, "xuat_archive_dir", None)
+        if raw_dir:
+            return Path(raw_dir)
+        return default_archive_dir(SCRIPT_DIR)
+
+    def _on_toggle_xuat_safety_backup(self) -> None:
+        """Toggle automatic XUAT safety backups (Debug > Safety), requiring confirmation to turn OFF."""
+        new_val = bool(self.var_xuat_safety_backup.get())
+        if not new_val:
+            ok = messagebox.askyesno(
+                "Disable Automatic XUAT Safety Backups?",
+                "Disabling 'Auto-backup XUAT files before cleanup edits' means modified or emptied "
+                "XUAT files will NOT receive a per-file safety backup before cleanup writes.\n\n"
+                "Disable automatic XUAT safety backups?",
+                icon="warning",
+                default=messagebox.NO,
+                parent=self,
+            )
+            if not ok:
+                self.var_xuat_safety_backup.set(True)
+                self.xuat_safety_backup_enabled = True
+                return
+        self.xuat_safety_backup_enabled = new_val
+        self._save_user_prefs(silent=True)
+        state_lbl = "ON" if new_val else "OFF (Not Recommended)"
+        self.logger.info("UI / Theme / Config", f"XUAT cleanup safety backup toggled: {state_lbl}")
+        self.lbl_status.config(text=f"XUAT cleanup safety backup: {state_lbl}")
+        cleanup_dlg = getattr(self, "_xuat_cleanup_dialog", None)
+        if cleanup_dlg is not None:
+            try:
+                if cleanup_dlg.winfo_exists():
+                    cleanup_dlg._refresh_safety_banner()
+            except Exception:
+                pass
+
+    def _on_xuat_cleanup_settings_dialog(self) -> Optional["XuatCleanupSettingsDialog"]:
+        """Open Debug > Safety > XUAT Cleanup & Archive Settings... modal dialog."""
+        existing = getattr(self, "_xuat_cleanup_settings_dialog", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return existing
+            except Exception:
+                pass
+        dlg = XuatCleanupSettingsDialog(self)
+        self._xuat_cleanup_settings_dialog = dlg
+        return dlg
+
+    def on_clean_archive_xuat(self, xuat_index: Optional[XuatIndex] = None) -> Optional["XuatCleanupDialog"]:
+        """Open XUAT cleanup/archival audit dialog against the active story (Tools -> Clean / Archive XUAT...)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            messagebox.showwarning("No Story Open", "Open a story bundle or text file first.", parent=self)
+            return None
+
+        idx = xuat_index if xuat_index is not None else self._get_or_build_xuat_index(force_rebuild=True)
+        existing = getattr(self, "_xuat_cleanup_dialog", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.destroy()
+            except Exception:
+                pass
+            self._xuat_cleanup_dialog = None
+
+        fps = dict(getattr(idx, "file_fingerprints", {}) or {})
+        dlg = XuatCleanupDialog(
+            self,
+            xuat_index=idx,
+            doc=self.current_doc,
+            applied_records=(),
+            source_fingerprints=fps,
+            mode="manual",
+        )
+        self._xuat_cleanup_dialog = dlg
         return dlg
 
     def on_export_script(self, file_path: Optional[Union[str, Path]] = None) -> Optional[Path]:
@@ -18661,7 +18837,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         lock_skipped_nums: List[int] = []
         user_skipped_nums: List[int] = []
         missing_count = 0
-        plan: List[Tuple[int, Any, str, str]] = []
+        plan: List[Tuple[int, Any, str, str, Any]] = []
 
         for row in self._rows:
             b_idx = row["box_idx"]
@@ -18677,12 +18853,13 @@ class ImportFromXUATDialog(tk.Toplevel):
                 missing_count += 1
                 continue
             box = doc.boxes[b_idx]
-            new_tx = cands[row["cand_idx"]].value
+            chosen_entry = cands[row["cand_idx"]]
+            new_tx = chosen_entry.value
             new_sp = box.speaker
             if translate_speakers and b_idx in self._speaker_matches and box.kind == "print":
                 new_sp = self._speaker_matches[b_idx]
             to_import_nums.append(b_num)
-            plan.append((b_idx, row["box_uid"], new_sp, new_tx))
+            plan.append((b_idx, row["box_uid"], new_sp, new_tx, chosen_entry))
 
         prompt = (
             "Confirm XUAT Import Summary:\n\n"
@@ -18709,9 +18886,10 @@ class ImportFromXUATDialog(tk.Toplevel):
 
         applied_count = 0
         still_over_3 = 0
+        applied_records: List[AppliedXuatRecord] = []
         self.app.undo_journal.begin_batch("Import from XUAT")
         try:
-            for b_idx, b_uid, new_sp, raw_tx in plan:
+            for b_idx, b_uid, new_sp, raw_tx, chosen_entry in plan:
                 if not (0 <= b_idx < len(doc.boxes)):
                     continue
                 if self.app.is_box_locked(b_idx):
@@ -18749,9 +18927,21 @@ class ImportFromXUATDialog(tk.Toplevel):
                 self.app._modified_boxes.add(b_idx)
                 if b_uid is not None and hasattr(self.app, "_modified_box_uids"):
                     self.app._modified_box_uids.add(b_uid)
+                applied_records.append(
+                    AppliedXuatRecord(
+                        file_path=chosen_entry.file_path,
+                        line_number=chosen_entry.line_number,
+                        raw_key=chosen_entry.raw_key,
+                        value=chosen_entry.value,
+                        box_index=b_idx,
+                    )
+                )
                 applied_count += 1
         finally:
             self.app.undo_journal.end_batch()
+
+        xuat_idx_snapshot = self.xuat_index
+        source_fps = dict(getattr(xuat_idx_snapshot, "file_fingerprints", {}) or {})
 
         if applied_count > 0:
             self.app._mark_document_dirty(self.app.current_file_path)
@@ -18765,6 +18955,25 @@ class ImportFromXUATDialog(tk.Toplevel):
             self.app.show_toast("No changes were applied from XUAT.")
 
         self._on_close()
+        if applied_count > 0 and applied_records and xuat_idx_snapshot is not None:
+            existing_cleanup = getattr(self.app, "_xuat_cleanup_dialog", None)
+            if existing_cleanup is not None:
+                try:
+                    if existing_cleanup.winfo_exists():
+                        existing_cleanup.destroy()
+                except Exception:
+                    pass
+                self.app._xuat_cleanup_dialog = None
+            # Guardrail 1: open non-blockingly without wait_window() or grab_set()
+            cleanup_dlg = XuatCleanupDialog(
+                self.app,
+                xuat_index=xuat_idx_snapshot,
+                doc=doc,
+                applied_records=applied_records,
+                source_fingerprints=source_fps,
+                mode="post_import",
+            )
+            self.app._xuat_cleanup_dialog = cleanup_dlg
         return applied_count > 0
 
     def _on_close(self) -> None:
@@ -18783,6 +18992,669 @@ class ImportFromXUATDialog(tk.Toplevel):
             pass
         if getattr(self.app, "_import_xuat_dialog", None) is self:
             self.app._import_xuat_dialog = None
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
+
+
+# =============================================================================
+# XUAT Cleanup & Archival Dialogs (S07 / U01)
+# =============================================================================
+class XuatCleanupSettingsDialog(tk.Toplevel):
+    """Modal configuration dialog for Debug > Safety > XUAT Cleanup & Archive Settings..."""
+
+    def __init__(self, parent: "MisoraApp") -> None:
+        super().__init__(parent)
+        self.app = parent
+        self.title("XUAT Cleanup & Archive Settings")
+        self.geometry("560x340")
+        self.minsize(500, 300)
+        self.transient(parent)
+        self.grab_set()
+
+        t = self.app.theme
+        self.configure(bg=t["bg_panel"])
+        apply_window_icon(self)
+
+        self.var_archive_dir = tk.StringVar(master=self, value=str(self.app._get_xuat_archive_dir()))
+        self.var_archive_ext = tk.StringVar(
+            master=self,
+            value=str(getattr(self.app, "xuat_archive_ext", DEFAULT_ARCHIVE_EXT) or DEFAULT_ARCHIVE_EXT),
+        )
+        self.var_strategy = tk.StringVar(
+            master=self,
+            value=str(getattr(self.app, "xuat_archive_strategy", "combined") or "combined"),
+        )
+
+        self._build_ui(t)
+        self.var_archive_dir.trace_add("write", lambda *_a: self._refresh_warning())
+        self.var_archive_ext.trace_add("write", lambda *_a: self._refresh_warning())
+        self.var_strategy.trace_add("write", lambda *_a: self._refresh_warning())
+        self._refresh_warning()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
+
+    def _build_ui(self, t: dict) -> None:
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+
+        body = tk.Frame(self, bg=t["bg_panel"], padx=16, pady=12)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(
+            body,
+            text="XUAT Cleanup & Archive Settings",
+            font=("Segoe UI", 11, "bold"),
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+        ).pack(anchor="w", pady=(0, 8))
+
+        r_dir = tk.Frame(body, bg=t["bg_panel"])
+        r_dir.pack(fill="x", pady=4)
+        tk.Label(r_dir, text="Archive Folder:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
+        tk.Entry(r_dir, textvariable=self.var_archive_dir, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(r_dir, text="Browse...", style="Small.TButton", command=self._browse_dir).pack(side="left", padx=(2, 2))
+        ttk.Button(r_dir, text="Default", style="Small.TButton", command=self._reset_default_dir).pack(side="left")
+
+        r_ext = tk.Frame(body, bg=t["bg_panel"])
+        r_ext.pack(fill="x", pady=4)
+        tk.Label(r_ext, text="Archive Extension:", font=("Segoe UI", 9), bg=t["bg_panel"], fg=fg_panel, width=16, anchor="w").pack(side="left")
+        tk.Entry(r_ext, textvariable=self.var_archive_ext, width=16, font=("Segoe UI", 9), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", padx=4)
+        tk.Label(r_ext, text="(Default: .xuat.old — avoid .txt)", font=("Segoe UI", 8), bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="left", padx=4)
+
+        strat_box = tk.LabelFrame(
+            body,
+            text="Default Archive Strategy",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=6,
+        )
+        strat_box.pack(fill="x", pady=(8, 6))
+        ttk.Radiobutton(
+            strat_box,
+            text="Combined archive (xuat_removed_archive.xuat.old — canonical UTF-8/LF + original encoding metadata)",
+            variable=self.var_strategy,
+            value="combined",
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w", pady=1)
+        ttk.Radiobutton(
+            strat_box,
+            text="Per-source file (<source>.xuat.old — preserves original encoding, BOM & newline byte-for-byte)",
+            variable=self.var_strategy,
+            value="per_source_file",
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w", pady=1)
+
+        self.lbl_warning = tk.Label(
+            body,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            bg=t["bg_panel"],
+            fg="#e69f00",
+            wraplength=510,
+            justify="left",
+            anchor="w",
+        )
+        self.lbl_warning.pack(fill="x", pady=(6, 0))
+
+        btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=16, pady=10)
+        btn_bar.pack(fill="x", side="bottom")
+        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_close).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_bar, text="Save Settings", style="Pink.TButton", command=self._on_save).pack(side="right")
+
+    def _browse_dir(self) -> None:
+        chosen = filedialog.askdirectory(
+            title="Select XUAT Archive Folder",
+            initialdir=self.var_archive_dir.get() or str(SCRIPT_DIR),
+            parent=self,
+        )
+        if chosen:
+            self.var_archive_dir.set(chosen)
+
+    def _reset_default_dir(self) -> None:
+        self.var_archive_dir.set(str(default_archive_dir(SCRIPT_DIR)))
+        self.var_archive_ext.set(DEFAULT_ARCHIVE_EXT)
+
+    def _refresh_warning(self) -> None:
+        if not self.winfo_exists():
+            return
+        res = validate_archive_target(
+            self.var_archive_dir.get().strip(),
+            self.var_archive_ext.get().strip(),
+            self.var_strategy.get(),
+            source_paths=(),
+            xuat_roots=self.app._get_xuat_index_roots(),
+        )
+        msgs = list(res.errors) + list(res.warnings)
+        self.lbl_warning.config(text="\n".join(f"⚠ {m}" for m in msgs))
+
+    def _on_save(self) -> None:
+        raw_dir = self.var_archive_dir.get().strip()
+        raw_ext = self.var_archive_ext.get().strip() or DEFAULT_ARCHIVE_EXT
+        if not raw_ext.startswith("."):
+            raw_ext = "." + raw_ext
+        strat = self.var_strategy.get()
+        if strat not in VALID_ARCHIVE_STRATEGIES:
+            strat = "combined"
+        self.app.xuat_archive_dir = Path(raw_dir) if raw_dir else None
+        self.app.xuat_archive_ext = raw_ext
+        self.app.xuat_archive_strategy = strat
+        self.app._save_user_prefs(silent=True)
+        self.app.lbl_status.config(text="XUAT cleanup & archive settings saved.")
+        self._on_close()
+
+    def _on_close(self) -> None:
+        self.var_archive_dir = None  # type: ignore[assignment]
+        self.var_archive_ext = None  # type: ignore[assignment]
+        self.var_strategy = None  # type: ignore[assignment]
+        if getattr(self.app, "_xuat_cleanup_settings_dialog", None) is self:
+            self.app._xuat_cleanup_settings_dialog = None
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
+
+
+class XuatCleanupDialog(tk.Toplevel):
+    """Post-import and manual XUAT cleanup/archival review dialog (U01)."""
+
+    def __init__(
+        self,
+        parent: "MisoraApp",
+        xuat_index: XuatIndex,
+        doc: Any,
+        applied_records: Sequence[AppliedXuatRecord] = (),
+        source_fingerprints: Optional[Dict[Path, str]] = None,
+        mode: str = "post_import",
+    ) -> None:
+        super().__init__(parent)
+        self.app = parent
+        self.xuat_index = xuat_index
+        self.doc = doc
+        self.applied_records = list(applied_records)
+        self.mode = mode
+        self.last_report: Optional[CleanupReport] = None
+
+        self.title("Post-Import XUAT Cleanup & Archive" if mode == "post_import" else "Clean / Archive XUAT")
+        self.geometry("860x640")
+        self.minsize(720, 520)
+        self.transient(parent)
+
+        t = self.app.theme
+        self.configure(bg=t["bg_panel"])
+        apply_window_icon(self)
+
+        self.var_duplicate_scope = tk.StringVar(master=self, value="selected_only")
+        self.var_linebreak_policy = tk.StringVar(master=self, value="remove_line_break")
+        self.var_archive_strategy = tk.StringVar(
+            master=self,
+            value=str(getattr(self.app, "xuat_archive_strategy", "combined") or "combined"),
+        )
+        self.var_archive_dir = tk.StringVar(master=self, value=str(self.app._get_xuat_archive_dir()))
+        self.var_archive_ext = tk.StringVar(
+            master=self,
+            value=str(getattr(self.app, "xuat_archive_ext", DEFAULT_ARCHIVE_EXT) or DEFAULT_ARCHIVE_EXT),
+        )
+        self.var_allow_unarchived = tk.BooleanVar(master=self, value=False)
+        self.var_include_applied = tk.BooleanVar(master=self, value=True)
+        self._cand_vars: List[Tuple[CleanupCandidate, tk.BooleanVar]] = []
+
+        self._analysis = classify_cleanup_candidates(
+            self.xuat_index,
+            self.doc,
+            applied_records=self.applied_records,
+            duplicate_scope=self.var_duplicate_scope.get(),
+        )
+        if source_fingerprints:
+            self._analysis.source_fingerprints = dict(source_fingerprints)
+
+        self._build_ui(t)
+        self._populate_candidates()
+        self._refresh_safety_banner()
+        self._refresh_archive_warning()
+
+        self.var_archive_dir.trace_add("write", lambda *_a: self._refresh_archive_warning())
+        self.var_archive_ext.trace_add("write", lambda *_a: self._refresh_archive_warning())
+        self.var_archive_strategy.trace_add("write", lambda *_a: self._refresh_archive_warning())
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
+
+    def _build_ui(self, t: dict) -> None:
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+
+        top = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=10)
+        top.pack(fill="x")
+
+        tk.Label(
+            top,
+            text="XUAT Cleanup & Mandatory Archival" if self.mode != "post_import" else "Import Complete — Optional XUAT Cleanup & Archive",
+            font=("Segoe UI", 12, "bold"),
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+        ).pack(anchor="w")
+
+        self.lbl_safety_warning = tk.Label(
+            top,
+            text="",
+            font=("Segoe UI", 9, "bold"),
+            bg="#4a1f28",
+            fg="#ffd6de",
+            padx=8,
+            pady=4,
+            anchor="w",
+            justify="left",
+        )
+
+        self.lbl_counts = tk.Label(
+            top,
+            text="",
+            font=("Segoe UI", 9),
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            anchor="w",
+        )
+        self.lbl_counts.pack(fill="x", pady=(4, 4))
+
+        applied_n = self._analysis.counts_by_tier.get("applied", 0)
+        if applied_n > 0:
+            tk.Checkbutton(
+                top,
+                text=f"Remove lines successfully applied during this import ({applied_n} entries)",
+                variable=self.var_include_applied,
+                command=self._on_toggle_applied,
+                bg=t["bg_panel"],
+                fg=fg_panel,
+                selectcolor=t["bg_dark"],
+                activebackground=t["bg_panel"],
+                activeforeground=fg_panel,
+            ).pack(anchor="w", pady=(0, 4))
+
+        opts_grid = tk.Frame(top, bg=t["bg_panel"])
+        opts_grid.pack(fill="x", pady=(2, 4))
+
+        # Conditional Duplicate Scope (hidden when 0 duplicates exist)
+        self._dup_scope_frame = tk.LabelFrame(
+            opts_grid,
+            text="Duplicate Key Scope",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 8, "bold"),
+            padx=8,
+            pady=4,
+        )
+        ttk.Radiobutton(
+            self._dup_scope_frame,
+            text="Selected occurrence only",
+            variable=self.var_duplicate_scope,
+            value="selected_only",
+            style="Panel.TRadiobutton",
+            command=self._on_duplicate_scope_changed,
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            self._dup_scope_frame,
+            text="All duplicate occurrences (exact normalized key)",
+            variable=self.var_duplicate_scope,
+            value="all_duplicates",
+            style="Panel.TRadiobutton",
+            command=self._on_duplicate_scope_changed,
+        ).pack(anchor="w")
+        if self._analysis.has_duplicates:
+            self._dup_scope_frame.pack(side="left", fill="y", padx=(0, 8))
+
+        lb_frame = tk.LabelFrame(
+            opts_grid,
+            text="Linebreak Policy",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 8, "bold"),
+            padx=8,
+            pady=4,
+        )
+        lb_frame.pack(side="left", fill="y")
+        ttk.Radiobutton(
+            lb_frame,
+            text="Remove line break too",
+            variable=self.var_linebreak_policy,
+            value="remove_line_break",
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            lb_frame,
+            text="Keep blank line (preserve line numbers)",
+            variable=self.var_linebreak_policy,
+            value="keep_blank_line",
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w")
+
+        # Mandatory Archive Box
+        arch_box = tk.LabelFrame(
+            top,
+            text="Mandatory Archive Settings",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=6,
+        )
+        arch_box.pack(fill="x", pady=(4, 0))
+
+        strat_row = tk.Frame(arch_box, bg=t["bg_panel"])
+        strat_row.pack(fill="x", pady=(0, 4))
+        ttk.Radiobutton(
+            strat_row,
+            text="Combined (UTF-8/LF + encoding metadata)",
+            variable=self.var_archive_strategy,
+            value="combined",
+            style="Panel.TRadiobutton",
+        ).pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(
+            strat_row,
+            text="Per-source-file (raw encoding/BOM/EOL)",
+            variable=self.var_archive_strategy,
+            value="per_source_file",
+            style="Panel.TRadiobutton",
+        ).pack(side="left")
+
+        path_row = tk.Frame(arch_box, bg=t["bg_panel"])
+        path_row.pack(fill="x", pady=2)
+        tk.Label(path_row, text="Dir:", font=("Segoe UI", 8), bg=t["bg_panel"], fg=fg_panel).pack(side="left")
+        tk.Entry(path_row, textvariable=self.var_archive_dir, font=("Segoe UI", 8), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(path_row, text="Browse...", style="Small.TButton", command=self._browse_archive_dir).pack(side="left", padx=(0, 6))
+        tk.Label(path_row, text="Ext:", font=("Segoe UI", 8), bg=t["bg_panel"], fg=fg_panel).pack(side="left")
+        tk.Entry(path_row, textvariable=self.var_archive_ext, width=11, font=("Segoe UI", 8), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", padx=(4, 0))
+
+        self.lbl_archive_warning = tk.Label(
+            arch_box,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            bg=t["bg_panel"],
+            fg="#e69f00",
+            wraplength=790,
+            justify="left",
+            anchor="w",
+        )
+
+        tk.Checkbutton(
+            arch_box,
+            text="Advanced: Delete without archiving (Not Recommended — requires separate irreversible confirmation)",
+            variable=self.var_allow_unarchived,
+            bg=t["bg_panel"],
+            fg=t["fg_muted"],
+            selectcolor=t["bg_dark"],
+            activebackground=t["bg_panel"],
+            activeforeground=fg_panel,
+        ).pack(anchor="w", pady=(4, 0))
+
+        # Scrollable candidate list
+        list_wrap = tk.Frame(self, bg=t["bg_dark"], bd=1, relief="solid")
+        list_wrap.pack(fill="both", expand=True, padx=14, pady=6)
+
+        self.cands_canvas = tk.Canvas(list_wrap, bg=t["bg_dark"], highlightthickness=0)
+        vsb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.cands_canvas.yview)
+        self.cands_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.cands_canvas.pack(side="left", fill="both", expand=True)
+
+        self.cands_frame = tk.Frame(self.cands_canvas, bg=t["bg_dark"])
+        self._cands_win_id = self.cands_canvas.create_window((0, 0), window=self.cands_frame, anchor="nw")
+        self.cands_frame.bind("<Configure>", lambda _e=None: self.cands_canvas.configure(scrollregion=self.cands_canvas.bbox("all")) if self.cands_canvas.winfo_exists() else None)
+        self.cands_canvas.bind("<Configure>", lambda e: self.cands_canvas.itemconfig(self._cands_win_id, width=e.width) if self.cands_canvas.winfo_exists() else None)
+
+        btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=8)
+        btn_bar.pack(fill="x", side="bottom")
+        ttk.Button(btn_bar, text="Close (Keep XUAT Untouched)", style="TButton", command=self._on_close).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_bar, text="Clean / Archive Selected", style="Pink.TButton", command=self._on_execute_cleanup).pack(side="right")
+
+    def _refresh_safety_banner(self) -> None:
+        if not self.winfo_exists():
+            return
+        enabled = bool(self.app.var_xuat_safety_backup.get()) if hasattr(self.app, "var_xuat_safety_backup") else True
+        if not enabled:
+            self.lbl_safety_warning.config(
+                text="⚠ WARNING: 'Auto-backup XUAT files before cleanup edits' is OFF in Debug > Safety. Modified or emptied files will NOT have a safety backup!"
+            )
+            if not self.lbl_safety_warning.winfo_manager():
+                self.lbl_safety_warning.pack(fill="x", pady=(4, 2))
+        else:
+            if self.lbl_safety_warning.winfo_manager():
+                self.lbl_safety_warning.pack_forget()
+
+    def _refresh_archive_warning(self) -> None:
+        if not self.winfo_exists():
+            return
+        src_paths = sorted({c.file_path for c in self._analysis.candidates})
+        res = validate_archive_target(
+            self.var_archive_dir.get().strip(),
+            self.var_archive_ext.get().strip(),
+            self.var_archive_strategy.get(),
+            source_paths=src_paths,
+            xuat_roots=self.app._get_xuat_index_roots(),
+        )
+        msgs = list(res.errors) + list(res.warnings)
+        if msgs:
+            self.lbl_archive_warning.config(text="\n".join(f"⚠ {m}" for m in msgs))
+            if not self.lbl_archive_warning.winfo_manager():
+                self.lbl_archive_warning.pack(fill="x", pady=(4, 0))
+        else:
+            self.lbl_archive_warning.config(text="")
+            if self.lbl_archive_warning.winfo_manager():
+                self.lbl_archive_warning.pack_forget()
+
+    def _browse_archive_dir(self) -> None:
+        chosen = filedialog.askdirectory(
+            title="Select XUAT Archive Folder",
+            initialdir=self.var_archive_dir.get() or str(SCRIPT_DIR),
+            parent=self,
+        )
+        if chosen:
+            self.var_archive_dir.set(chosen)
+
+    def _on_toggle_applied(self) -> None:
+        val = bool(self.var_include_applied.get())
+        for cand, var in self._cand_vars:
+            if cand.tier == "applied":
+                cand.selected = val
+                var.set(val)
+
+    def _on_duplicate_scope_changed(self) -> None:
+        scope = self.var_duplicate_scope.get()
+        apply_duplicate_scope(self._analysis.candidates, scope)
+        for cand, var in self._cand_vars:
+            if cand.tier == "duplicate":
+                var.set(cand.selected)
+
+    def _populate_candidates(self) -> None:
+        for child in self.cands_frame.winfo_children():
+            child.destroy()
+        self._cand_vars.clear()
+
+        counts = self._analysis.counts_by_tier
+        self.lbl_counts.config(
+            text=(
+                f"Preview — Applied: {counts.get('applied', 0)}  |  "
+                f"Duplicates: {counts.get('duplicate', 0)}  |  "
+                f"Already Translated (Unique): {counts.get('already_translated_unique', 0)}  |  "
+                f"Uncertain (Unchecked by Default): {counts.get('uncertain', 0)}"
+            )
+        )
+
+        t = self.app.theme
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        tier_labels = {
+            "applied": ("[Applied]", t["misora_pink"]),
+            "duplicate": ("[Duplicate]", t["accent_blue"]),
+            "already_translated_unique": ("[Already Translated (Unique)]", "#4caf50"),
+            "uncertain": ("[Uncertain — Unchecked by Default]", "#e69f00"),
+        }
+
+        if not self._analysis.candidates:
+            tk.Label(
+                self.cands_frame,
+                text="No cleanup candidates found for this story.",
+                font=("Segoe UI", 9),
+                bg=t["bg_dark"],
+                fg=t["fg_muted"],
+                pady=20,
+            ).pack()
+            return
+
+        for cand in self._analysis.candidates:
+            row_f = tk.Frame(self.cands_frame, bg=t["bg_panel"], bd=1, relief="solid", padx=8, pady=4)
+            row_f.pack(fill="x", padx=6, pady=3)
+
+            var = tk.BooleanVar(master=self, value=bool(cand.selected))
+            self._cand_vars.append((cand, var))
+
+            tag_txt, tag_fg = tier_labels.get(cand.tier, (f"[{cand.tier}]", fg_panel))
+            hdr = tk.Frame(row_f, bg=t["bg_panel"])
+            hdr.pack(fill="x")
+            tk.Checkbutton(
+                hdr,
+                text=f"{cand.rel_path}:{cand.line_number}",
+                variable=var,
+                font=("Consolas", 8, "bold"),
+                bg=t["bg_panel"],
+                fg=fg_panel,
+                selectcolor=t["bg_dark"],
+                activebackground=t["bg_panel"],
+                activeforeground=fg_panel,
+            ).pack(side="left")
+            tk.Label(hdr, text=tag_txt, font=("Segoe UI", 8, "bold"), bg=t["bg_panel"], fg=tag_fg).pack(side="left", padx=(6, 6))
+            tk.Label(hdr, text=cand.reason, font=("Segoe UI", 8), bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="right")
+
+            preview_line = f"{cand.raw_key}={cand.raw_value}"
+            if len(preview_line) > 140:
+                preview_line = preview_line[:137] + "..."
+            tk.Label(
+                row_f,
+                text=preview_line,
+                font=("Consolas", 8),
+                bg=t["bg_panel"],
+                fg=fg_panel,
+                anchor="w",
+            ).pack(fill="x", padx=(20, 0))
+
+    def _on_execute_cleanup(self) -> bool:
+        for cand, var in self._cand_vars:
+            cand.selected = bool(var.get())
+
+        selected = [c for c in self._analysis.candidates if c.selected]
+        if not selected:
+            self.app.show_toast("No XUAT entries selected for cleanup.")
+            return False
+
+        allow_unarchived = bool(self.var_allow_unarchived.get())
+        if allow_unarchived:
+            confirm_unarchived = messagebox.askyesno(
+                "Confirm Irreversible Unarchived Deletion",
+                f"You opted out of mandatory XUAT archiving.\n\n"
+                f"{len(selected)} entry/entries will be PERMANENTLY DELETED from XUAT source file(s) "
+                "without writing an archive file.\n\n"
+                "Proceed with irreversible unarchived deletion?",
+                icon="warning",
+                default=messagebox.NO,
+                parent=self,
+            )
+            if not confirm_unarchived:
+                return False
+
+        safety_enabled = (
+            bool(self.app.var_xuat_safety_backup.get())
+            if hasattr(self.app, "var_xuat_safety_backup")
+            else bool(getattr(self.app, "xuat_safety_backup_enabled", True))
+        )
+        story_name = self.app.current_file_path.name if getattr(self.app, "current_file_path", None) else ""
+        arch_dir = Path(self.var_archive_dir.get().strip() or str(self.app._get_xuat_archive_dir()))
+        arch_ext = self.var_archive_ext.get().strip() or DEFAULT_ARCHIVE_EXT
+
+        try:
+            report = execute_cleanup(
+                candidates=self._analysis.candidates,
+                source_fingerprints=self._analysis.source_fingerprints,
+                archive_dir=arch_dir,
+                archive_ext=arch_ext,
+                archive_strategy=self.var_archive_strategy.get(),
+                linebreak_policy=self.var_linebreak_policy.get(),
+                safety_backup_enabled=safety_enabled,
+                safety_backup_dir=self.app._get_backup_dir(),
+                backup_path_fn=make_collision_resistant_backup_path,
+                allow_unarchived_deletion=allow_unarchived,
+                story_name=story_name,
+                reason=self.mode,
+                xuat_roots=self.app._get_xuat_index_roots(),
+            )
+        except StaleSourceError as exc:
+            messagebox.showerror("Stale XUAT Source Files", str(exc), parent=self)
+            return False
+        except ArchiveTargetError as exc:
+            messagebox.showerror("Invalid Archive Destination", str(exc), parent=self)
+            return False
+        except Exception as exc:
+            self.app.logger.exception("XUAT cleanup failed:", exc)
+            messagebox.showerror("XUAT Cleanup Failed", str(exc), parent=self)
+            return False
+
+        self.last_report = report
+        if report.errors:
+            err_lines = "\n".join(f"- {p.name}: {msg}" for p, msg in report.errors)
+            messagebox.showwarning(
+                "Partial Cleanup Completed with Errors",
+                f"Modified: {len(report.modified_files)} | "
+                f"Rolled back/Untouched: {len(report.rolled_back_files) + len(report.untouched_files)}\n\n"
+                f"Errors:\n{err_lines}",
+                parent=self,
+            )
+
+        # Second explicit confirmation for meaningfully empty XUAT files
+        if report.empty_files:
+            detail_lines = []
+            for ef in report.empty_files:
+                if ef.safety_backup_path is not None:
+                    bak_desc = f"Safety backup: {ef.safety_backup_path}"
+                else:
+                    bak_desc = "NOT protected by automatic safety backup"
+                detail_lines.append(f"- {ef.file_path}\n  ({bak_desc})")
+            empty_prompt = (
+                "The following XUAT file(s) now contain no remaining translation entries "
+                "(only comments/whitespace or empty):\n\n"
+                + "\n".join(detail_lines)
+                + "\n\nDelete these empty XUAT file(s)?"
+            )
+            if messagebox.askyesno(
+                "Delete Meaningfully Empty XUAT Files?",
+                empty_prompt,
+                icon="warning",
+                default=messagebox.NO,
+                parent=self,
+            ):
+                delete_empty_xuat_files([ef.file_path for ef in report.empty_files])
+
+        summary = (
+            f"✓ XUAT cleanup: removed {report.removed_count} line(s) across "
+            f"{len(report.modified_files)} file(s)"
+        )
+        self.app.show_toast(summary)
+        self.app.lbl_status.config(text=summary)
+        if getattr(self.app, "_ui_ready", False) and hasattr(self.app, "_refresh_xuat_index_async"):
+            self.app._refresh_xuat_index_async()
+        self._on_close()
+        return True
+
+    def _on_close(self) -> None:
+        self._cand_vars.clear()
+        self.var_duplicate_scope = None  # type: ignore[assignment]
+        self.var_linebreak_policy = None  # type: ignore[assignment]
+        self.var_archive_strategy = None  # type: ignore[assignment]
+        self.var_archive_dir = None  # type: ignore[assignment]
+        self.var_archive_ext = None  # type: ignore[assignment]
+        self.var_allow_unarchived = None  # type: ignore[assignment]
+        self.var_include_applied = None  # type: ignore[assignment]
+        if getattr(self.app, "_xuat_cleanup_dialog", None) is self:
+            self.app._xuat_cleanup_dialog = None
         safe_grab_release(self)
         if self.winfo_exists():
             self.destroy()

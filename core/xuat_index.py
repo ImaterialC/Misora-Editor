@@ -14,6 +14,7 @@ Provides:
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import queue
 import re
@@ -25,7 +26,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Un
 
 from .ngui_tags import strip_tags
 from .story_ast import ALL_WS_RE, DASH_MAP, PLAYER_PLACEHOLDER_RE
-from .text_encoding import read_text_file_strictly
+from .text_encoding import detect_encoding_and_decode
 from .xunity_sync import split_xuat_line
 
 _EXCLUDED_FILE_TAILS: Tuple[str, ...] = (
@@ -191,6 +192,19 @@ class XuatLookupResult:
     match_tier: str = "none"  # "none", "exact", "norm_exact", "norm_stripped"
 
 
+def compute_file_sha256(path: Union[str, Path]) -> str:
+    """Compute SHA-256 hex digest of raw file bytes using Windows long-path support."""
+    lp = _to_long_path(Path(path))
+    h = hashlib.sha256()
+    with open(lp, "rb") as fh:
+        while True:
+            chunk = fh.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class XuatIndex:
     """In-memory O(1) normalized XUAT dictionary index."""
 
@@ -200,23 +214,43 @@ class XuatIndex:
     ) -> None:
         self.roots: List[Path] = list(roots or [])
         self.files_indexed: List[Path] = []
+        self.file_fingerprints: Dict[Path, str] = {}
         self.skipped_files: List[Tuple[Path, str]] = []
         self.entry_count: int = 0
+        self.entries: List[XuatEntry] = []
         self._exact_map: Dict[str, List[XuatEntry]] = {}
         self._norm_exact_map: Dict[str, List[XuatEntry]] = {}
         self._norm_stripped_map: Dict[str, List[XuatEntry]] = {}
+        self._value_map: Dict[str, List[XuatEntry]] = {}
 
     def add_entry(self, entry: XuatEntry) -> None:
         k_exact = unescape_xuat_key(entry.raw_key)
         k_norm_exact = normalize_xuat_key(entry.raw_key, strip_ngui=False)
         k_norm_stripped = normalize_xuat_key(entry.raw_key, strip_ngui=True)
 
+        self.entries.append(entry)
         self._exact_map.setdefault(k_exact, []).append(entry)
         if k_norm_exact:
             self._norm_exact_map.setdefault(k_norm_exact, []).append(entry)
         if k_norm_stripped:
             self._norm_stripped_map.setdefault(k_norm_stripped, []).append(entry)
+        self._value_map.setdefault(entry.value, []).append(entry)
         self.entry_count += 1
+
+    def lookup_all_by_norm_key(self, key_text: str) -> List[XuatEntry]:
+        """Return all XUAT entries matching exact normalized key (strip_ngui=True) without deduplication."""
+        if not key_text:
+            return []
+        k_norm_stripped = normalize_xuat_key(key_text, strip_ngui=True)
+        if not k_norm_stripped:
+            return []
+        return list(self._norm_stripped_map.get(k_norm_stripped, ()))
+
+    def lookup_by_value(self, value: str) -> List[XuatEntry]:
+        """Return all XUAT entries whose unescaped right-side translation equals value."""
+        if value is None:
+            return []
+        return list(self._value_map.get(value, ()))
 
     @staticmethod
     def _dedup_candidates(entries: Sequence[XuatEntry]) -> List[XuatEntry]:
@@ -324,7 +358,9 @@ def build_xuat_index(
             seen_files.add(fkey)
 
             try:
-                decoded = read_text_file_strictly(_to_long_path(tf))
+                raw_bytes = _to_long_path(tf).read_bytes()
+                sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
+                decoded = detect_encoding_and_decode(raw_bytes)
             except Exception as exc:
                 idx.skipped_files.append((tf, str(exc)))
                 continue
@@ -335,6 +371,7 @@ def build_xuat_index(
                 rel_p = tf.name
 
             idx.files_indexed.append(tf)
+            idx.file_fingerprints[tf] = sha256_hex
             nl = decoded.newline or "\n"
             for line_no, raw_line in enumerate(decoded.text.split(nl), start=1):
                 pair = split_xuat_line(raw_line)

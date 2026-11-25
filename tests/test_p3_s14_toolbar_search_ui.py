@@ -252,6 +252,17 @@ class TestP3S14ToolbarSearchUI(unittest.TestCase):
         self.assertIsNotNone(ribbon_frame, "ribbon_frame must exist")
         self.assertIsNotNone(btn_player, "btn_player must exist")
 
+        # 1. Default NGUI ribbon is hidden (U12), then toggle ON to check bounds at 1280x720 and 960x720
+        self.assertTrue(
+            hasattr(self.app, "var_show_ngui_ribbon"),
+            "self.app.var_show_ngui_ribbon BooleanVar must exist"
+        )
+        self.assertFalse(self.app.var_show_ngui_ribbon.get(), "NGUI ribbon must be hidden by default (U12)")
+        self.assertEqual(ribbon_frame.winfo_manager(), "", "ribbon_frame must be unmapped by default")
+
+        self.app.var_show_ngui_ribbon.set(True)
+        self.app._on_toggle_ngui_ribbon()
+
         for geo in ("1280x720", "960x720"):
             self.app.geometry(geo)
             self.app.update_idletasks()
@@ -273,14 +284,7 @@ class TestP3S14ToolbarSearchUI(unittest.TestCase):
                     f"{name} clipped off right edge at {geo} (right={widget_right} > parent_right={top_right})"
                 )
 
-        # 2. View > Toggle NGUI Ribbon
-        self.assertTrue(
-            hasattr(self.app, "var_show_ngui_ribbon"),
-            "self.app.var_show_ngui_ribbon BooleanVar must exist"
-        )
-        self.assertTrue(self.app.var_show_ngui_ribbon.get(), "NGUI ribbon must be visible by default")
-
-        # Toggle off
+        # 2. View > Toggle NGUI Ribbon OFF
         self.app.var_show_ngui_ribbon.set(False)
         self.app._on_toggle_ngui_ribbon()
         self.app.update_idletasks()

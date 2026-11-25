@@ -180,7 +180,7 @@ class TestP3S15SelectionDrawerOpen(unittest.TestCase):
     # DEFECT PROBE 2: FEAT-06
     # -------------------------------------------------------------------------
     def test_probe_2_feat06_collapsible_left_drawer(self) -> None:
-        """Probe 2: Left drawer collapses/expands cleanly via h_paned without place() overlay."""
+        """Probe 2: Left drawer collapses cleanly to 0px via h_paned.forget without place() overlay (U03)."""
         self.app = MisoraApp(show_splash=False)
         self.app.backup_folder = str(self.tmp_backup_dir)
         self.app.update()
@@ -189,24 +189,22 @@ class TestP3S15SelectionDrawerOpen(unittest.TestCase):
         self.assertFalse(getattr(self.app, "_dock_collapsed", False))
         init_w = self.app.left_frame.winfo_width()
         self.assertGreaterEqual(init_w, 160)
+        self.assertIn(str(self.app.left_frame), [str(p) for p in self.app.h_paned.panes()])
 
-        # Collapse dock
+        # Collapse dock -> forgotten from h_paned (0px), discoverable reopen button shown
         self.app._toggle_dock_collapse()
         self.app.update()
 
         self.assertTrue(getattr(self.app, "_dock_collapsed", False), "Dock state should be collapsed")
-        collapsed_w = self.app.left_frame.winfo_width()
-        self.assertLessEqual(collapsed_w, 50, f"Collapsed dock width should be <= 50px, got {collapsed_w}")
-
-        # In collapsed state, pin/expand button MUST be visible inside collapsed frame (x < 36)
-        pin_x = self.app.btn_dock_pin.winfo_x()
-        self.assertLess(
-            pin_x, 36,
-            f"btn_dock_pin must be visible at x < 36 inside collapsed width, got x={pin_x}"
+        self.assertNotIn(
+            str(self.app.left_frame),
+            [str(p) for p in self.app.h_paned.panes()],
+            "left_frame must be removed from h_paned for true 0px collapse",
         )
-        self.assertEqual(
-            self.app.btn_dock_pin.cget("text"), "▶",
-            "btn_dock_pin text should be '▶' when collapsed"
+        self.assertNotEqual(
+            self.app.btn_reopen_left.winfo_manager(),
+            "",
+            "btn_reopen_left must be visible when left drawer is collapsed",
         )
 
         # Verify NO place() overlay was used
@@ -220,11 +218,13 @@ class TestP3S15SelectionDrawerOpen(unittest.TestCase):
         self.app.update()
 
         self.assertFalse(getattr(self.app, "_dock_collapsed", False), "Dock state should be expanded")
+        self.assertIn(str(self.app.left_frame), [str(p) for p in self.app.h_paned.panes()])
         expanded_w = self.app.left_frame.winfo_width()
         self.assertGreaterEqual(expanded_w, 150, "Expanded dock width must be restored")
         self.assertEqual(
-            self.app.btn_dock_pin.cget("text"), "📌",
-            "btn_dock_pin text should be '📌' when expanded"
+            self.app.btn_reopen_left.winfo_manager(),
+            "",
+            "btn_reopen_left must be hidden when left drawer is expanded",
         )
 
     # -------------------------------------------------------------------------

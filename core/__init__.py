@@ -28,7 +28,15 @@ from .xuat_index import (
     XuatEntry, XuatLookupResult, XuatIndex,
     unescape_xuat_value, unescape_xuat_key, normalize_xuat_key,
     resolve_xuat_text_roots, build_xuat_index, build_xuat_index_async,
-    analyze_story_matches,
+    analyze_story_matches, compute_file_sha256,
+)
+from .xuat_cleanup import (
+    DEFAULT_ARCHIVE_EXT, VALID_ARCHIVE_STRATEGIES, VALID_LINEBREAK_POLICIES, VALID_DUPLICATE_SCOPES,
+    StaleSourceError, ArchiveTargetError, AppliedXuatRecord, CleanupCandidate,
+    CleanupAnalysis, ArchiveTargetValidation, EmptyFileInfo, CleanupReport,
+    default_archive_dir, capture_source_fingerprints, verify_source_fingerprints,
+    validate_archive_target, is_xuat_file_meaningfully_empty, apply_duplicate_scope,
+    classify_cleanup_candidates, execute_cleanup, delete_empty_xuat_files,
 )
 from .font_manager import (
     FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
@@ -56,7 +64,13 @@ __all__ = [
     "XuatEntry", "XuatLookupResult", "XuatIndex",
     "unescape_xuat_value", "unescape_xuat_key", "normalize_xuat_key",
     "resolve_xuat_text_roots", "build_xuat_index", "build_xuat_index_async",
-    "analyze_story_matches",
+    "analyze_story_matches", "compute_file_sha256",
+    "DEFAULT_ARCHIVE_EXT", "VALID_ARCHIVE_STRATEGIES", "VALID_LINEBREAK_POLICIES", "VALID_DUPLICATE_SCOPES",
+    "StaleSourceError", "ArchiveTargetError", "AppliedXuatRecord", "CleanupCandidate",
+    "CleanupAnalysis", "ArchiveTargetValidation", "EmptyFileInfo", "CleanupReport",
+    "default_archive_dir", "capture_source_fingerprints", "verify_source_fingerprints",
+    "validate_archive_target", "is_xuat_file_meaningfully_empty", "apply_duplicate_scope",
+    "classify_cleanup_candidates", "execute_cleanup", "delete_empty_xuat_files",
     "FontManager", "PRESET_GLOBAL", "PRESET_JP", "BUILTIN_FONT_PRESETS",
     "WrapResult", "iter_graphemes", "wrap_text",
 ]

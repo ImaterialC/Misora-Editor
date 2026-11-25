@@ -95,12 +95,27 @@ class TestPhase4ImportExportPreview(unittest.TestCase):
         self.assertEqual(splash._load_app_version(), expected_version)
         self.assertEqual(splash._VERSION, expected_version)
 
-        # Test on_about text
-        with patch.object(misora.messagebox, "showinfo") as mock_info:
-            self.app.on_about()
-            mock_info.assert_called_once()
-            args, _ = mock_info.call_args
-            self.assertIn(f"Version {expected_version}", args[1])
+        # Test modal About dialog (U05)
+        self.app.on_about()
+        about_dlg = getattr(self.app, "_about_dialog", None)
+        self.assertIsNotNone(about_dlg)
+        self.assertIsInstance(about_dlg, tk.Toplevel)
+        self.assertTrue(about_dlg.winfo_exists())
+
+        def _gather_texts(w):
+            out = []
+            for ch in w.winfo_children():
+                try:
+                    out.append(str(ch.cget("text")))
+                except Exception:
+                    pass
+                out.extend(_gather_texts(ch))
+            return out
+
+        about_txt = "\n".join(_gather_texts(about_dlg))
+        self.assertIn("Misora: Story Editor", about_txt)
+        self.assertIn(f"v{expected_version}", about_txt)
+        about_dlg.destroy()
 
     def test_02_tooltip_lifecycle_safe(self):
         """ToolTip handles delayed hover, cancels timers on Leave/Destroy, and avoids leaks."""

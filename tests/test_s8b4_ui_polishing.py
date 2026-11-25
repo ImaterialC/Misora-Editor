@@ -131,21 +131,21 @@ class TestS8b4UIPolishing(unittest.TestCase):
         self.assertGreaterEqual(orig_w, 160, "Initial dock width must be >= 160px")
         self.assertFalse(getattr(self.app, "_dock_collapsed", False))
 
-        # Collapse dock
+        # Collapse dock (true 0px via h_paned.forget)
         self.app._toggle_dock_collapse()
         self.app.update()
 
         self.assertTrue(getattr(self.app, "_dock_collapsed", False), "Dock state should be collapsed")
-        collapsed_minsize = int(self.app.h_paned.panecget(self.app.left_frame, "minsize"))
-        self.assertEqual(collapsed_minsize, 0, "Collapsed dock minsize should be 0")
-        collapsed_w = self.app.left_frame.winfo_width()
-        self.assertLessEqual(collapsed_w, 50, f"Collapsed dock width should be <= 50px, got {collapsed_w}")
+        self.assertNotIn(str(self.app.left_frame), [str(p) for p in self.app.h_paned.panes()], "Collapsed dock must be forgotten from h_paned")
+        self.assertNotEqual(self.app.btn_reopen_left.winfo_manager(), "", "Reopen button must be visible when collapsed")
 
         # Expand dock
         self.app._toggle_dock_collapse()
         self.app.update()
 
         self.assertFalse(getattr(self.app, "_dock_collapsed", False), "Dock state should be expanded")
+        self.assertIn(str(self.app.left_frame), [str(p) for p in self.app.h_paned.panes()], "Expanded dock must be restored to h_paned")
+        self.assertEqual(self.app.btn_reopen_left.winfo_manager(), "", "Reopen button must be hidden when expanded")
         expanded_minsize = int(self.app.h_paned.panecget(self.app.left_frame, "minsize"))
         self.assertGreaterEqual(expanded_minsize, 160, "Expanded dock minsize should be >= 160px")
         expanded_w = self.app.left_frame.winfo_width()

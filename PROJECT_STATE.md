@@ -3,9 +3,9 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.6 — S06)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.6"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `d7eb22ca36d74a1b3c13f48750f7bdb2088b2944` (+ pre-existing local S04/S05 test working-tree changes).
+Target release: v1.5.0 (Current session build: v1.4.7 — S07)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.7"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `5b0f0147d82ea5098de7a10ff252d43e22fa5eed` (+ pre-existing local S04/S05/S06 test working-tree changes).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,14 +41,15 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S06 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s06_tools_word_wrap -v
-Result: Ran 8 tests in 24.596s (8 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S07 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s07_xuat_cleanup_archive -v
+Result: Ran 9 tests in 21.821s (9 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 396 tests in 486.120s across 51 modules (353 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.6 bump; 0 S06 regressions)
+Result: Ran 405 tests in 437.821s across 52 modules (362 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.7 bump; 0 S07 regressions)
 
-Test suites included in the 396 tests (exact disk discovery):
+Test suites included in the 405 tests (exact disk discovery):
+  tests/test_v15_s07_xuat_cleanup_archive.py — 9 S07 pure-core transactional XUAT cleanup, SHA-256 stale guard, mandatory combined/per-file archival, conservative 3-tier classification, empty-file 2-step delete & Debug > Safety tests (all pass)
   tests/test_v15_s06_tools_word_wrap.py   — 8 S06 Tools menu, pure-Python NGUI/grapheme/kinsoku word wrap, locks/JP-keys/multi-segment single-batch Undo, and XUAT/Script opt-in wrap tests (all pass)
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
   tests/test_p3_s22_import_xuat.py          — 4 S22 unified core/xuat_index.py, O(1) MTL cache, & floating ImportFromXUATDialog (paired 3x50 read-only, duplicates, lock/skip, Pre-Apply prompt, atomic Undo) tests (all pass)
@@ -113,6 +114,20 @@ Test suites included in the 396 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S07 (`v1.4.7`) — Transactional XUAT Post-Import Cleanup, Mandatory Archival Engine, & `Debug > Safety` (`U01`) (2026-11-26)
+- **Pure-Python Per-File Transactional Engine (`core/xuat_cleanup.py`, `core/xuat_index.py`, `core/__init__.py`, `U01`):**
+  - Zero-Tkinter, zero-`misora` engine accepting an injected `backup_path_fn` callback (defaulting to pure-Python collision-resistant naming).
+  - `XuatIndex` captures raw byte SHA-256 `file_fingerprints` at index/preview time alongside full `entries` and O(1) `lookup_all_by_norm_key()` / `lookup_by_value()`. `verify_source_fingerprints()` aborts before any disk modification with `StaleSourceError` if any targeted file changes on disk.
+  - Conservative 3-tier classification (`classify_cleanup_candidates`): `applied` (exact `(file_path, line_number)`), `duplicate` (exact `normalize_xuat_key()` only, controlled by `selected_only` vs `all_duplicates`), `already_translated_unique` (exact asset dialogue match mapping to strictly 1 unique key & `>= 6` non-space chars), and `uncertain` (`selected=False` by default for `<6` non-space chars, multi-key ambiguity, and shared `box.speaker` translations).
+  - **Archive Encoding Contracts & Per-File Transactions:** Mandatory archive-first execution (`validate_archive_target()` refuses source overwrites and warns on `.txt` or `BepInEx\Translation\en\Text` subtrees). **`per_source_file`** archives preserve raw byte-for-byte original `encoding`, `has_bom`, and `newline` on creation and append (never emitting mid-file duplicate BOMs). **`combined`** archives preserve all decoded Unicode text + structured `# [...] op=... | source=... | encoding=... | bom=... | newline=... | story=... | reason=...` traceability metadata reversibly under canonical UTF-8 (no BOM) with LF (`\n`), since a single plain text file cannot hold mixed raw CP932 and UTF-16 byte streams simultaneously. Per-file edits run `safety backup -> .tmp -> strict reopen verify -> os.replace()`, stopping cleanly on mid-batch failure with a granular `CleanupReport` and flagging `is_xuat_file_meaningfully_empty()` files without auto-deletion.
+- **`Debug > Safety`, Post-Import Cleanup, & `Tools -> Clean / Archive XUAT...` (`misora.py`):**
+  - Added `Debug > Safety` submenu (`Auto-backup XUAT files before cleanup edits` defaulting `True` with confirmation to turn OFF + `XUAT Cleanup & Archive Settings...` defaulting to `<SCRIPT_DIR>/backups/xuat_archive`, `.xuat.old`, `combined`) persisted under `xuat_cleanup` with malformed-key recovery.
+  - `ImportFromXUATDialog._on_apply_import()` opens `XuatCleanupDialog` non-blockingly (`_xuat_cleanup_dialog`, cleaned in `destroy()`) ONLY when `applied_count > 0`; `Tools -> Clean / Archive XUAT...` (`on_clean_archive_xuat()`) reuses `XuatCleanupDialog` (conditional duplicate toggle hidden at 0 duplicates, `Debug > Safety` OFF warning banner, separate irreversible confirmation for unarchived opt-out, and 2-step empty-file deletion confirmation quoting exact safety backup paths).
+- **Manual Windows QA Pending (Project Lead):**
+  - Run `Import from XUAT...` -> Apply -> verify Post-Import Cleanup dialog, mandatory `.xuat.old` archive outside `Text/`, SHA-256 stale check if file is edited externally, and 2-step empty file deletion quoting exact backup path.
+  - Test choosing `.txt` or a directory inside `Text/` and confirm XUAT scanning warning appears.
+  - Toggle `Debug > Safety` backup OFF -> verify confirmation prompt and cleanup warning banner.
 
 ### v1.5 S06 (`v1.4.6`) — Top-Level `Tools` Menu & Lossless Pixel-Calibrated Auto Word Wrap (`U07`, `4.5`) (2026-11-26)
 - **Pure-Python Lossless Word Wrap (`core/word_wrap.py`, `core/__init__.py`, `U07`):**
