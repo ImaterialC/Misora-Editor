@@ -609,8 +609,6 @@ class NguiColorPickerPopup(tk.Toplevel):
                 self.app.logger.exception(f"NguiColorPickerPopup initialization failed:\n{err}")
             except Exception:
                 pass
-            with open("picker_error.log", "w", encoding="utf-8") as f:
-                f.write(err)
             messagebox.showerror("Color Picker Init Error", err)
             raise
 
@@ -984,7 +982,7 @@ class NguiColorPickerPopup(tk.Toplevel):
         c0_code = self.stop_colors[0][1:].upper()
         c1_code = self.stop_colors[1][1:].upper()
         self.btn_insert_single.configure(text=f"Insert [{c0_code}]")
-        self.btn_insert_grad.configure(text=f"Insert [{c0_code},{c1_code}]")
+        self.btn_insert_grad.configure(text=f"Insert [{c0_code}-{c1_code}]")
 
         self.app._set_ribbon_colors(self.stop_colors[0], self.stop_colors[1])
 
@@ -5762,18 +5760,6 @@ class MisoraApp(tk.Tk):
             self.gutter_clean.insert("1.0", numbers)
             self._apply_gutter_overflow_tag(self.gutter_clean)
             self.gutter_clean.config(state="disabled")
-        except Exception:
-            pass
-
-    def _update_gutter_cont(self, line_num_list: List[str]) -> None:
-        """Update repeating per-box line numbers in continuous view gutter."""
-        if not hasattr(self, "gutter_cont"):
-            return
-        try:
-            self.gutter_cont.config(state="normal")
-            self.gutter_cont.delete("1.0", tk.END)
-            self.gutter_cont.insert("1.0", "\n".join(line_num_list))
-            self.gutter_cont.config(state="disabled")
         except Exception:
             pass
 
@@ -16517,7 +16503,7 @@ class AIPromptSettingsDialog(tk.Toplevel):
         self.var_include_spk = tk.BooleanVar(master=self, value=self.app.mtl_config.ai_prompt_include_speaker)
         tk.Checkbutton(
             opts_frame,
-            text="Include Speaker Names in Box delimiters (=== [BOX:0|Speaker:コッコロ] ===)",
+            text="Include Speaker Names in CSIF headers (@@Speaker / @@_)",
             variable=self.var_include_spk,
             bg=t["bg_panel"],
             fg=fg_panel,
@@ -17105,12 +17091,6 @@ class BatchTranslateDialog(tk.Toplevel):
 
         self.btn_start = ttk.Button(btn_bar, text="Start Batch", style="Pink.TButton", command=self._start_batch)
         self.btn_start.pack(side="right", padx=4)
-
-    def _toggle_pin_top(self):
-        self._is_pinned_top = not getattr(self, "_is_pinned_top", False)
-        self.wm_attributes("-topmost", self._is_pinned_top)
-        self.btn_pin.configure(text="📌" if self._is_pinned_top else "📍")
-        self.app.show_toast(f"Translator Assistant {'pinned on top' if self._is_pinned_top else 'unpinned'}")
 
     def _end_undo_batch(self) -> None:
         """Close open undo batch strictly once on the UI main thread (BUG-14)."""

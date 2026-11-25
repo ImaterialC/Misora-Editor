@@ -41,11 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (S22 Verification Baseline — 2026-11-25):
+Unit Test Suite (S23 Verification Baseline — 2026-11-25):
 py -3.12 -m unittest discover -s tests
-Result: Ran 340 tests across 44 modules (300 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
+Result: Ran 344 tests across 45 modules (304 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture storydata_1001005.unity3d)
 
-Test suites included in the 340 tests (exact disk discovery):
+Test suites included in the 344 tests (exact disk discovery):
+  tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
   tests/test_p3_s22_import_xuat.py          — 4 S22 unified core/xuat_index.py, O(1) MTL cache, & floating ImportFromXUATDialog (paired 3x50 read-only, duplicates, lock/skip, Pre-Apply prompt, atomic Undo) tests (all pass)
   tests/test_p3_s21_mtl_drawer_all_script.py — 3 S21 All Script MTL drawer (exact 2 tk.Text widgets, 5 static status tags, Translate All / Apply All lock & box.uid batch) tests (all pass)
   tests/test_p3_s20_mtl_drawer_dialogue.py — 3 S20 docked MTL drawer tab, Dialogue multi-engine stack, lock/whitespace Apply, paid-API confirm & stale guard tests (all pass)
@@ -108,6 +109,19 @@ Test suites included in the 340 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### Track 2 Progress: Final Hygiene (S23) COMPLETE
+- **Status:** S23 is 100% COMPLETE (`HYG-08`).
+- **Next Session:** S24 (Release Gate & `v1.4.1` Promotion).
+
+### S23 Final Grep-Proven Dead Code & Misleading Label Cleanup (2026-11-25)
+- **Session Scope:** `HYG-08` (Track 2 · Final Hygiene — standalone per Grok R1/R2; `RF-5`).
+- **Dead Code & Label Cleanup (`misora.py`):**
+  - Removed grep-proven zero-caller `MisoraApp._update_gutter_cont()` (keeping `_update_gutter_clean()` intact) and `BatchTranslateDialog._toggle_pin_top()` (keeping `TranslatorAssistantDialog._toggle_pin_top()` intact).
+  - Updated `NguiColorPickerPopup` gradient button label to canonical hyphen syntax `[{c0_code}-{c1_code}]` (`AGENTS.md` §19) and removed CWD `picker_error.log` write (errors continue logging via `self.app.logger.exception()`).
+  - Updated `AIPromptSettingsDialog` speaker-header checkbox wording from legacy `=== [BOX:0|...] ===` to CSIF (`@@Speaker / @@_`).
+  - Left `_is_speaker_pinned` (`DEF-06`) and `__version__ = "1.4.0"` untouched.
+- **Tests:** Added `tests/test_p3_s23_dead_code_cleanup.py` (3 failing-first Defect Probes + 1 Regression Guard). Full test suite discovered count: 344 tests across 45 modules (304 pass, 35 skipped, 3 failures, 2 errors due to intentionally excluded root fixture `storydata_1001005.unity3d`).
 
 ### Track 2 Progress: Group G7 (S22) COMPLETE
 - **Status:** S22 is 100% COMPLETE (FEAT-14).

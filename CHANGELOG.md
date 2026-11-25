@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.4.1)
 
+### S23 — Final Grep-Proven Dead Code & Misleading Label Cleanup (`HYG-08`)
+- **Session Scope:** `HYG-08` (Track 2 · Final Hygiene — standalone per Grok R1/R2; `RF-5`).
+- **Dead Code & Label Cleanup (`misora.py`):**
+  - Removed grep-proven zero-caller `MisoraApp._update_gutter_cont()` (keeping `_update_gutter_clean()` intact) and `BatchTranslateDialog._toggle_pin_top()` (keeping `TranslatorAssistantDialog._toggle_pin_top()` intact).
+  - Updated `NguiColorPickerPopup` gradient button label to canonical hyphen syntax `[{c0_code}-{c1_code}]` (`AGENTS.md` §19) and removed CWD `picker_error.log` write (errors continue logging via `self.app.logger.exception()`).
+  - Updated `AIPromptSettingsDialog` speaker-header checkbox wording from legacy `=== [BOX:0|...] ===` to CSIF (`@@Speaker / @@_`).
+  - Left `_is_speaker_pinned` (`DEF-06`) and `__version__ = "1.4.0"` untouched.
+- **Tests:** Added `tests/test_p3_s23_dead_code_cleanup.py` (3 failing-first Defect Probes + 1 Regression Guard).
+
 ### S22 — Unified `core/xuat_index.py` & Separate Floating `Import from XUAT` Resolver (`FEAT-14`)
 - **Session Scope:** `FEAT-14` (`U-B34`, `CLAUDE-N07`, `QW-E03`, `RF-3`, `GEM-R01`, `GEM-R02`, `GEM-R04`, `NO-09`) — Track 2 · Group G7 (post-`DEP-2`, `DEP-7`).
 - **Unified XUAT Dictionary Indexer (`core/xuat_index.py`, `core/__init__.py`, `core/mtl_engine.py`):**
