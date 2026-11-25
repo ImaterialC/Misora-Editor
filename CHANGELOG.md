@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 
+### S02 (v1.4.2) — Font Policy & Custom Loader (`U16`–`U18`), Constant Ruler & Overlap Fix (`U19`), Gutter Sync (`U20`), Fast Metrics & Char Indicator (`U06`, `U15`)
+- **Font Manager & Win32 Private Loader (`core/font_manager.py`, `core/__init__.py`, `.gitignore`):**
+  - Added pure-Python `FontManager` (stdlib `ctypes`/`struct`/`pathlib`, zero implicit Tk root) supporting strictly 2 built-in dialogue font presets: `Global — Nunito Bold` (resolving `Nunito Bold` / `Nunito` bold / `Segoe UI` fallback) and `Japanese — nintendoP_Humming-E_002pr` (resolving `nintendoP_Humming-E_002pr` / `Yu Gothic UI` / `Meiryo UI` fallback).
+  - Scans `assets/fonts/` for `.ttf`/`.otf` (loading privately on Windows via `AddFontResourceExW(..., 0x10, 0)` without Admin rights and unloading on `MisoraApp.destroy()`) plus optional `custom_fonts.txt`, logging invalid/corrupt files cleanly without crashing startup.
+  - Updated `.gitignore` to exclude proprietary Japanese font binaries (`assets/fonts/*nintendoP*`, `assets/fonts/*Humming*`, `assets/fonts/*.otf`). Font choice is editor-display-only and never alters game files.
+- **Customize UI & Legacy Migration (`misora.py`):**
+  - Replaced legacy 5-font list with the 2 official presets + tooltip/help label + separated `Custom Fonts (Advanced)` subsection (`Refresh Fonts`, `Open Fonts Folder`).
+  - Migrates legacy `misora_config.json` `dialogue_font_family` values (e.g. `Consolas`, `Segoe UI`) cleanly to `Global — Nunito Bold`.
+- **Fast Metrics, Constant Ruler & Overlap Fix, Gutter Sync & Char Indicator (`misora.py`, `tests/test_p3_s17_pixel_rulers.py`):**
+  - Exposed `@property` + `@setter` for `dialogue_font_family` and `dialogue_font_size` backed by `self.prefs`, fixing `_get_dialogue_measure_font()` and `_apply_gutter_overflow_tag()` falling back to `Consolas` 11pt.
+  - Optimized `_measure_dialogue_metrics()` with an $O(1)$ full-line fast-path and $O(\log L)$ binary search for overflowing lines.
+  - Added `_get_ruler_measure_font()` locked to `Nunito Bold` so the `50d` horizontal boundary stays constant across Global/Japanese font switches, and placed `50d` left of `ov_x` (`anchor="ne"`) and `>50d` right of `ov_x` (`anchor="nw"`) to eliminate label overlap.
+  - Synchronized `gutter_clean` font/size/spacing (`pady=8`, `spacing1=3`, `spacing3=3`) with `txt_dialogue` in `_apply_theme_and_fonts_live()`.
+  - Restored `lbl_char_overflow` (`N/50d · M/3L`, no `(max)` label, red on `50 x 3` overflow, Box 0 unmeasured per `DEF-04`) and updated `tests/test_p3_s17_pixel_rulers.py` per `AMD-02`.
+- **Tests:** Added `tests/test_v15_s02_fonts_ruler_metrics.py` (6 failing-first probes + 2 regression guards).
+
 ### S01 (v1.4.1) — Baseline Reconciliation, Stability & Memory Remediation (`BUG-01..06`, `BONUS-01..03`), Version Policy (`U00`) & Product Rebrand (`U04`)
 - **Baseline & Session-State Reconciliation:**
   - Pinned starting snapshot at `main` / `origin/main` commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` plus pre-existing local S24 working-tree state (`CHANGELOG.md`, `PROJECT_STATE.md`, `tests/test_phase4_import_export_preview.py`, `D misora_config.default.json`, and existing untracked files preserved intact).

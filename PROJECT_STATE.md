@@ -3,8 +3,8 @@
 Last updated: 2026-11-25
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.1 — S01)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.1"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Target release: v1.5.0 (Current session build: v1.4.2 — S02)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.2"`; unified across UI, splash, MTL engine, and tests (`U00`).
 Starting baseline pinned at commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` (+ pre-existing local S24 working-tree state).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
@@ -41,12 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S01 Verification Baseline — 2026-11-25):
-py -3.12 -m unittest tests.test_v15_s01_stability_remediation -v
-Result: Ran 11 tests (11 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S02 Verification Baseline — 2026-11-25):
+py -3.12 -m unittest tests.test_v15_s02_fonts_ruler_metrics tests.test_p3_s17_pixel_rulers -v
+Result: Ran 10 tests (10 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 355 tests across 46 modules (313 pass, 35 skipped, 5 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json)
+Result: Ran 363 tests across 47 modules (320 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.2 bump)
 
 Test suites included in the 344 tests (exact disk discovery):
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -112,6 +112,25 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S02 (`v1.4.2`) — Font Policy & Custom Loader (`U16`–`U18`), Constant Ruler & Overlap Fix (`U19`), Gutter Sync (`U20`), Fast Metrics & Char Indicator (`U06`, `U15`) (2026-11-25)
+- **Font Policy & Win32 Private Custom Font Loader (`core/font_manager.py`, `core/__init__.py`, `.gitignore`):**
+  - Strictly 2 built-in presets: `Global — Nunito Bold` (resolves `Nunito Bold`, or `Nunito` with `"bold"` weight, or `Segoe UI` fallback) and `Japanese — nintendoP_Humming-E_002pr` (resolves `nintendoP_Humming-E_002pr`, or `Yu Gothic UI` / `Meiryo UI` fallback).
+  - Pure-Python `FontManager` (stdlib `ctypes`/`struct`/`pathlib`, zero implicit Tk root) scans `assets/fonts/` for `.ttf`/`.otf` and `custom_fonts.txt`, loading privately on Windows via `AddFontResourceExW(..., 0x10, 0)` (zero Admin rights) and unloading in `MisoraApp.destroy()` via `RemoveFontResourceExW`, reporting invalid/corrupt files cleanly via `logger.warning()`.
+  - `.gitignore` excludes proprietary Japanese font binaries (`assets/fonts/*nintendoP*`, `assets/fonts/*Humming*`, `assets/fonts/*.otf`). **Note:** Font choice is editor-display-only and never alters game files.
+- **Customize Tab & Legacy Migration (`misora.py`):**
+  - Replaced legacy 5-font list with the 2 official presets + tooltip/help label + separated `Custom Fonts (Advanced)` subsection (`Refresh Fonts`, `Open Fonts Folder`).
+  - Migrates legacy `misora_config.json` `dialogue_font_family` values (e.g., `Consolas`, `Segoe UI`) cleanly to `Global — Nunito Bold`.
+- **Metrics, Constant Ruler, Gutter Sync & Char Indicator (`misora.py`, `tests/test_p3_s17_pixel_rulers.py`):**
+  - Exposed `@property` + `@setter` for `dialogue_font_family` and `dialogue_font_size` backed by `self.prefs`, fixing `_get_dialogue_measure_font()` and `_apply_gutter_overflow_tag()` falling back to `Consolas` 11pt.
+  - Optimized `_measure_dialogue_metrics()` with an $O(1)$ full-line fast-path and $O(\log L)$ binary search for overflowing lines.
+  - Added `_get_ruler_measure_font()` locked to `Nunito Bold` so `50d` stays constant across Global/Japanese font switches; moved `'50d'` left of `ov_x` (`anchor="ne"`) and `'>50d'` right of `ov_x` (`anchor="nw"`) to eliminate overlap.
+  - Synchronized `gutter_clean` font/size/spacing (`pady=8`, `spacing1=3`, `spacing3=3`) with `txt_dialogue` in `_apply_theme_and_fonts_live()`.
+  - Restored `lbl_char_overflow` (`N/50d · M/3L`, no `(max)` label, red on `50 x 3` overflow, Box 0 unmeasured per `DEF-04`); updated `tests/test_p3_s17_pixel_rulers.py` per `AMD-02`.
+- **Manual Windows QA Pending (Project Lead):**
+  - Switch between `Global — Nunito Bold` and `Japanese — nintendoP_Humming-E_002pr` and verify horizontal ruler stays constant while line numbers stay aligned with lines 1–4.
+  - Verify `'50d'` and `'>50d'` labels on the horizontal ruler no longer overlap.
+  - Drop a custom `.ttf` into `assets/fonts/`, click `Refresh Fonts`, and verify it loads without Admin rights.
 
 ### v1.5 S01 (`v1.4.1`) — Baseline Reconciliation, Stability & Memory Remediation, Version Policy (`U00`) & Rebrand (`U04`) (2026-11-25)
 - **Baseline & Session-State Reconciliation:**

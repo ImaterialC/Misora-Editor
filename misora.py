@@ -69,6 +69,7 @@ try:
         compute_workspace_diff, save_workspace, load_workspace,
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
+        FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
     )
     from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 except ImportError:
@@ -93,6 +94,7 @@ except ImportError:
         compute_workspace_diff, save_workspace, load_workspace,
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
+        FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
     )
     from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 
@@ -307,7 +309,7 @@ THEME_PRESETS: Dict[str, Dict[str, str]] = {
 }
 
 DEFAULT_PREFS: Dict[str, Any] = {
-    "dialogue_font_family": "Segoe UI",
+    "dialogue_font_family": PRESET_GLOBAL,
     "dialogue_font_size": 11,
     "raw_font_size": 9,
     "ui_font_size": 9,
@@ -1501,6 +1503,8 @@ class MisoraApp(tk.Tk):
         self.dnd_filter_binary: bool = True
 
         _rpt(0.25, "Loading saved preferences…")
+        self.font_manager = FontManager(SCRIPT_DIR / "assets" / "fonts", logger=self.logger)
+        self._font_migration_notice: Optional[str] = None
         # Load persistent user preferences (fonts, theme colors, paths, mtl settings)
         self.prefs: Dict[str, Any] = self._load_user_prefs()
         self.theme: Dict[str, str] = dict(self.prefs["theme"])
@@ -2012,6 +2016,11 @@ class MisoraApp(tk.Tk):
             pass
 
         self._cleanup_drag_and_drop()
+        if hasattr(self, "font_manager") and self.font_manager:
+            try:
+                self.font_manager.dispose()
+            except Exception:
+                pass
         try:
             super().destroy()
         finally:
@@ -2047,7 +2056,17 @@ class MisoraApp(tk.Tk):
                 raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     if isinstance(raw.get("dialogue_font_family"), str) and raw["dialogue_font_family"].strip():
-                        prefs["dialogue_font_family"] = raw["dialogue_font_family"].strip()
+                        raw_fam = raw["dialogue_font_family"].strip()
+                        if hasattr(self, "font_manager"):
+                            migrated_fam, was_migrated = self.font_manager.migrate_legacy_font(raw_fam)
+                            prefs["dialogue_font_family"] = migrated_fam
+                            if was_migrated:
+                                self._font_migration_notice = (
+                                    f"Migrated legacy font '{raw_fam}' to '{migrated_fam}'."
+                                )
+                                self.logger.info("UI / Theme / Config", self._font_migration_notice)
+                        else:
+                            prefs["dialogue_font_family"] = raw_fam
                     for k, lo, hi in (
                         ("dialogue_font_size", 8, 28),
                         ("raw_font_size", 7, 22),
@@ -2249,14 +2268,64 @@ class MisoraApp(tk.Tk):
         setattr(widget, "_misora_role", role)
         return widget
 
+    @property
+    def dialogue_font_family(self) -> str:
+        """Resolved active Tk font family backed by self.prefs."""
+        return self._resolve_active_dialogue_font_parts()[0]
+
+    @dialogue_font_family.setter
+    def dialogue_font_family(self, value: str) -> None:
+        val = str(value).strip() or PRESET_GLOBAL
+        self.prefs["dialogue_font_family"] = val
+        if hasattr(self, "var_font_family") and val in BUILTIN_FONT_PRESETS:
+            self.var_font_family.set(val)
+
+    @property
+    def dialogue_font_size(self) -> int:
+        """Active dialogue font size (pt) backed by self.prefs."""
+        return int(self.prefs.get("dialogue_font_size", 11))
+
+    @dialogue_font_size.setter
+    def dialogue_font_size(self, value: int) -> None:
+        sz = max(8, min(28, int(value)))
+        self.prefs["dialogue_font_size"] = sz
+        if hasattr(self, "var_dlg_font_sz"):
+            self.var_dlg_font_sz.set(sz)
+
+    def _get_available_font_families(self) -> Tuple[str, ...]:
+        try:
+            return tuple(tkfont.families(root=self))
+        except Exception:
+            return ()
+
+    def _resolve_active_dialogue_font_parts(self) -> Tuple[str, Optional[str]]:
+        sel = self.prefs.get("dialogue_font_family", PRESET_GLOBAL)
+        if hasattr(self, "font_manager"):
+            return self.font_manager.resolve_font_parts(sel, available_families=self._get_available_font_families())
+        return (str(sel or "Segoe UI"), None)
+
+    def _get_dialogue_font_tuple(self, size: Optional[int] = None, *styles: str) -> Tuple[Any, ...]:
+        fam, weight = self._resolve_active_dialogue_font_parts()
+        sz = int(size if size is not None else self.dialogue_font_size)
+        style_list: List[str] = []
+        if weight and weight not in styles:
+            style_list.append(weight)
+        for st in styles:
+            if st and st not in style_list:
+                style_list.append(st)
+        if style_list:
+            return (fam, sz, *style_list)
+        return (fam, sz)
+
     def _apply_theme_and_fonts_live(self, save: bool = True) -> None:
         """Re-apply current theme colors (with WCAG contrast) and font sizes across all active widgets."""
         THEME.update(self.theme)
         self._apply_styles()
 
         t = self.theme
-        d_fam = self.prefs["dialogue_font_family"]
-        d_sz = int(self.prefs["dialogue_font_size"])
+        d_fam = self.dialogue_font_family
+        d_sz = self.dialogue_font_size
+        d_font_tuple = self._get_dialogue_font_tuple(d_sz)
         r_sz = int(self.prefs["raw_font_size"])
         u_sz = int(self.prefs["ui_font_size"])
 
@@ -2426,7 +2495,14 @@ class MisoraApp(tk.Tk):
         gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
         gutter_fg = "#707070" if self._is_light_theme() else "#858585"
         if hasattr(self, "gutter_clean"):
-            self.gutter_clean.configure(bg=gutter_bg, fg=gutter_fg)
+            self.gutter_clean.configure(
+                bg=gutter_bg,
+                fg=gutter_fg,
+                font=d_font_tuple,
+                pady=8,
+                spacing1=3,
+                spacing3=3,
+            )
             self._apply_gutter_overflow_tag(self.gutter_clean)
         if hasattr(self, "gutter_cont"):
             self.gutter_cont.configure(bg=gutter_bg, fg=gutter_fg)
@@ -2436,7 +2512,7 @@ class MisoraApp(tk.Tk):
             self.ruler_cont.configure(bg=gutter_bg)
 
         self.txt_dialogue.configure(
-            font=(d_fam, d_sz),
+            font=d_font_tuple,
             bg=t["bg_editor"],
             fg=editor_fg,
             insertbackground=t["misora_pink"],
@@ -2449,9 +2525,10 @@ class MisoraApp(tk.Tk):
         self._configure_editor_rich_tags(self.txt_dialogue, d_fam, d_sz)
         self._apply_overflow_highlights(self.txt_dialogue)
         self._redraw_pixel_rulers()
+        self._update_char_overflow_indicator()
 
         self.txt_continuous.configure(
-            font=(d_fam, d_sz),
+            font=d_font_tuple,
             bg=t["bg_editor"],
             fg=editor_fg,
             insertbackground=t["misora_pink"],
@@ -2463,7 +2540,7 @@ class MisoraApp(tk.Tk):
         )
         if hasattr(self, "txt_box0_summary"):
             self.txt_box0_summary.configure(
-                font=(d_fam, d_sz),
+                font=d_font_tuple,
                 bg=t["bg_editor"],
                 fg=editor_fg,
                 insertbackground=t["misora_pink"],
@@ -2476,14 +2553,14 @@ class MisoraApp(tk.Tk):
             self._configure_editor_rich_tags(self.txt_box0_summary, d_fam, d_sz)
         if hasattr(self, "entry_box0_title"):
             self.entry_box0_title.configure(
-                font=(d_fam, d_sz),
+                font=d_font_tuple,
                 bg=t["bg_editor"],
                 fg=editor_fg,
                 insertbackground=t["misora_pink"],
             )
         if hasattr(self, "entry_box0_subtitle"):
             self.entry_box0_subtitle.configure(
-                font=(d_fam, d_sz),
+                font=d_font_tuple,
                 bg=t["bg_editor"],
                 fg=editor_fg,
                 insertbackground=t["misora_pink"],
@@ -4504,6 +4581,20 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_box_counter.pack(side="right", padx=(6, 0))
 
+        self.lbl_char_overflow = tk.Label(
+            gd_header,
+            text="0/50d · 1/3L",
+            font=("Segoe UI", max(8, u_sz - 1)),
+            bg=t["bg_panel"],
+            fg=t["fg_muted"],
+        )
+        self.lbl_char_overflow.pack(side="right", padx=(6, 4))
+        create_tooltip(
+            self.lbl_char_overflow,
+            "Native 50 x 3 dialogue rule: <= 50 digit-widths without linebreak AND < 3 linebreaks (<= 3 lines).\n"
+            "Measured using the active editor font as an estimate of the in-game font (NGUI tags excluded)."
+        )
+
         self.ico_next = self.get_icon("nav_next", (14, 14))
         self.btn_next = ttk.Button(gd_header, text="Next ", image=self.ico_next, compound="right", style="Nav.TButton", command=self.on_next_box)
         self.btn_next.pack(side="right", padx=(2, 0))
@@ -5116,10 +5207,11 @@ class MisoraApp(tk.Tk):
         self.clean_editor_row.pack(fill="both", expand=True)
 
         # Vertical Line Numbers Gutter for Clean View (#12)
+        d_font_tuple = self._get_dialogue_font_tuple(d_sz)
         self.gutter_clean = tk.Text(
             self.clean_editor_row,
             width=3,
-            font=("Consolas", d_sz),
+            font=d_font_tuple,
             bg=gutter_bg,
             fg=gutter_fg,
             bd=0,
@@ -5140,7 +5232,7 @@ class MisoraApp(tk.Tk):
             self.clean_editor_row,
             wrap="word",
             height=7,
-            font=(d_fam, d_sz),
+            font=d_font_tuple,
             bg=t["bg_editor"],
             fg=t["fg_text"],
             insertbackground=t["misora_pink"],
@@ -6377,16 +6469,73 @@ class MisoraApp(tk.Tk):
         fam_row.pack(fill="x", padx=8, pady=3)
         self._tag_role(tk.Label(fam_row, text="Dialogue Font:", bg=t["bg_panel"], fg=t["fg_text"]), "label_panel").pack(side="left")
 
-        self.var_font_family = tk.StringVar(master=self, value=self.prefs["dialogue_font_family"])
-        cb_font = ttk.Combobox(
+        cur_font_pref = self.prefs.get("dialogue_font_family", PRESET_GLOBAL)
+        preset_init = cur_font_pref if cur_font_pref in BUILTIN_FONT_PRESETS else PRESET_GLOBAL
+        self.var_font_family = tk.StringVar(master=self, value=preset_init)
+        self.cb_font = ttk.Combobox(
             fam_row,
             textvariable=self.var_font_family,
-            values=["Segoe UI", "Meiryo UI", "Yu Gothic UI", "Consolas", "Arial"],
+            values=list(BUILTIN_FONT_PRESETS),
             state="readonly",
-            width=15,
+            width=30,
         )
-        cb_font.pack(side="right")
-        cb_font.bind("<<ComboboxSelected>>", lambda _e: self._on_font_pref_changed())
+        self.cb_font.pack(side="right")
+        self.cb_font.bind("<<ComboboxSelected>>", lambda _e: self._on_font_pref_changed())
+        create_tooltip(
+            self.cb_font,
+            "Global server font: Nunito Bold | Japanese server font: nintendoP_Humming-E_002pr\n"
+            "(Editor-display-only; never modifies game files.)"
+        )
+
+        self._tag_role(
+            tk.Label(
+                body,
+                text="Global server font: Nunito Bold | Japanese server font: nintendoP_Humming-E_002pr",
+                bg=t["bg_panel"],
+                fg=t["fg_muted"],
+                font=("Segoe UI", 8),
+                wraplength=280,
+                justify="left",
+            ),
+            "label_muted",
+        ).pack(anchor="w", padx=8, pady=(0, 4))
+
+        # Custom Fonts (Advanced) subsection
+        self._tag_role(
+            tk.Label(body, text="CUSTOM FONTS (ADVANCED)", font=("Segoe UI", 8, "bold"), bg=t["bg_panel"], fg=t["misora_pink"]),
+            "label_accent",
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        custom_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
+        custom_row.pack(fill="x", padx=8, pady=2)
+        self._tag_role(tk.Label(custom_row, text="Custom Font:", bg=t["bg_panel"], fg=t["fg_text"]), "label_panel").pack(side="left")
+        custom_vals = list(self.font_manager.custom_families) if hasattr(self, "font_manager") else []
+        custom_init = cur_font_pref if cur_font_pref in custom_vals else ""
+        self.var_custom_font = tk.StringVar(master=self, value=custom_init)
+        self.cb_custom_font = ttk.Combobox(
+            custom_row,
+            textvariable=self.var_custom_font,
+            values=custom_vals,
+            state="readonly",
+            width=22,
+        )
+        self.cb_custom_font.pack(side="right")
+        self.cb_custom_font.bind("<<ComboboxSelected>>", lambda _e: self._on_custom_font_selected())
+
+        custom_btn_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
+        custom_btn_row.pack(fill="x", padx=8, pady=(2, 6))
+        ttk.Button(
+            custom_btn_row,
+            text="Refresh Fonts",
+            style="Small.TButton",
+            command=self._refresh_custom_fonts,
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            custom_btn_row,
+            text="Open Fonts Folder",
+            style="Small.TButton",
+            command=self._open_fonts_folder,
+        ).pack(side="left")
 
         self.var_dlg_font_sz = tk.IntVar(master=self, value=int(self.prefs["dialogue_font_size"]))
         self.var_raw_font_sz = tk.IntVar(master=self, value=int(self.prefs["raw_font_size"]))
@@ -6627,6 +6776,8 @@ class MisoraApp(tk.Tk):
     def _on_font_pref_changed(self) -> None:
         """Apply updated font family / size values from Customize panel."""
         fam = self.var_font_family.get().strip() or self.prefs["dialogue_font_family"]
+        if hasattr(self, "var_custom_font") and fam in BUILTIN_FONT_PRESETS:
+            self.var_custom_font.set("")
         try:
             d_sz = max(8, min(28, int(self.var_dlg_font_sz.get())))
         except Exception:
@@ -6650,6 +6801,41 @@ class MisoraApp(tk.Tk):
         self.prefs["raw_font_size"] = r_sz
         self.prefs["ui_font_size"] = u_sz
         self._apply_theme_and_fonts_live(save=True)
+
+    def _on_custom_font_selected(self) -> None:
+        """Select a user-managed custom font from assets/fonts or custom_fonts.txt."""
+        if not hasattr(self, "var_custom_font"):
+            return
+        fam = self.var_custom_font.get().strip()
+        if not fam:
+            return
+        self.prefs["dialogue_font_family"] = fam
+        self._apply_theme_and_fonts_live(save=True)
+
+    def _refresh_custom_fonts(self) -> None:
+        """Rescan assets/fonts/ for .ttf/.otf and custom_fonts.txt without Admin rights."""
+        if not hasattr(self, "font_manager"):
+            return
+        fams = self.font_manager.refresh()
+        if hasattr(self, "cb_custom_font"):
+            self.cb_custom_font.configure(values=fams)
+        if self.font_manager.load_errors:
+            self.set_status(self.font_manager.load_errors[0], is_error=True)
+        else:
+            self.show_toast(f"Loaded {len(fams)} custom font(s).")
+        self._apply_theme_and_fonts_live(save=False)
+
+    def _open_fonts_folder(self) -> None:
+        """Create assets/fonts/ if missing and open it in the file explorer."""
+        fonts_dir = SCRIPT_DIR / "assets" / "fonts"
+        try:
+            fonts_dir.mkdir(parents=True, exist_ok=True)
+            if sys.platform == "win32":
+                os.startfile(str(fonts_dir))
+            else:
+                self.set_status(f"Fonts folder: {fonts_dir}")
+        except Exception as exc:
+            self.set_status(f"Could not open fonts folder: {exc}", is_error=True)
 
     def _adjust_dialogue_font_size(self, delta: int) -> None:
         cur = int(self.prefs["dialogue_font_size"])
@@ -6731,6 +6917,8 @@ class MisoraApp(tk.Tk):
 
         if hasattr(self, "var_font_family"):
             self.var_font_family.set(self.prefs["dialogue_font_family"])
+            if hasattr(self, "var_custom_font"):
+                self.var_custom_font.set("")
             self.var_dlg_font_sz.set(self.prefs["dialogue_font_size"])
             self.var_raw_font_sz.set(self.prefs["raw_font_size"])
             self.var_ui_font_sz.set(self.prefs["ui_font_size"])
@@ -8002,6 +8190,7 @@ class MisoraApp(tk.Tk):
                     self.gd_canvas.yview_moveto(0.0)
 
                 self._update_raw_view()
+                self._update_char_overflow_indicator()
                 if hasattr(self, "_translator_dialog") and self._translator_dialog and self._translator_dialog.winfo_exists():
                     self._translator_dialog.refresh_box()
                 return
@@ -8063,6 +8252,7 @@ class MisoraApp(tk.Tk):
             self._auto_resize_dialogue_box()
 
         self._update_raw_view()
+        self._update_char_overflow_indicator()
         self._refresh_mtl_drawer_box()
         if hasattr(self, "_translator_dialog") and self._translator_dialog and self._translator_dialog.winfo_exists():
             self._translator_dialog.refresh_box()
@@ -8930,6 +9120,7 @@ class MisoraApp(tk.Tk):
                 self._highlight_ngui_tags()
                 self._highlight_dialogue_matches()
             self._auto_resize_dialogue_box()
+        self._update_char_overflow_indicator()
 
         if hasattr(self, "btn_prev"):
             can_prev = (self.current_box_idx > 0) or (self.current_doc and self.current_doc.has_metadata())
@@ -10076,6 +10267,7 @@ class MisoraApp(tk.Tk):
             self._highlight_ngui_tags()
             self._highlight_dialogue_matches()
             self._update_gutter_clean()
+            self._update_char_overflow_indicator(new_tx)
             return True
         else:
             old_content = self._plain_text_content
@@ -10100,6 +10292,7 @@ class MisoraApp(tk.Tk):
             self._highlight_ngui_tags()
             self._highlight_dialogue_matches()
             self._update_gutter_clean()
+            self._update_char_overflow_indicator(new_content)
             return True
 
     def _update_box0_char_counter(self) -> None:
@@ -10257,32 +10450,63 @@ class MisoraApp(tk.Tk):
 
     def _get_dialogue_measure_font(self) -> tkfont.Font:
         """Return a cached tkfont.Font matching the active dialogue editor font."""
-        d_fam = getattr(self, "dialogue_font_family", "Consolas")
-        d_sz = int(getattr(self, "dialogue_font_size", 11))
+        d_fam, d_weight = self._resolve_active_dialogue_font_parts()
+        d_sz = self.dialogue_font_size
+        weight = d_weight or "normal"
         cached = getattr(self, "_dialogue_measure_font", None)
         if cached is None:
-            cached = tkfont.Font(root=self, family=d_fam, size=d_sz)
+            cached = tkfont.Font(root=self, family=d_fam, size=d_sz, weight=weight)
             self._dialogue_measure_font = cached
         else:
             try:
-                if cached.cget("family") != d_fam or int(cached.cget("size")) != d_sz:
-                    cached.configure(family=d_fam, size=d_sz)
+                if (
+                    cached.cget("family") != d_fam
+                    or int(cached.cget("size")) != d_sz
+                    or cached.cget("weight") != weight
+                ):
+                    cached.configure(family=d_fam, size=d_sz, weight=weight)
             except Exception:
-                cached = tkfont.Font(root=self, family=d_fam, size=d_sz)
+                cached = tkfont.Font(root=self, family=d_fam, size=d_sz, weight=weight)
                 self._dialogue_measure_font = cached
         return cached
 
-    def _measure_dialogue_metrics(self, text: str) -> Dict[str, Any]:
-        """Shared pixel-calibrated dialogue measurement helper (S17 / BUG-40, FEAT-09).
+    def _get_ruler_measure_font(self) -> tkfont.Font:
+        """Return a cached tkfont.Font locked to Nunito Bold for constant 50d ruler calibration (U19)."""
+        if hasattr(self, "font_manager"):
+            r_fam, r_weight = self.font_manager.resolve_font_parts(
+                PRESET_GLOBAL, available_families=self._get_available_font_families()
+            )
+        else:
+            r_fam, r_weight = ("Segoe UI", None)
+        r_sz = self.dialogue_font_size
+        weight = r_weight or "normal"
+        cached = getattr(self, "_ruler_measure_font", None)
+        if cached is None:
+            cached = tkfont.Font(root=self, family=r_fam, size=r_sz, weight=weight)
+            self._ruler_measure_font = cached
+        else:
+            try:
+                if (
+                    cached.cget("family") != r_fam
+                    or int(cached.cget("size")) != r_sz
+                    or cached.cget("weight") != weight
+                ):
+                    cached.configure(family=r_fam, size=r_sz, weight=weight)
+            except Exception:
+                cached = tkfont.Font(root=self, family=r_fam, size=r_sz, weight=weight)
+                self._ruler_measure_font = cached
+        return cached
 
-        Uses active editor font to compute `safe_w = font.measure('1234567890' * 5)`
-        (50 digit-widths, an estimate of the in-game font). Strips NGUI tags to 0px,
-        preserves ruby base text, and gives `{playername}`/`{N}` placeholders a realistic
-        non-zero width. Measures rendered prefixes with `font.measure(prefix)` for
-        kerning-accurate width and exact raw-index overflow mapping.
+    def _measure_dialogue_metrics(self, text: str) -> Dict[str, Any]:
+        """Shared pixel-calibrated dialogue measurement helper (S17 / S02 U15, U19).
+
+        Uses constant Nunito Bold ruler font for `safe_w = ruler_font.measure('1234567890' * 5)`
+        (50 digit-widths) and active editor font for rendered line widths, with O(1) fast-path
+        for non-overflowing lines and O(log L) binary search when overflowing.
         """
         f = self._get_dialogue_measure_font()
-        safe_w = max(1, int(f.measure("1234567890" * 5)))
+        rf = self._get_ruler_measure_font()
+        safe_w = max(1, int(rf.measure("1234567890" * 5)))
         digit_w = safe_w / 50.0
         placeholder_sample = "PlayerName"
 
@@ -10311,14 +10535,20 @@ class MisoraApp(tk.Tk):
                 for j in range(pos, len(raw_line)):
                     units.append((j, raw_line[j]))
 
-            rendered_parts: List[str] = []
+            full_rendered = "".join(piece for _, piece in units)
+            pixel_width = int(f.measure(full_rendered)) if full_rendered else 0
             overflow_raw_start: Optional[int] = None
-            pixel_width = 0
-            for raw_idx, piece in units:
-                rendered_parts.append(piece)
-                pixel_width = int(f.measure("".join(rendered_parts)))
-                if overflow_raw_start is None and pixel_width > safe_w:
-                    overflow_raw_start = raw_idx
+
+            if pixel_width > safe_w and units:
+                lo, hi = 1, len(units)
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    w_mid = int(f.measure("".join(piece for _, piece in units[:mid])))
+                    if w_mid > safe_w:
+                        hi = mid
+                    else:
+                        lo = mid + 1
+                overflow_raw_start = units[lo - 1][0]
 
             line_metrics.append({
                 "line_no": line_no,
@@ -10336,6 +10566,32 @@ class MisoraApp(tk.Tk):
             "has_width_overflow": any(l["overflow_raw_start"] is not None for l in line_metrics),
             "lines": line_metrics,
         }
+
+    def _update_char_overflow_indicator(self, text: Optional[str] = None) -> None:
+        """Update pixel-calibrated 50d x 3L indicator in dialogue header (U06, DEF-04)."""
+        lbl = getattr(self, "lbl_char_overflow", None)
+        if not lbl or not lbl.winfo_exists():
+            return
+        t = self.theme
+        if getattr(self, "is_box0_active", False):
+            lbl.config(text="Metadata (unmeasured)", fg=t["fg_muted"])
+            return
+        if text is None:
+            if hasattr(self, "txt_dialogue") and self.txt_dialogue.winfo_exists():
+                text = self.txt_dialogue.get("1.0", "end-1c")
+            else:
+                text = ""
+        metrics = self._measure_dialogue_metrics(text)
+        digit_w = max(1e-6, float(metrics["digit_w"]))
+        max_px = max((l["pixel_width"] for l in metrics["lines"]), default=0)
+        d_equiv = int(round(max_px / digit_w))
+        line_count = metrics["line_count"]
+        is_ov = bool(metrics["has_width_overflow"] or metrics["has_line_overflow"])
+        ov_fg = "#c9184a" if self._is_light_theme() else "#ff5c7c"
+        lbl.config(
+            text=f"{d_equiv}/50d · {line_count}/3L",
+            fg=ov_fg if is_ov else t["fg_muted"],
+        )
 
     def _apply_overflow_highlights(self, widget: Optional[tk.Text]) -> None:
         """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget."""
@@ -10359,8 +10615,12 @@ class MisoraApp(tk.Tk):
             return
         try:
             ov_fg = "#ff5c7c" if not self._is_light_theme() else "#c9184a"
-            d_sz = int(getattr(self, "dialogue_font_size", 11))
-            gutter_widget.tag_configure("gutter_overflow", foreground=ov_fg, font=("Consolas", max(8, d_sz - 1), "bold"))
+            d_sz = self.dialogue_font_size
+            gutter_widget.tag_configure(
+                "gutter_overflow",
+                foreground=ov_fg,
+                font=self._get_dialogue_font_tuple(d_sz, "bold"),
+            )
             gutter_widget.tag_remove("gutter_overflow", "1.0", tk.END)
             total_lines = int(gutter_widget.index("end-1c").split(".")[0])
             if total_lines >= 4:
@@ -10369,7 +10629,7 @@ class MisoraApp(tk.Tk):
             pass
 
     def _draw_single_pixel_ruler(self, canvas: tk.Canvas, x0: int) -> None:
-        """Render tick marks and 50 digit-width (est.) overflow zone on a Canvas ruler."""
+        """Render tick marks and constant 50 digit-width overflow zone on a Canvas ruler (U19)."""
         if not canvas or not canvas.winfo_exists():
             return
         t = self.theme
@@ -10383,9 +10643,9 @@ class MisoraApp(tk.Tk):
         canvas.configure(bg=gutter_bg)
         canvas.delete("all")
 
-        metrics = self._measure_dialogue_metrics("")
-        safe_w = metrics["safe_w"]
-        digit_w = metrics["digit_w"]
+        rf = self._get_ruler_measure_font()
+        safe_w = max(1, int(rf.measure("1234567890" * 5)))
+        digit_w = safe_w / 50.0
         ch = max(20, int(canvas.winfo_height() or 20))
         cw = max(int(canvas.winfo_width() or 0), int(x0 + safe_w + 180))
 
@@ -10404,12 +10664,18 @@ class MisoraApp(tk.Tk):
             tick_col = red_fg if col > 50 else (marker_fg if col == 50 else gutter_fg)
             canvas.create_line(tx, ch - tick_h - 1, tx, ch - 1, fill=tick_col, width=2 if col == 50 else 1)
             if is_major:
-                lbl = "50d" if col == 50 else str(col)
-                canvas.create_text(tx + 2, 2, text=lbl, anchor="nw", fill=tick_col, font=("Segoe UI", 7, "bold" if col == 50 else "normal"))
+                if col == 50:
+                    canvas.create_text(
+                        ov_x - 3, 2, text="50d", anchor="ne", fill=tick_col, font=("Segoe UI", 7, "bold")
+                    )
+                else:
+                    canvas.create_text(
+                        tx + 2, 2, text=str(col), anchor="nw", fill=tick_col, font=("Segoe UI", 7, "normal")
+                    )
             col += 5
 
         canvas.create_line(ov_x, 0, ov_x, ch, fill=marker_fg, width=2)
-        canvas.create_text(ov_x + 4, 2, text="est. >50d", anchor="nw", fill=red_fg, font=("Segoe UI", 7, "bold"))
+        canvas.create_text(ov_x + 5, 2, text=">50d", anchor="nw", fill=red_fg, font=("Segoe UI", 7, "bold"))
 
     def _redraw_pixel_rulers(self) -> None:
         """Redraw both Clean and All Script Canvas rulers aligned to editor text origins."""

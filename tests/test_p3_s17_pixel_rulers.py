@@ -89,9 +89,11 @@ class TestS17PixelRulers(unittest.TestCase):
 
     def test_01_probe_pixel_measure_rulers_and_overflow(self):
         """Probe 1 (BUG-40 & FEAT-09): 50 digit-widths safe_w, Kanji overflow, line 4+ red gutter, Canvas rulers, no char counter."""
-        # 1. Char counter UI removed
+        # 1. Legacy char counter removed; S02 U06 pixel-calibrated overflow indicator restored without '(max)'
         self.assertFalse(hasattr(self.app, "lbl_char_count"))
         self.assertFalse(hasattr(self.app, "_update_rendered_char_count"))
+        self.assertTrue(hasattr(self.app, "lbl_char_overflow"))
+        self.assertNotIn("(max)", str(self.app.lbl_char_overflow.cget("text")).lower())
 
         # 2. Pixel-calibrated Canvas rulers
         self.assertIsInstance(self.app.ruler_clean, tk.Canvas)

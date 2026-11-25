@@ -41,3 +41,8 @@ Decoration/
 
 Windows System
 *.ini
+
+# Proprietary Japanese dialogue fonts
+assets/fonts/*nintendoP*
+assets/fonts/*Humming*
+assets/fonts/*.otf
