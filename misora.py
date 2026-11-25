@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import colorchooser, filedialog, font as tkfont, messagebox, ttk
@@ -128,6 +129,16 @@ _ORIG_TRANSLATE_ASYNC = translate_async
 CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
 DEBUG_LOG_PATH = SCRIPT_DIR / "misora_debug.log"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Support Me Dialog configuration (U05)
+SHOW_PAYPAL_BUTTON: bool = True
+SUPPORT_URL_KOFI: str = "https://ko-fi.com/imaterial"
+SUPPORT_URL_PATREON: str = "https://patreon.com/imaterial"
+SUPPORT_URL_PAYPAL: str = "https://paypal.me/CorneliaCrimson"
+SUPPORT_CAPTION_ID: str = (
+    "Terima kasih. Dukungan sekecil apa pun sangat saya hargai; "
+    "ini juga membantu menutup biaya penggunaan AI."
+)
 
 
 def _put_queue_cancellable(
@@ -1690,6 +1701,16 @@ class MisoraApp(tk.Tk):
         self._console_visible: bool = bool(dbg_cfg.get("console_visible", False))
         self.var_console_visible = tk.BooleanVar(master=self, value=self._console_visible)
         self.var_log_to_file = tk.BooleanVar(master=self, value=bool(dbg_cfg.get("log_to_file", False)))
+
+        # Speaker autocomplete popup state (U-3 / U-4)
+        self._speaker_popup: Optional[tk.Toplevel] = None
+        self._speaker_listbox: Optional[tk.Listbox] = None
+        self._speaker_popup_items: List[Tuple[str, str]] = []
+        self._speaker_focus_out_after_id: Optional[str] = None
+        self._suppress_speaker_popup: bool = False
+        self._speaker_popup_navigated: bool = False
+        self._about_dialog: Optional[tk.Toplevel] = None
+        self._support_me_dialog: Optional[tk.Toplevel] = None
         self.var_log_level = tk.StringVar(master=self, value=str(dbg_cfg.get("level", "Info")))
         self.var_console_autoscroll = tk.BooleanVar(master=self, value=True)
         self.var_log_categories: Dict[str, tk.BooleanVar] = {}
@@ -1979,6 +2000,17 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
                 self._status_after_id = None
+            if hasattr(self, "_close_speaker_autocomplete"):
+                try:
+                    self._close_speaker_autocomplete()
+                except Exception:
+                    pass
+            if hasattr(self, "_speaker_focus_out_after_id") and self._speaker_focus_out_after_id:
+                try:
+                    self.after_cancel(self._speaker_focus_out_after_id)
+                except Exception:
+                    pass
+                self._speaker_focus_out_after_id = None
             self._cleanup_drag_and_drop()
 
     def destroy(self) -> None:
@@ -2046,6 +2078,17 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._status_after_id = None
+        if hasattr(self, "_close_speaker_autocomplete"):
+            try:
+                self._close_speaker_autocomplete()
+            except Exception:
+                pass
+        if hasattr(self, "_speaker_focus_out_after_id") and self._speaker_focus_out_after_id:
+            try:
+                self.after_cancel(self._speaker_focus_out_after_id)
+            except Exception:
+                pass
+            self._speaker_focus_out_after_id = None
         if hasattr(self, "_toast_queue"):
             self._toast_queue.clear()
         if hasattr(self, "_toast_widget") and self._toast_widget:
@@ -4253,6 +4296,13 @@ class MisoraApp(tk.Tk):
 
         self.debug_menu.add_separator()
         self.debug_menu.add_checkbutton(
+            label="Show / Hide Windows Console",
+            variable=self.var_console_visible,
+            command=self._toggle_console_visibility,
+            accelerator="F12",
+            selectcolor=t["misora_pink"],
+        )
+        self.debug_menu.add_checkbutton(
             label="Log to File",
             variable=self.var_log_to_file,
             command=self._on_debug_settings_changed,
@@ -4929,9 +4979,17 @@ class MisoraApp(tk.Tk):
             "entry_speaker"
         )
         self.entry_speaker.pack(side="left")
-        self.entry_speaker.bind("<KeyRelease>", lambda e: self._on_speaker_edited())
-        self.entry_speaker.bind("<<Cut>>", lambda e: self.after_idle(self._commit_speaker_edit))
-        self.entry_speaker.bind("<<Paste>>", lambda e: self.after_idle(self._commit_speaker_edit))
+        self.entry_speaker.bind("<FocusIn>", lambda e: self._on_speaker_focus_in())
+        self.entry_speaker.bind("<Button-1>", lambda e: self.after_idle(self._on_speaker_entry_clicked))
+        self.entry_speaker.bind("<KeyRelease>", self._on_speaker_key_release)
+        self.entry_speaker.bind("<Down>", self._on_speaker_nav_down)
+        self.entry_speaker.bind("<Up>", self._on_speaker_nav_up)
+        self.entry_speaker.bind("<Return>", self._on_speaker_enter)
+        self.entry_speaker.bind("<KP_Enter>", self._on_speaker_enter)
+        self.entry_speaker.bind("<Escape>", self._on_speaker_escape)
+        self.entry_speaker.bind("<FocusOut>", self._on_speaker_focus_out)
+        self.entry_speaker.bind("<<Cut>>", lambda e: self.after_idle(self._on_speaker_virtual_edit))
+        self.entry_speaker.bind("<<Paste>>", lambda e: self.after_idle(self._on_speaker_virtual_edit))
 
         self.btn_speaker_dropdown = ttk.Button(
             self.speaker_view_row,
@@ -4941,7 +4999,7 @@ class MisoraApp(tk.Tk):
             command=self._on_speaker_dropdown_clicked,
         )
         self.btn_speaker_dropdown.pack(side="left", padx=(2, 2))
-        create_tooltip(self.btn_speaker_dropdown, "Select Speaker from Recent List")
+        create_tooltip(self.btn_speaker_dropdown, "Jump to Speaker Box (click again to cycle next)")
 
         self.ico_pin = self.get_icon("pin", (16, 16))
         self.btn_pin_speaker = tk.Button(
@@ -5928,6 +5986,18 @@ class MisoraApp(tk.Tk):
             self.debug_menu.entryconfig(self._idx_clear_log, state=exists_state)
         except Exception:
             pass
+        if sys.platform == "win32" and hasattr(ctypes, "windll") and hasattr(self, "var_console_visible"):
+            try:
+                hwnd = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
+                if hwnd:
+                    vis = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+                    self._console_visible = vis
+                    self.var_console_visible.set(vis)
+                else:
+                    self._console_visible = False
+                    self.var_console_visible.set(False)
+            except Exception:
+                pass
 
     def _on_open_debug_log_file(self) -> None:
         if not DEBUG_LOG_PATH.is_file():
@@ -5947,30 +6017,50 @@ class MisoraApp(tk.Tk):
             self.show_toast("✓ Cleared debug log file")
 
     # -------------------------------------------------------------------------
-    # Speaker Attributes & Actor Quick Assignment
+    # Speaker Cyclic Jump & Focus-Safe Autocomplete (U-3, U-4)
     # -------------------------------------------------------------------------
     def _on_speaker_dropdown_clicked(self) -> None:
-        """Display a clean popup menu of story actors and tools (#18)."""
+        """Display popup menu listing speakers with counts to jump/cycle boxes without renaming (U-3)."""
         if getattr(self, "is_box0_active", False):
             return
+        if not self.current_doc or not self.current_doc.boxes:
+            return
+
+        self._close_speaker_autocomplete()
+
+        counts: Dict[str, int] = {}
+        for box in self.current_doc.boxes:
+            sp = box.speaker
+            counts[sp] = counts.get(sp, 0) + 1
 
         t = self.theme
         panel_fg = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
-        menu = tk.Menu(self, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=best_contrast_fg(t["misora_pink"]))
+        menu = tk.Menu(
+            self,
+            tearoff=0,
+            bg=t["bg_panel"],
+            fg=panel_fg,
+            activebackground=t["misora_pink"],
+            activeforeground=best_contrast_fg(t["misora_pink"]),
+        )
 
-        # Known Story Actors listed directly at top level
-        if self.current_doc:
-            actors = [a for a in sorted(self.current_doc.actors()) if a]
-            for act in actors:
+        actors = [a for a in sorted(self.current_doc.actors()) if a]
+        for act in actors:
+            cnt = counts.get(act, 0)
+            if cnt > 0:
                 menu.add_command(
-                    label=act,
-                    command=lambda a=act: self._assign_speaker_to_current_box(a),
+                    label=f"{act} ({cnt})",
+                    command=lambda a=act: self._jump_to_speaker(a),
                 )
+
+        narr_cnt = counts.get("", 0)
+        if narr_cnt > 0:
             if actors:
                 menu.add_separator()
-
-        menu.add_command(label="Insert {playername}", command=lambda: self._assign_speaker_to_current_box("{playername}"))
-        menu.add_command(label="Clear Speaker (Narration)", command=lambda: self._assign_speaker_to_current_box(""))
+            menu.add_command(
+                label=f"(Narration) ({narr_cnt})",
+                command=lambda: self._jump_to_speaker(""),
+            )
 
         try:
             x = self.btn_speaker_dropdown.winfo_rootx()
@@ -5979,12 +6069,339 @@ class MisoraApp(tk.Tk):
         finally:
             menu.grab_release()
 
+    def _jump_to_speaker(self, speaker_name: str) -> Optional[int]:
+        """Jump to the next occurrence of speaker_name (wrapping around) without mutating any speaker (U-3)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            return None
+
+        self._close_speaker_autocomplete()
+        matching_indices = [
+            i for i, b in enumerate(self.current_doc.boxes) if b.speaker == speaker_name
+        ]
+        disp = speaker_name if speaker_name else "(Narration)"
+        if not matching_indices:
+            self.show_toast(f"No boxes found for {disp}.")
+            return None
+
+        on_same_speaker = (
+            not getattr(self, "is_box0_active", False)
+            and 0 <= self.current_box_idx < len(self.current_doc.boxes)
+            and self.current_doc.boxes[self.current_box_idx].speaker == speaker_name
+        )
+        if on_same_speaker:
+            next_idx = next((idx for idx in matching_indices if idx > self.current_box_idx), matching_indices[0])
+        else:
+            next_idx = matching_indices[0]
+
+        self.is_box0_active = False
+        self.current_box_idx = next_idx
+        if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
+            self._focus_continuous_box(next_idx, move_cursor=True)
+        else:
+            self._update_views()
+
+        occ_pos = matching_indices.index(next_idx) + 1
+        occ_total = len(matching_indices)
+        self.show_toast(f"Jumped to Box #{next_idx + 1} — {disp} ({occ_pos}/{occ_total})")
+        return next_idx
+
+    def _is_widget_in_speaker_popup(self, widget: Optional[tk.Misc]) -> bool:
+        """Return True if widget is the speaker autocomplete Toplevel or one of its descendants."""
+        popup = getattr(self, "_speaker_popup", None)
+        if popup is None or widget is None:
+            return False
+        try:
+            if not popup.winfo_exists():
+                return False
+        except Exception:
+            return False
+        cur: Optional[tk.Misc] = widget
+        while cur is not None:
+            if cur == popup:
+                return True
+            cur = getattr(cur, "master", None)
+        return False
+
+    def _is_speaker_popup_open(self) -> bool:
+        popup = getattr(self, "_speaker_popup", None)
+        if popup is None:
+            return False
+        try:
+            return bool(popup.winfo_exists())
+        except Exception:
+            return False
+
+    def _get_speaker_autocomplete_candidates(self, filter_text: str) -> List[Tuple[str, str]]:
+        """Build ordered (display_label, commit_value) pairs filtered by prefix then substring."""
+        items: List[Tuple[str, str]] = []
+        seen_vals: Set[str] = set()
+        if self.current_doc:
+            for act in sorted(self.current_doc.actors()):
+                if act and act not in seen_vals:
+                    seen_vals.add(act)
+                    items.append((act, act))
+        if "{playername}" not in seen_vals and "{0}" not in seen_vals:
+            items.append(("{playername}", "{playername}"))
+        items.append(("(Narration — Clear Speaker)", ""))
+
+        q = (filter_text or "").strip().lower()
+        if not q:
+            return items
+
+        prefix_hits: List[Tuple[str, str]] = []
+        substr_hits: List[Tuple[str, str]] = []
+        for label, val in items:
+            lbl_l = label.lower()
+            val_l = val.lower()
+            if lbl_l.startswith(q) or (val_l and val_l.startswith(q)):
+                prefix_hits.append((label, val))
+            elif q in lbl_l or (val_l and q in val_l):
+                substr_hits.append((label, val))
+        return prefix_hits + substr_hits
+
+    def _open_speaker_autocomplete(self) -> None:
+        """Open or refresh the lightweight Google-style speaker autocomplete popup beneath entry_speaker."""
+        if getattr(self, "_destroyed", False):
+            return
+        if getattr(self, "is_box0_active", False) or not self.current_doc or not self.current_doc.boxes:
+            return
+        if not hasattr(self, "entry_speaker") or not self.entry_speaker.winfo_exists():
+            return
+        if str(self.entry_speaker.cget("state")) == "disabled":
+            return
+
+        if not self._is_speaker_popup_open():
+            t = self.theme
+            editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+            hl_fg = best_contrast_fg(t["highlight_bg"], t["misora_pink"], "#ffffff")
+
+            popup = tk.Toplevel(self)
+            popup.overrideredirect(True)
+            popup.transient(self)
+            popup.configure(bg=t["border"], bd=1, relief="solid")
+
+            lb = tk.Listbox(
+                popup,
+                exportselection=False,
+                activestyle="none",
+                bd=0,
+                highlightthickness=0,
+                bg=t["bg_editor"],
+                fg=editor_fg,
+                selectbackground=t["highlight_bg"],
+                selectforeground=hl_fg,
+                font=("Segoe UI", 9),
+                cursor="hand2",
+            )
+            lb.pack(fill="both", expand=True, padx=1, pady=1)
+            lb.bind("<ButtonRelease-1>", lambda e: self._on_speaker_listbox_click(e))
+            lb.bind("<Return>", lambda e: self._accept_speaker_autocomplete_selection())
+            lb.bind("<KP_Enter>", lambda e: self._accept_speaker_autocomplete_selection())
+            lb.bind("<Escape>", self._on_speaker_escape)
+            lb.bind("<FocusOut>", self._on_speaker_focus_out)
+
+            self._speaker_popup = popup
+            self._speaker_listbox = lb
+            self._speaker_popup_navigated = False
+
+        self._refresh_speaker_autocomplete()
+
+    def _refresh_speaker_autocomplete(self) -> None:
+        """Populate and position the speaker autocomplete listbox for current filter text."""
+        if not self._is_speaker_popup_open():
+            return
+        popup = self._speaker_popup
+        lb = self._speaker_listbox
+        if popup is None or lb is None or not lb.winfo_exists():
+            return
+
+        cur_txt = self.speaker_var.get()
+        candidates = self._get_speaker_autocomplete_candidates(cur_txt)
+        if not candidates:
+            self._close_speaker_autocomplete()
+            return
+
+        self._speaker_popup_items = candidates
+        lb.delete(0, tk.END)
+        for label, _val in candidates:
+            lb.insert(tk.END, label)
+        lb.config(height=min(8, max(1, len(candidates))))
+        self._speaker_popup_navigated = False
+
+        try:
+            self.entry_speaker.update_idletasks()
+            x = self.entry_speaker.winfo_rootx()
+            y = self.entry_speaker.winfo_rooty() + self.entry_speaker.winfo_height() + 1
+            w = max(220, self.entry_speaker.winfo_width())
+            row_h = 20
+            h = min(8, len(candidates)) * row_h + 6
+            popup.geometry(f"{w}x{h}+{x}+{y}")
+            popup.lift()
+        except Exception:
+            pass
+
+    def _close_speaker_autocomplete(self) -> None:
+        """Destroy speaker autocomplete popup safely if open."""
+        if getattr(self, "_speaker_focus_out_after_id", None):
+            try:
+                self.after_cancel(self._speaker_focus_out_after_id)
+            except Exception:
+                pass
+            self._speaker_focus_out_after_id = None
+        popup = getattr(self, "_speaker_popup", None)
+        self._speaker_popup = None
+        self._speaker_listbox = None
+        self._speaker_popup_items = []
+        self._speaker_popup_navigated = False
+        if popup is not None:
+            try:
+                if popup.winfo_exists():
+                    popup.destroy()
+            except Exception:
+                pass
+
+    def _on_speaker_focus_in(self) -> None:
+        if getattr(self, "_suppress_speaker_popup", False):
+            self._suppress_speaker_popup = False
+            return
+        if getattr(self, "_speaker_focus_out_after_id", None):
+            try:
+                self.after_cancel(self._speaker_focus_out_after_id)
+            except Exception:
+                pass
+            self._speaker_focus_out_after_id = None
+        self._open_speaker_autocomplete()
+
+    def _on_speaker_entry_clicked(self) -> None:
+        if getattr(self, "_destroyed", False):
+            return
+        if not self._is_speaker_popup_open():
+            self._open_speaker_autocomplete()
+
+    def _on_speaker_key_release(self, event: Optional[tk.Event]) -> None:
+        """Filter autocomplete live without committing to AST on KeyRelease (U-3, U-4)."""
+        keysym = getattr(event, "keysym", "") if event is not None else ""
+        if keysym in (
+            "Up", "Down", "Return", "KP_Enter", "Escape", "Tab",
+            "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
+        ):
+            return
+        if not self._is_speaker_popup_open():
+            self._open_speaker_autocomplete()
+        else:
+            self._refresh_speaker_autocomplete()
+
+    def _on_speaker_nav_down(self, _event: Optional[tk.Event] = None) -> str:
+        if not self._is_speaker_popup_open():
+            self._open_speaker_autocomplete()
+        lb = getattr(self, "_speaker_listbox", None)
+        if lb is not None and lb.winfo_exists() and lb.size() > 0:
+            sel = lb.curselection()
+            idx = (sel[0] + 1) % lb.size() if sel else 0
+            lb.selection_clear(0, tk.END)
+            lb.selection_set(idx)
+            lb.activate(idx)
+            lb.see(idx)
+            self._speaker_popup_navigated = True
+        return "break"
+
+    def _on_speaker_nav_up(self, _event: Optional[tk.Event] = None) -> str:
+        if not self._is_speaker_popup_open():
+            return "break"
+        lb = getattr(self, "_speaker_listbox", None)
+        if lb is not None and lb.winfo_exists() and lb.size() > 0:
+            sel = lb.curselection()
+            idx = (sel[0] - 1) % lb.size() if sel else lb.size() - 1
+            lb.selection_clear(0, tk.END)
+            lb.selection_set(idx)
+            lb.activate(idx)
+            lb.see(idx)
+            self._speaker_popup_navigated = True
+        return "break"
+
+    def _on_speaker_enter(self, _event: Optional[tk.Event] = None) -> str:
+        lb = getattr(self, "_speaker_listbox", None)
+        if (
+            self._is_speaker_popup_open()
+            and getattr(self, "_speaker_popup_navigated", False)
+            and lb is not None
+            and lb.winfo_exists()
+            and lb.curselection()
+        ):
+            self._accept_speaker_autocomplete_selection()
+        else:
+            self._close_speaker_autocomplete()
+            self._commit_speaker_edit(source="keyboard")
+        return "break"
+
+    def _on_speaker_escape(self, _event: Optional[tk.Event] = None) -> str:
+        self._close_speaker_autocomplete()
+        return "break"
+
+    def _on_speaker_listbox_click(self, event: tk.Event) -> None:
+        lb = getattr(self, "_speaker_listbox", None)
+        if lb is not None and lb.winfo_exists() and lb.size() > 0:
+            idx = lb.nearest(event.y)
+            lb.selection_clear(0, tk.END)
+            lb.selection_set(idx)
+        self._accept_speaker_autocomplete_selection()
+
+    def _accept_speaker_autocomplete_selection(self) -> Optional[str]:
+        lb = getattr(self, "_speaker_listbox", None)
+        items = getattr(self, "_speaker_popup_items", [])
+        chosen_val: Optional[str] = None
+        if lb is not None and lb.winfo_exists() and items:
+            sel = lb.curselection()
+            idx = sel[0] if sel else 0
+            if 0 <= idx < len(items):
+                chosen_val = items[idx][1]
+        self._close_speaker_autocomplete()
+        if chosen_val is not None:
+            self.speaker_var.set(chosen_val)
+            self._commit_speaker_edit(source="autocomplete")
+            if hasattr(self, "entry_speaker") and self.entry_speaker.winfo_exists():
+                self._suppress_speaker_popup = True
+                try:
+                    self.entry_speaker.focus_set()
+                except Exception:
+                    pass
+        return "break"
+
+    def _on_speaker_focus_out(self, _event: Optional[tk.Event] = None) -> None:
+        """Defer FocusOut briefly so focus moving into our own autocomplete popup does not commit prematurely."""
+        if getattr(self, "_destroyed", False):
+            return
+        if getattr(self, "_speaker_focus_out_after_id", None):
+            try:
+                self.after_cancel(self._speaker_focus_out_after_id)
+            except Exception:
+                pass
+        self._speaker_focus_out_after_id = self.after(20, self._on_speaker_focus_out_deferred)
+
+    def _on_speaker_focus_out_deferred(self) -> None:
+        self._speaker_focus_out_after_id = None
+        if getattr(self, "_destroyed", False):
+            return
+        try:
+            focused = self.focus_get()
+        except Exception:
+            focused = None
+        if focused == getattr(self, "entry_speaker", None) or self._is_widget_in_speaker_popup(focused):
+            return
+        self._close_speaker_autocomplete()
+        self._commit_speaker_edit(source="focus_out")
+
+    def _on_speaker_virtual_edit(self) -> None:
+        """Commit virtual Cut/Paste edits on entry_speaker (Rule 11) and refresh popup if open."""
+        self._commit_speaker_edit(source="virtual")
+        if self._is_speaker_popup_open():
+            self._refresh_speaker_autocomplete()
+
     def _assign_speaker_to_current_box(self, new_speaker: str) -> None:
         if getattr(self, "is_box0_active", False):
             return
         self.speaker_var.set(new_speaker)
-        self._on_speaker_edited()
-        self.show_toast(f"Assigned speaker: {new_speaker or '(Narration)'}")
+        self._commit_speaker_edit(source="menu")
 
     def _append_speaker_attribute(self, attr_suffix: str) -> None:
         cur = self.speaker_var.get().strip()
@@ -7663,9 +8080,54 @@ class MisoraApp(tk.Tk):
         self.btn_save = ttk.Button(action_bar, text=" Save & Patch Bundle (Ctrl+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
         self.btn_save.pack(side="right", padx=4)
 
+    def _toggle_windows_console(self) -> bool:
+        """Toggle Win32 terminal console visibility using IsWindowVisible(hwnd) before ShowWindow (U02)."""
+        if sys.platform != "win32" or not hasattr(ctypes, "windll"):
+            self._console_visible = False
+            if hasattr(self, "var_console_visible"):
+                self.var_console_visible.set(False)
+            self.show_toast("Windows Terminal console toggle is only supported on Windows.")
+            return False
+
+        try:
+            hwnd = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
+        except Exception:
+            hwnd = 0
+
+        if hwnd == 0:
+            self._console_visible = False
+            if hasattr(self, "var_console_visible"):
+                self.var_console_visible.set(False)
+            self.show_toast("No Windows Terminal console is attached to this process.")
+            return False
+
+        try:
+            was_visible = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+            target_show = not was_visible
+            SW_HIDE = 0
+            SW_SHOW = 5
+            ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW if target_show else SW_HIDE)
+            self._console_visible = target_show
+            if hasattr(self, "var_console_visible"):
+                self.var_console_visible.set(target_show)
+            self.show_toast(
+                "Windows console shown (F12 to hide)"
+                if target_show
+                else "Windows console hidden (F12 to restore)"
+            )
+            return True
+        except Exception as exc:
+            self.logger.warning("UI / Theme / Config", f"Console visibility toggle failed: {exc}")
+            self.show_toast("Could not toggle Windows console visibility.", is_error=True)
+            return False
+
+    def _toggle_console_visibility(self) -> None:
+        """Menu callback for Debug > Show / Hide Windows Console (U02)."""
+        self._toggle_windows_console()
+
     def _toggle_console_shortcut(self) -> None:
-        """Inform user that diagnostic logs stream live to the standard Windows console."""
-        self.show_toast("Logs stream to the persistent Windows console.")
+        """F12 shortcut handler for Win32 terminal console visibility toggle (U02)."""
+        self._toggle_windows_console()
 
     def _get_active_text_widget(self) -> Optional[tk.Text]:
         """Resolve the currently active or focused Text widget safely without aliasing (Rule 3)."""
@@ -7771,6 +8233,10 @@ class MisoraApp(tk.Tk):
             return None  # Let standard paste proceed
 
         # 6. Whitelisted Application Shortcuts (return "break" on match)
+        if not is_ctrl and not is_alt and not is_shift and key_lower == "f12":
+            self._toggle_console_shortcut()
+            return "break"
+
         if is_ctrl and not is_alt:
             if not is_shift:
                 if key_lower == "h":
@@ -8095,9 +8561,7 @@ class MisoraApp(tk.Tk):
                 candidate = getattr(self, "txt_continuous", None)
                 if candidate is not None and candidate.winfo_exists():
                     widget = candidate
-            else:
-                # Technique A txt_all_script is read-only; no uncommitted inline edits
-                return True
+            # Technique A txt_all_script is read-only; still flush entry_speaker below if focused
         else:
             if getattr(self, "is_box0_active", False):
                 candidate = getattr(self, "txt_box0_summary", None)
@@ -8117,8 +8581,10 @@ class MisoraApp(tk.Tk):
                 return False
 
         try:
-            if hasattr(self, "focus_get") and self.focus_get() == getattr(self, "entry_speaker", None):
-                self._commit_speaker_edit()
+            focused = self.focus_get() if hasattr(self, "focus_get") else None
+            if focused == getattr(self, "entry_speaker", None) or self._is_widget_in_speaker_popup(focused):
+                self._close_speaker_autocomplete()
+                self._commit_speaker_edit(source="flush")
         except Exception:
             pass
         return True
@@ -10627,9 +11093,9 @@ class MisoraApp(tk.Tk):
         except Exception:
             pass
 
-    def _commit_speaker_edit(self) -> bool:
-        """Central edit commit path for speaker entry edits (Rule 11, F20).
-        Returns True if a mutation occurred, False if no-op or aborted.
+    def _commit_speaker_edit(self, source: str = "keyboard") -> bool:
+        """Central edit commit path for speaker entry edits (Rule 11, F20, U-4).
+        Returns True if a mutation occurred, False if no-op, locked, or aborted.
         """
         if getattr(self, "_suppress_continuous_events", False):
             return False
@@ -10662,6 +11128,11 @@ class MisoraApp(tk.Tk):
         if old_sp == new_sp:
             return False
 
+        if self.is_box_locked(idx):
+            self.speaker_var.set(old_sp)
+            self.show_toast(f"Box #{idx + 1} is locked; speaker rename blocked.")
+            return False
+
         self.undo_journal.record(
             BoxEditDelta(
                 box_index=idx,
@@ -10671,7 +11142,7 @@ class MisoraApp(tk.Tk):
                 new_text=cur_tx,
                 file_path=str(self.current_file_path or ""),
                 box_uid=box.uid,
-                source="keyboard",
+                source=source,
             ),
             label=f"Rename speaker #{idx + 1}"
         )
@@ -10682,18 +11153,29 @@ class MisoraApp(tk.Tk):
             self.logger.error("AST", f"Failed to inject speaker rename: {ex}")
             return False
 
+        updated_sp = self.current_doc.boxes[idx].speaker
+        if self.speaker_var.get() != updated_sp:
+            self.speaker_var.set(updated_sp)
+
         self._modified_boxes.add(idx)
         self._mark_document_dirty(self.current_file_path)
+
+        if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
+            self._render_continuous_view()
+            self._set_all_script_active_block(idx)
+        elif getattr(self, "var_preview_compiled", None) and self.var_preview_compiled.get():
+            self._render_dialogue_preview_frame(updated_sp, self.current_doc.boxes[idx].clean_text)
 
         if hasattr(self, "_refresh_continuous_box_header"):
             self._refresh_continuous_box_header(idx)
         elif hasattr(self, "_card_widgets") and idx in self._card_widgets:
             lbl_sp = self._card_widgets[idx].get("lbl_sp")
             if lbl_sp and lbl_sp.winfo_exists():
-                lbl_sp.config(text=new_sp if new_sp else "(Narration)")
+                lbl_sp.config(text=updated_sp if updated_sp else "(Narration)")
 
         self._update_raw_view()
         self._dirty_state_changed()
+        self.show_toast(f"Renamed Box #{idx + 1} speaker to {updated_sp or '(Narration)'}")
         return True
 
     def _on_speaker_edited(self) -> None:
@@ -10969,6 +11451,7 @@ class MisoraApp(tk.Tk):
         return False
 
     def on_prev_box(self) -> None:
+        self._close_speaker_autocomplete()
         if self.is_box0_active:
             return
 
@@ -10989,6 +11472,7 @@ class MisoraApp(tk.Tk):
                 self._update_views()
 
     def on_next_box(self) -> None:
+        self._close_speaker_autocomplete()
         if self.is_box0_active:
             self.is_box0_active = False
             self.current_box_idx = 0
@@ -16607,15 +17091,370 @@ class MisoraApp(tk.Tk):
             messagebox.showerror("Registration Failed", f"Could not write registry keys:\n{exc}")
 
     def on_about(self) -> None:
-        """Show application information dialog."""
-        about_text = (
-            "Misora: Story Editor\n"
-            f"Version {__version__}\n\n"
-            "A specialized GUI text editor for Princess Connect! Re:Dive\n"
-            "Unity3D story bundles (.unity3d) and XUAT translation files.\n\n"
-            "MIT License — Created for the Priconne Modding Community."
+        """Show modal About dialog with Support Me launcher (U05, Rule 3)."""
+        existing = getattr(self, "_about_dialog", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_set()
+                    return
+            except Exception:
+                pass
+
+        t = self.theme
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        fg_muted = _wcag_muted_fg(t["fg_muted"], t["bg_panel"], fg_panel)
+
+        dlg = tk.Toplevel(self)
+        self._about_dialog = dlg
+        dlg.title("About Misora: Story Editor")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.configure(bg=t["bg_panel"])
+        apply_window_icon(dlg)
+
+        body = tk.Frame(dlg, bg=t["bg_panel"], padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(
+            body,
+            text="Misora: Story Editor",
+            font=("Segoe UI", 14, "bold"),
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+        ).pack(anchor="center")
+
+        tk.Label(
+            body,
+            text=f"v{__version__}",
+            font=("Segoe UI", 10, "bold"),
+            bg=t["bg_panel"],
+            fg=fg_panel,
+        ).pack(anchor="center", pady=(2, 10))
+
+        tk.Label(
+            body,
+            text=(
+                "A specialized GUI text editor for Princess Connect! Re:Dive\n"
+                "Unity3D story bundles (.unity3d) and XUAT translation files.\n\n"
+                "MIT License — Created for the Priconne Modding Community."
+            ),
+            font=("Segoe UI", 9),
+            bg=t["bg_panel"],
+            fg=fg_muted,
+            justify="center",
+        ).pack(anchor="center", pady=(0, 14))
+
+        def _close_about(_e: Optional[tk.Event] = None) -> None:
+            if self._about_dialog is dlg:
+                self._about_dialog = None
+            safe_grab_release(dlg)
+            try:
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            except Exception:
+                pass
+
+        def _launch_support() -> None:
+            _close_about()
+            self.on_support_me()
+
+        btn_row = tk.Frame(body, bg=t["bg_panel"])
+        btn_row.pack(fill="x")
+
+        ttk.Button(
+            btn_row,
+            text="Support Me",
+            style="Pink.TButton",
+            command=_launch_support,
+        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+        ttk.Button(
+            btn_row,
+            text="Close",
+            style="TButton",
+            command=_close_about,
+        ).pack(side="right", expand=True, fill="x", padx=(6, 0))
+
+        dlg.protocol("WM_DELETE_WINDOW", _close_about)
+        dlg.bind("<Escape>", _close_about)
+
+        dlg.update_idletasks()
+        try:
+            px = self.winfo_rootx() + (self.winfo_width() - dlg.winfo_width()) // 2
+            py = self.winfo_rooty() + (self.winfo_height() - dlg.winfo_height()) // 2
+            dlg.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+
+    def on_support_me(self) -> None:
+        """Open the SupportMeDialog with sequential-frame GIF streaming (U05)."""
+        existing = getattr(self, "_support_me_dialog", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_set()
+                    return
+            except Exception:
+                pass
+        self._support_me_dialog = SupportMeDialog(self)
+
+
+# =============================================================================
+# Support Me Dialog (U05 — Sequential-Frame GIF Streaming)
+# =============================================================================
+class SupportMeDialog(tk.Toplevel):
+    """Modal Support Me dialog with memory-bounded sequential GIF playback (U05)."""
+
+    def __init__(self, parent: "MisoraApp", gif_path: Optional[Path] = None) -> None:
+        super().__init__(parent)
+        self.app = parent
+        self._gif_path: Path = (
+            Path(gif_path)
+            if gif_path is not None
+            else (SCRIPT_DIR / "assets" / "Service.gif")
         )
-        messagebox.showinfo("About Misora: Story Editor", about_text)
+        self._gif_image: Optional[Any] = None
+        self._gif_frame_count: int = 0
+        self._gif_frame_idx: int = 0
+        self._gif_after_id: Optional[str] = None
+        self._current_frame_photo: Optional[Any] = None
+        self._fallback_photo: Optional[Any] = None
+        self._closed: bool = False
+        self.support_buttons: Dict[str, tk.Widget] = {}
+
+        self.title("Support Misora: Story Editor")
+        self.resizable(False, False)
+        self.transient(parent)
+        apply_window_icon(self)
+
+        t = self.app.theme
+        self.configure(bg=t["bg_panel"])
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        fg_muted = _wcag_muted_fg(t["fg_muted"], t["bg_panel"], fg_panel)
+
+        container = tk.Frame(self, bg=t["bg_panel"], padx=20, pady=16)
+        container.pack(fill="both", expand=True)
+
+        self.lbl_gif = tk.Label(
+            container,
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+            bd=0,
+            highlightthickness=0,
+        )
+        self.lbl_gif.pack(pady=(0, 12))
+
+        tk.Label(
+            container,
+            text=SUPPORT_CAPTION_ID,
+            font=("Segoe UI", 9),
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            wraplength=420,
+            justify="center",
+        ).pack(pady=(0, 14))
+
+        btn_row = tk.Frame(container, bg=t["bg_panel"])
+        btn_row.pack(fill="x", pady=(0, 8))
+
+        providers: List[Tuple[str, str, str]] = [
+            ("Ko-fi", "kofi", SUPPORT_URL_KOFI),
+            ("Patreon", "patreon", SUPPORT_URL_PATREON),
+        ]
+        if SHOW_PAYPAL_BUTTON:
+            providers.append(("PayPal", "paypal", SUPPORT_URL_PAYPAL))
+
+        for label, icon_name, url in providers:
+            ico = get_icon(icon_name, (18, 18), master=self)
+            btn = ttk.Button(
+                btn_row,
+                text=f" {label}" if ico is not None else label,
+                image=ico if ico is not None else "",
+                compound="left" if ico is not None else "none",
+                style="TButton",
+                command=lambda u=url: self._open_external_url(u),
+            )
+            if ico is not None:
+                setattr(btn, "_support_icon_ref", ico)
+            btn.pack(side="left", expand=True, fill="x", padx=4)
+            self.support_buttons[label] = btn
+
+        tk.Label(
+            container,
+            text="Links open in your browser. Misora does not process payments.",
+            font=("Segoe UI", 8),
+            bg=t["bg_panel"],
+            fg=fg_muted,
+            justify="center",
+        ).pack(pady=(2, 10))
+
+        ttk.Button(
+            container,
+            text="Close",
+            style="Pink.TButton",
+            command=self.close,
+        ).pack(anchor="center")
+
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.bind("<Escape>", lambda _e: self.close())
+
+        self._init_gif_player()
+
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+            py = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+        hx = (hex_color or "#ffffff").strip().lstrip("#")
+        if len(hx) != 6:
+            return (255, 255, 255)
+        try:
+            return (int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16))
+        except Exception:
+            return (255, 255, 255)
+
+    @staticmethod
+    def _open_external_url(url: str) -> None:
+        webbrowser.open(url, new=2)
+
+    def _init_gif_player(self) -> None:
+        """Open Service.gif lazily and start sequential single-PhotoImage streaming."""
+        if Image is None or ImageTk is None or not self._gif_path.is_file():
+            self._render_static_fallback()
+            return
+        try:
+            img = Image.open(self._gif_path)
+            self._gif_image = img
+            self._gif_frame_count = max(1, int(getattr(img, "n_frames", 1)))
+            self._gif_frame_idx = 0
+            self._render_gif_frame(0)
+        except Exception:
+            self._close_gif_handle()
+            self._render_static_fallback()
+
+    def _render_static_fallback(self) -> None:
+        """Render a clean static placeholder when Service.gif is absent or unreadable."""
+        if not hasattr(self, "lbl_gif") or not self.lbl_gif.winfo_exists():
+            return
+        ico = get_icon("sparkle", (48, 48), master=self)
+        if ico is not None:
+            self._fallback_photo = ico
+            self.lbl_gif.configure(
+                image=ico,
+                text="  Misora: Story Editor",
+                compound="left",
+                font=("Segoe UI", 11, "bold"),
+            )
+        else:
+            self.lbl_gif.configure(
+                image="",
+                text="Misora: Story Editor",
+                font=("Segoe UI", 11, "bold"),
+            )
+
+    def _render_gif_frame(self, frame_idx: int) -> None:
+        """Seek a single GIF frame, composite onto bg_panel RGB, and paste into one PhotoImage."""
+        if self._closed or self._gif_image is None or Image is None or ImageTk is None:
+            return
+        try:
+            self._gif_image.seek(frame_idx)
+            rgba = self._gif_image.convert("RGBA")
+            w, h = rgba.size
+            scale = min(240.0 / max(1, w), 240.0 / max(1, h))
+            tw = max(1, int(round(w * scale)))
+            th = max(1, int(round(h * scale)))
+            if (w, h) != (tw, th):
+                rgba = rgba.resize((tw, th), Image.Resampling.LANCZOS)
+
+            bg_rgb = self._hex_to_rgb(self.app.theme.get("bg_panel", "#ffffff"))
+            composite = Image.new("RGB", (tw, th), bg_rgb)
+            composite.paste(rgba, (0, 0), mask=rgba.split()[3])
+
+            if (
+                self._current_frame_photo is None
+                or self._current_frame_photo.width() != tw
+                or self._current_frame_photo.height() != th
+            ):
+                self._current_frame_photo = ImageTk.PhotoImage(composite, master=self)
+                if self.lbl_gif.winfo_exists():
+                    self.lbl_gif.configure(image=self._current_frame_photo, text="")
+            else:
+                self._current_frame_photo.paste(composite)
+
+            delay_ms = max(40, int(self._gif_image.info.get("duration", 80) or 80))
+            if self._gif_frame_count > 1 and not self._closed:
+                self._gif_after_id = self.after(delay_ms, self._advance_gif_frame)
+        except Exception:
+            self._close_gif_handle()
+            self._render_static_fallback()
+
+    def _advance_gif_frame(self) -> None:
+        self._gif_after_id = None
+        if self._closed or self._gif_image is None or self._gif_frame_count <= 1:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+        self._gif_frame_idx = (self._gif_frame_idx + 1) % self._gif_frame_count
+        self._render_gif_frame(self._gif_frame_idx)
+
+    def _close_gif_handle(self) -> None:
+        if self._gif_after_id is not None:
+            try:
+                self.after_cancel(self._gif_after_id)
+            except Exception:
+                pass
+            self._gif_after_id = None
+        if self._gif_image is not None:
+            try:
+                self._gif_image.close()
+            except Exception:
+                pass
+            self._gif_image = None
+
+    def _cleanup_resources(self) -> None:
+        self._closed = True
+        self._close_gif_handle()
+        self._current_frame_photo = None
+        self._fallback_photo = None
+        try:
+            if hasattr(self, "lbl_gif") and self.lbl_gif.winfo_exists():
+                self.lbl_gif.configure(image="")
+        except Exception:
+            pass
+        if getattr(self.app, "_support_me_dialog", None) is self:
+            self.app._support_me_dialog = None
+        safe_grab_release(self)
+
+    def close(self) -> None:
+        self._cleanup_resources()
+        try:
+            if self.winfo_exists():
+                self.destroy()
+        except Exception:
+            pass
+
+    def destroy(self) -> None:
+        self._cleanup_resources()
+        super().destroy()
 
 
 # =============================================================================

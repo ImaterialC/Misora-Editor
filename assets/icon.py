@@ -145,7 +145,14 @@ def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Wi
 
     try:
         from PIL import Image, ImageTk
-        pil_im = Image.open(img_path).convert("RGBA")
+        raw_im = Image.open(img_path)
+        try:
+            pil_im = raw_im.convert("RGBA")
+        finally:
+            try:
+                raw_im.close()
+            except Exception:
+                pass
         if pil_im.size != size:
             pil_im = pil_im.resize(size, Image.Resampling.LANCZOS)
         tk_im = ImageTk.PhotoImage(pil_im, master=root) if root else ImageTk.PhotoImage(pil_im)

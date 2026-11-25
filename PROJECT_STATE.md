@@ -3,9 +3,9 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.4 — S04)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.4"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` (+ pre-existing local S24 working-tree state).
+Target release: v1.5.0 (Current session build: v1.4.5 — S05)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.5"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `92dd3750f1e0c7c2a658e3b919c4c527fb966c03` (+ pre-existing local S04 test files).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,12 +41,15 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S04 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s04_layout_drawer_controls -v
-Result: Ran 8 tests (8 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S05 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s05_speaker_console_about -v
+Result: Ran 7 tests in 20.6s (7 pass, 0 failures, 0 errors, exit code 0)
+
+py -3.12 -m unittest tests.test_v15_s05_speaker_console_about tests.test_phase4_import_export_preview tests.test_s7_undo_speaker_safety -v
+Result: Ran 22 tests in 23.460s (22 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 381 tests across 49 modules (338 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.4 bump; 0 S04 regressions)
+Result: Ran 388 tests in 544.971s across 50 modules (345 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.5 bump; 0 S05 regressions)
 
 Test suites included in the 344 tests (exact disk discovery):
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -112,6 +115,24 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S05 (`v1.4.5`) — Speaker Cyclic Jump & Focus-Safe Autocomplete (`U-3`, `U-4`), Win32 Console Toggle (`U02`), & About Sequential-Frame Support Me Dialog (`U05`) (2026-11-26)
+- **Speaker Cyclic Jump & Focus-Safe Autocomplete (`misora.py`, `U-3`, `U-4`):**
+  - Repurposed `btn_speaker_dropdown` (`▼`, tooltip `'Jump to Speaker Box (click again to cycle next)'`) to open a read-only jump menu with speaker occurrence counts and `(Narration)`, cycling cleanly via `_jump_to_speaker()` without mutating speakers and emitting `Jumped to Box #N — <Speaker> (k/m)` notifications.
+  - Added Google-style autocomplete popup (`tk.Toplevel` `overrideredirect(True)` + `tk.Listbox`) on `entry_speaker` listing `sorted(current_doc.actors())`, `{playername}`, and `(Narration — Clear Speaker)` with live prefix/substring filtering, `Up`/`Down`/`Enter`/`Escape`/click selection, and deferred `<FocusOut>` safeguard (`after(20)` + `_is_widget_in_speaker_popup`) preventing premature commits when clicking the popup.
+  - Removed `<KeyRelease>` speaker commit while retaining `<<Cut>>`/`<<Paste>>` virtual-event commits (`AGENTS.md` §11); enforced Translation Lock inside `_commit_speaker_edit()`; refreshed All Script / Dialogue Preview headers on rename; and preserved adjacent-narration separation (`QW-B01`).
+- **Windows Terminal Console Toggle — Option B (`misora.py`, `U02`, `4.3`):**
+  - Added `Debug > Show / Hide Windows Console` checkbutton (`var_console_visible`, `F12`) and `_toggle_windows_console()` shared with `_on_misora_shortcut` (returning `"break"` on `F12` inside editor widgets to prevent double-toggle).
+  - Queries `GetConsoleWindow()` and `IsWindowVisible(hwnd)` before calling `ShowWindow(hwnd, 0|5)`, syncs menu state, and handles `hwnd == 0` (`pythonw.exe`) with an informative toast and zero spawned processes.
+- **Modal About & `SupportMeDialog` (`misora.py`, `assets/icon.py`, `assets/icons/{kofi,patreon,paypal}.png`, `U05`, `4.6`):**
+  - Replaced `messagebox.showinfo` in `on_about()` with a modal `tk.Toplevel(self)` displaying `Misora: Story Editor`, derived `v{__version__}`, and a **Support Me** launcher.
+  - `SupportMeDialog` opens `assets/Service.gif` lazily (verified on disk: `5,445,253` bytes, `(600, 338)`, `72` frames), seeks one frame at a time, composites onto solid `bg_panel` RGB canvas (`<=240x240`), updates ONE reused `ImageTk.PhotoImage`, falls back cleanly when GIF is missing/unreadable, displays the exact Indonesian caption, respects `SHOW_PAYPAL_BUTTON: bool = True`, exposes `kofi.png`/`patreon.png`/`paypal.png` external links (`ko-fi.com/imaterial`, `patreon.com/imaterial`, `paypal.me/CorneliaCrimson`), and cleans up timers/PIL handles in both `close()` and `destroy()`.
+  - Updated `tests/test_phase4_import_export_preview.py::test_01_version_unification` under approved amendment for the modal `tk.Toplevel` About dialog.
+- **Manual Windows QA Pending (Project Lead):**
+  - Click Speaker `▼` repeatedly on a character with 3+ lines and verify cyclic jump + toast.
+  - Click Speaker entry, clear text, click an item inside the Google-style dropdown (confirm no premature FocusOut commit), and verify Escape/Enter.
+  - Press `F12` / `Debug > Show / Hide Windows Console` under `python.exe` (`misora.bat`) and `pythonw.exe`.
+  - Open `Help > About` -> `Support Me` -> confirm smooth `Service.gif` loop, flat RAM across 5 open/close cycles, and all 3 links open the exact target URLs.
 
 ### v1.5 S04 (`v1.4.4`) — Ribbon & Header Layout (`U09`–`U14`, `U22`, `4.2`), Left Drawer True 0px Minimize (`U03`, `4.4`), Search Double-Click (`U-1`), MTL Controls (`U-2`, `U-6`), & Checkbox Clarity (`U21`) (2026-11-26)
 - **3-Row Header & Ribbon Restructuring (`misora.py`):**
