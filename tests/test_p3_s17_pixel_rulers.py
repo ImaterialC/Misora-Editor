@@ -141,15 +141,13 @@ class TestS17PixelRulers(unittest.TestCase):
         self.assertTrue(len(self.app.txt_dialogue.tag_ranges("line_overflow")) >= 2)
         self.assertTrue(len(self.app.gutter_clean.tag_ranges("gutter_overflow")) >= 2)
 
-        # 5. All Script view: no (N chars) label, card gutter_overflow + line_overflow active
+        # 5. All Script view (Technique A): no (N chars) label, line_overflow + gutter_overflow active
         self.app.var_continuous_view.set(True)
         self._load_doc(fifty_one_digits + "\nL2\nL3\nL4")
-        labels = _collect_all_label_texts(self.app.cont_stream_frame)
-        char_labels = [t for t in labels if re.search(r"\(\d+\s+chars\)", t)]
-        self.assertEqual(char_labels, [])
-        card = self.app._card_widgets[0]
-        self.assertTrue(len(card["txt"].tag_ranges("line_overflow")) >= 2)
-        self.assertTrue(len(card["gutter"].tag_ranges("gutter_overflow")) >= 2)
+        all_txt = self.app.txt_all_script.get("1.0", "end-1c")
+        self.assertIsNone(re.search(r"\(\d+\s+chars\)", all_txt))
+        self.assertTrue(len(self.app.txt_all_script.tag_ranges("line_overflow")) >= 2)
+        self.assertTrue(len(self.app.txt_all_script.tag_ranges("gutter_overflow")) >= 2)
 
     def test_02_guard_measure_line_lengths_intact(self):
         """Guard 1: core.ngui_tags.measure_line_lengths remains importable and functional."""

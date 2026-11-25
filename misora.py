@@ -49,10 +49,20 @@ if str(SCRIPT_DIR.parent) not in sys.path:
 
 try:
     from misora.assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
+    from misora.assets.preview_frames import (
+        get_all_script_card_bottom_image,
+        get_all_script_card_top_image,
+        get_all_script_dotted_rule_image,
+        get_dialogue_capsule_image,
+        get_dialogue_nameplate_image,
+        get_dialogue_triangle_image,
+        get_voice_badge_image,
+        prune_preview_cache,
+    )
     from misora.assets.splash import MisoraSplashScreen
     from misora.core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
-        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
+        BoxEditDelta, BoxSnapshotReplaceDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
         save_bundle_story, dispose_unity_env,
@@ -74,10 +84,20 @@ try:
     from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 except ImportError:
     from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
+    from assets.preview_frames import (
+        get_all_script_card_bottom_image,
+        get_all_script_card_top_image,
+        get_all_script_dotted_rule_image,
+        get_dialogue_capsule_image,
+        get_dialogue_nameplate_image,
+        get_dialogue_triangle_image,
+        get_voice_badge_image,
+        prune_preview_cache,
+    )
     from assets.splash import MisoraSplashScreen
     from core import (
         ALWAYS_ON_CATEGORY, LOG_CATEGORIES, LOG_LEVELS, Box, BoxSnapshot, BundleIOError,
-        BoxEditDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
+        BoxEditDelta, BoxSnapshotReplaceDelta, BoxStructuralDelta, BulkFileDelta, DocumentRecordsDelta, MetadataDelta, LogEntry, MasterUndoJournal, MisoraLogger,
         PlainTextDelta, ProjectSearchEngine, Record, SearchOptions, SearchResult,
         StoryDocument, UndoOperation, XUnitySyncManager, load_bundle_story,
         save_bundle_story, dispose_unity_env,
@@ -1562,6 +1582,13 @@ class MisoraApp(tk.Tk):
         self._cont_header_spans: Dict[int, Tuple[str, str]] = {}
         self._suppress_continuous_events: bool = False
         self._card_widgets: Dict[int, Dict[str, Any]] = {}
+        self._all_script_block_ranges: Dict[int, Tuple[int, int]] = {}
+        self._all_script_line_to_box: Dict[int, int] = {}
+        self._all_script_sel_ranges: Dict[int, Tuple[str, str]] = {}
+        self._all_script_lock_ranges: Dict[int, Tuple[str, str]] = {}
+        self._all_script_body_starts: Dict[int, str] = {}
+        self._all_script_render_images: List[Any] = []
+        self._dialogue_preview_images: List[Any] = []
         self.var_select_box_mode: tk.BooleanVar = tk.BooleanVar(master=self, value=False)
         self._selected_boxes: Set[int] = set()
         self._locked_boxes: Set[int] = set()
@@ -2012,6 +2039,11 @@ class MisoraApp(tk.Tk):
                 dispose_unity_env(self.current_unity_env)
                 self.current_unity_env = None
             prune_icon_cache(self)
+            prune_preview_cache(self)
+            if hasattr(self, "_all_script_render_images"):
+                self._all_script_render_images.clear()
+            if hasattr(self, "_dialogue_preview_images"):
+                self._dialogue_preview_images.clear()
         except Exception:
             pass
 
@@ -2538,6 +2570,17 @@ class MisoraApp(tk.Tk):
             bd=1,
             relief="solid",
         )
+        if hasattr(self, "txt_all_script"):
+            self.txt_all_script.configure(
+                font=d_font_tuple,
+                bg=t["bg_panel"],
+                fg=editor_fg,
+                selectbackground=t["highlight_bg"],
+                selectforeground=hl_fg,
+            )
+            self._configure_editor_rich_tags(self.txt_all_script, d_fam, d_sz)
+            if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get() and self.current_doc:
+                self._render_continuous_view()
         if hasattr(self, "txt_box0_summary"):
             self.txt_box0_summary.configure(
                 font=d_font_tuple,
@@ -5522,6 +5565,37 @@ class MisoraApp(tk.Tk):
             yscrollcommand=lambda *args: (self.cont_scroll_y.set(*args), self._sync_continuous_gutter_scroll(*args)),
         )
 
+        # Technique A: Single read-only Text widget for multi-box All Script view (U08 / U-7)
+        self.txt_all_script = tk.Text(
+            self.cont_editor_row,
+            wrap="word",
+            undo=False,
+            state="disabled",
+            cursor="arrow",
+            font=(d_fam, d_sz),
+            bg=t["bg_panel"],
+            fg=t["fg_text"],
+            selectbackground=t["highlight_bg"],
+            selectforeground=t["misora_pink"],
+            padx=12,
+            pady=8,
+            spacing1=2,
+            spacing3=2,
+            bd=1,
+            relief="solid",
+            highlightthickness=0,
+            yscrollcommand=self.cont_scroll_y.set,
+        )
+        self._install_shortcuts_bindtag(self.txt_all_script)
+        self.txt_all_script.bind("<Button-1>", self._on_all_script_click)
+        self.txt_all_script.bind("<Double-Button-1>", self._on_all_script_double_click)
+        self.txt_all_script.bind("<Return>", self._on_all_script_enter)
+        self.txt_all_script.bind("<Up>", lambda e: (self.on_prev_box(), "break")[1])
+        self.txt_all_script.bind("<Down>", lambda e: (self.on_next_box(), "break")[1])
+        self.txt_all_script.bind("<Control-a>", lambda e: (self.on_select_whole_story(), "break")[1])
+        self.txt_all_script.bind("<Control-A>", lambda e: (self.on_select_whole_story(), "break")[1])
+        self._configure_editor_rich_tags(self.txt_all_script, d_fam, d_sz)
+
         self.txt_continuous.tag_configure(
             "cont_divider",
             foreground=t["border"],
@@ -5993,6 +6067,12 @@ class MisoraApp(tk.Tk):
         if self.var_preview_compiled.get():
             self.var_preview_compiled.set(False)
             self._update_views()
+        if self.var_continuous_view.get() and self.current_doc:
+            self.var_continuous_view.set(False)
+            self._on_toggle_continuous_view()
+        if self.var_continuous_view.get() and self.current_doc:
+            self.var_continuous_view.set(False)
+            self._on_toggle_continuous_view()
         self._insert_text_wrapper(open_tag, close_tag, default_inner=default_inner)
         target = self._get_active_text_widget()
         if target:
@@ -6046,7 +6126,7 @@ class MisoraApp(tk.Tk):
             self.clean_editor_row.pack(fill="both", expand=True)
 
     def _render_dialogue_preview_frame(self, speaker: str, raw_text: str) -> None:
-        """Render code-drawn Priconne-style dialogue frame on single Canvas + embedded read-only Text."""
+        """Render clean-room Pillow Priconne-style dialogue frame on single Canvas + embedded read-only Text."""
         if not hasattr(self, "dialogue_preview_canvas") or not self.dialogue_preview_canvas.winfo_exists():
             return
 
@@ -6058,6 +6138,11 @@ class MisoraApp(tk.Tk):
 
         canvas.configure(bg=t["bg_panel"])
         canvas.delete("preview_frame")
+        canvas.delete("preview_nameplate")
+        if hasattr(self, "_dialogue_preview_images"):
+            self._dialogue_preview_images.clear()
+        else:
+            self._dialogue_preview_images = []
 
         metrics = self._measure_dialogue_metrics(raw_text)
         f = self._get_dialogue_measure_font()
@@ -6065,54 +6150,85 @@ class MisoraApp(tk.Tk):
         line_h = max(16, int(f.metrics("linespace") or 18) + 4)
         safe_h = line_h * 3
 
-        pad_x = 14
-        pad_y = 10
+        pad_x = 18
+        pad_y = 12
         frame_x = 12
         frame_y = 26
         frame_w = safe_w + pad_x * 2
         frame_h = safe_h + pad_y * 2
 
-        cream_bg = "#fffcf4"
-        outer_gold = "#d4af37"
-        inner_gold = "#e6c875"
-        plate_bg = "#3b2c4e"
-        plate_fg = best_contrast_fg(plate_bg, "#ffffff", "#fffcf4")
-        text_fg = best_contrast_fg(cream_bg, "#2b2118", "#1a1a1a")
-        arrow_fg = "#ff5c93"
+        cream_bg = "#F8F6F0"
+        outer_gold = "#C8A86B"
+        inner_rim = "#FFFFFF"
+        plate_bg = "#3B2C4E"
+        plate_fg = best_contrast_fg(plate_bg, "#FFFFFF", "#F8F6F0")
+        text_fg = best_contrast_fg(cream_bg, "#333333", "#1A1A1A")
+        arrow_fg = "#FF6B9E"
 
-        # Priconne-style double border (pure Tk Canvas primitives, zero AtlasAdv sprites)
-        canvas.create_rectangle(
-            frame_x, frame_y, frame_x + frame_w, frame_y + frame_h,
-            fill=cream_bg, outline=outer_gold, width=2, tags="preview_frame",
+        # Clean-room Pillow rounded capsule (zero AtlasAdv sprites; NO-02)
+        cap_img = get_dialogue_capsule_image(
+            frame_w, frame_h,
+            fill_hex=cream_bg, border_hex=outer_gold, inner_rim_hex=inner_rim,
+            radius=16, master=canvas,
         )
-        canvas.create_rectangle(
-            frame_x + 4, frame_y + 4, frame_x + frame_w - 4, frame_y + frame_h - 4,
-            fill="", outline=inner_gold, width=1, tags="preview_frame",
-        )
+        if cap_img is not None:
+            self._dialogue_preview_images.append(cap_img)
+            canvas.create_image(frame_x, frame_y, image=cap_img, anchor="nw", tags="preview_frame")
+        else:
+            canvas.create_rectangle(
+                frame_x, frame_y, frame_x + frame_w, frame_y + frame_h,
+                fill=cream_bg, outline=outer_gold, width=2, tags="preview_frame",
+            )
 
-        # Name plate
-        sp_label = speaker.strip() if speaker and speaker.strip() else "(Narration)"
-        plate_w = max(96, int(f.measure(sp_label)) + 24)
-        plate_x1 = frame_x + 12
-        plate_y1 = frame_y - 14
-        plate_x2 = plate_x1 + plate_w
-        plate_y2 = frame_y + 10
-        canvas.create_rectangle(
-            plate_x1, plate_y1, plate_x2, plate_y2,
-            fill=plate_bg, outline=outer_gold, width=1, tags="preview_frame",
-        )
-        canvas.create_text(
-            (plate_x1 + plate_x2) // 2, (plate_y1 + plate_y2) // 2,
-            text=sp_label, fill=plate_fg, font=(d_fam, max(8, d_sz - 1), "bold"),
-            tags="preview_frame",
+        # Subtle safe-area bottom guide inside capsule (ensures >=3 preview_frame items even for narration)
+        canvas.create_line(
+            frame_x + pad_x, frame_y + frame_h - 4,
+            frame_x + frame_w - pad_x, frame_y + frame_h - 4,
+            fill="#EAE4D7", width=1, tags="preview_frame",
         )
 
-        # Static pink ▼ indicator at bottom-right of calibrated safe frame
-        canvas.create_text(
-            frame_x + frame_w - 14, frame_y + frame_h - 12,
-            text="▼", fill=arrow_fg, font=(d_fam, max(8, d_sz - 2), "bold"),
-            tags="preview_frame",
-        )
+        # Name plate ONLY when speaker is non-empty (narration has NO nameplate)
+        sp_clean = (speaker or "").strip()
+        if sp_clean:
+            plate_w = max(96, int(f.measure(sp_clean)) + 28)
+            plate_h = 24
+            plate_x1 = frame_x + 16
+            plate_y1 = frame_y - 14
+            plate_img = get_dialogue_nameplate_image(
+                plate_w, plate_h, fill_hex=plate_bg, border_hex=outer_gold, radius=10, master=canvas,
+            )
+            if plate_img is not None:
+                self._dialogue_preview_images.append(plate_img)
+                canvas.create_image(
+                    plate_x1, plate_y1, image=plate_img, anchor="nw",
+                    tags=("preview_frame", "preview_nameplate"),
+                )
+            else:
+                canvas.create_rectangle(
+                    plate_x1, plate_y1, plate_x1 + plate_w, plate_y1 + plate_h,
+                    fill=plate_bg, outline=outer_gold, width=1,
+                    tags=("preview_frame", "preview_nameplate"),
+                )
+            canvas.create_text(
+                plate_x1 + plate_w // 2, plate_y1 + plate_h // 2,
+                text=sp_clean, fill=plate_fg, font=(d_fam, max(8, d_sz - 1), "bold"),
+                tags=("preview_frame", "preview_nameplate"),
+            )
+
+        # Anti-aliased pink downward triangle with white outline at bottom-right safe corner
+        tri_img = get_dialogue_triangle_image(size=16, fill_hex=arrow_fg, outline_hex="#FFFFFF", master=canvas)
+        if tri_img is not None:
+            self._dialogue_preview_images.append(tri_img)
+            canvas.create_image(
+                frame_x + frame_w - 18, frame_y + frame_h - 14,
+                image=tri_img, anchor="center", tags="preview_frame",
+            )
+        else:
+            canvas.create_text(
+                frame_x + frame_w - 16, frame_y + frame_h - 12,
+                text="▼", fill=arrow_fg, font=(d_fam, max(8, d_sz - 2), "bold"),
+                tags="preview_frame",
+            )
 
         # Size embedded Text so >50d lines and 4+ lines visibly bleed past the calibrated frame
         max_px = max(safe_w, max((ln["pixel_width"] for ln in metrics["lines"]), default=0))
@@ -7072,6 +7188,9 @@ class MisoraApp(tk.Tk):
         if self.var_preview_compiled.get():
             self.var_preview_compiled.set(False)
             self._update_views()
+        if self.var_continuous_view.get() and self.current_doc:
+            self.var_continuous_view.set(False)
+            self._on_toggle_continuous_view()
 
         selected_base = ""
         if self.var_continuous_view.get():
@@ -7290,7 +7409,7 @@ class MisoraApp(tk.Tk):
         self._sync_gd_scroll_bounds()
 
     def _on_toggle_continuous_view(self) -> None:
-        """Switch Game Display between Page-by-Page mode and Continuous Dialog Stream with seamless box & caret sync."""
+        """Switch Game Display between Page-by-Page mode and All Script (Technique A) with box & caret sync."""
         if self.var_continuous_view.get():
             char_offset = 0
             try:
@@ -7307,21 +7426,12 @@ class MisoraApp(tk.Tk):
             target_idx = -1 if self.is_box0_active else self.current_box_idx
             self.after(50, lambda: self._focus_continuous_box(target_idx, move_cursor=True, char_offset=char_offset))
         else:
-            # 1. Flush any uncommitted card edits
+            # 1. Flush any uncommitted plain-text edits
             self._flush_continuous_card_edits()
 
-            # 2. Extract char offset from active card's text editor
+            # 2. Extract char offset from active editor if applicable
             char_offset = 0
-            active_idx = -1 if getattr(self, "is_box0_active", False) else self.current_box_idx
-            if hasattr(self, "_card_widgets") and active_idx in self._card_widgets:
-                try:
-                    txt_w = self._card_widgets[active_idx].get("txt")
-                    if txt_w:
-                        diff = txt_w.count("1.0", "insert", "chars")
-                        char_offset = max(0, diff[0] if diff else 0)
-                except Exception:
-                    char_offset = 0
-            elif hasattr(self, "txt_continuous"):
+            if not self.current_doc and hasattr(self, "txt_continuous"):
                 try:
                     diff = self.txt_continuous.count("1.0", "insert", "chars")
                     char_offset = max(0, diff[0] if diff else 0)
@@ -7806,18 +7916,13 @@ class MisoraApp(tk.Tk):
         cards = getattr(self, "_card_widgets", {})
 
         if is_cont:
-            if getattr(self, "is_box0_active", False) and -1 in cards:
-                candidate = cards[-1].get("txt")
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
-            elif getattr(self, "current_box_idx", -1) in cards:
-                candidate = cards[self.current_box_idx].get("txt")
-                if candidate is not None and candidate.winfo_exists():
-                    widget = candidate
-            elif getattr(self, "current_doc", None) is None:
+            if getattr(self, "current_doc", None) is None:
                 candidate = getattr(self, "txt_continuous", None)
                 if candidate is not None and candidate.winfo_exists():
                     widget = candidate
+            else:
+                # Technique A txt_all_script is read-only; no uncommitted inline edits
+                return True
         else:
             if getattr(self, "is_box0_active", False):
                 candidate = getattr(self, "txt_box0_summary", None)
@@ -8074,18 +8179,29 @@ class MisoraApp(tk.Tk):
             self.logger.info("File I/O", f"Opened plain text file '{file_path}' ({len(plain_text)} chars)")
 
     def _update_empty_state_visibility(self) -> None:
-        """Show centered empty-state frame when 0 documents are open; hide when >=1 document opens."""
+        """Show centered empty-state frame when 0 documents are open; pack only active view when >=1."""
         has_docs = bool(self.open_documents) or bool(self.current_doc) or bool(self.current_file_path)
         if not has_docs:
             if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_ismapped():
                 self.gd_scroll_wrap.pack_forget()
+            if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_ismapped():
+                self.continuous_wrap.pack_forget()
             if hasattr(self, "empty_state_frame") and not self.empty_state_frame.winfo_ismapped():
                 self.empty_state_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
         else:
             if hasattr(self, "empty_state_frame") and self.empty_state_frame.winfo_ismapped():
                 self.empty_state_frame.pack_forget()
-            if hasattr(self, "gd_scroll_wrap") and not self.gd_scroll_wrap.winfo_ismapped():
-                self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+            is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
+            if is_cont:
+                if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_ismapped():
+                    self.gd_scroll_wrap.pack_forget()
+                if hasattr(self, "continuous_wrap") and not self.continuous_wrap.winfo_ismapped():
+                    self.continuous_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+            else:
+                if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_ismapped():
+                    self.continuous_wrap.pack_forget()
+                if hasattr(self, "gd_scroll_wrap") and not self.gd_scroll_wrap.winfo_ismapped():
+                    self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
     def _update_views(self) -> None:
         """Update Game Display View (Page or Continuous, Raw or Compiled Preview) and Raw AST View."""
@@ -8217,7 +8333,10 @@ class MisoraApp(tk.Tk):
             self.btn_speaker_dropdown.config(state="normal")
         self.speaker_var.set(box.speaker)
         self.lbl_box_counter.config(text=f"Box: {self.current_box_idx + 1} / {total_boxes}")
-        self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
+        if hasattr(self, "lbl_voice_cue"):
+            self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
+        if hasattr(self, "lbl_segs_badge"):
+            self.lbl_segs_badge.config(text=f"{len(box.segs)} segs" if len(box.segs) > 1 else "")
 
         if hasattr(self, "btn_lock_box"):
             is_locked = self.current_box_idx in self._locked_boxes
@@ -8777,7 +8896,10 @@ class MisoraApp(tk.Tk):
             if not (self._is_speaker_pinned and self.speaker_var.get()):
                 self.speaker_var.set(box.speaker)
             self.lbl_box_counter.config(text=f"Box: {box_idx + 1} / {total}")
-            self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
+            if hasattr(self, "lbl_voice_cue"):
+                self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
+            if hasattr(self, "lbl_segs_badge"):
+                self.lbl_segs_badge.config(text=f"{len(box.segs)} segs" if len(box.segs) > 1 else "")
             if hasattr(self, "btn_prev"):
                 can_prev = (box_idx > 0) or (self.current_doc and self.current_doc.has_metadata())
                 self.btn_prev.config(state="normal" if can_prev else "disabled")
@@ -8856,7 +8978,24 @@ class MisoraApp(tk.Tk):
         if not enabled:
             self._selected_boxes.clear()
         if self.var_continuous_view.get():
-            self._render_continuous_view()
+            txt = getattr(self, "txt_all_script", None)
+            if txt is not None and txt.winfo_exists() and self.current_doc and getattr(self, "_all_script_sel_ranges", None):
+                was_disabled = (str(txt.cget("state")) == "disabled")
+                if was_disabled:
+                    txt.config(state="normal")
+                try:
+                    for b_idx, (s_pos, e_pos) in list(self._all_script_sel_ranges.items()):
+                        tok = ("[x] " if b_idx in self._selected_boxes else "[ ] ") if enabled else "    "
+                        tags = txt.tag_names(s_pos)
+                        txt.delete(s_pos, e_pos)
+                        txt.insert(s_pos, tok, tags)
+                        ln_s, col_s = s_pos.split(".")
+                        self._all_script_sel_ranges[b_idx] = (s_pos, f"{ln_s}.{int(col_s) + len(tok)}")
+                finally:
+                    if was_disabled:
+                        txt.config(state="disabled")
+            else:
+                self._render_continuous_view()
             if hasattr(self, "cb_dialogue_select") and self.cb_dialogue_select.winfo_exists():
                 self.cb_dialogue_select.pack_forget()
         else:
@@ -8907,12 +9046,12 @@ class MisoraApp(tk.Tk):
     def on_select_whole_story(self) -> None:
         """Select whole story / all text across document."""
         if self.var_continuous_view.get():
-            if hasattr(self, "_card_widgets") and self._card_widgets:
-                first_card = self._card_widgets.get(0) or self._card_widgets.get(-1)
-                if first_card and "txt" in first_card:
-                    txt = first_card["txt"]
-                    txt.focus_set()
-                    txt.tag_add("sel", "1.0", "end-1c")
+            if self.current_doc and hasattr(self, "txt_all_script") and self.txt_all_script.winfo_exists():
+                self.txt_all_script.focus_set()
+                self.txt_all_script.tag_add("sel", "1.0", "end-1c")
+            elif hasattr(self, "txt_continuous") and self.txt_continuous.winfo_exists():
+                self.txt_continuous.focus_set()
+                self.txt_continuous.tag_add("sel", "1.0", "end-1c")
             self.show_toast("Selected active story")
         else:
             if hasattr(self, "txt_dialogue"):
@@ -8921,13 +9060,14 @@ class MisoraApp(tk.Tk):
                 self.show_toast("Selected all text in current box")
 
     def on_text_cut(self) -> None:
-        """Cut text in active editor to clipboard."""
+        """Cut text in active editor to clipboard and commit immediately."""
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
             target = self._get_card_text_widget(self.current_box_idx)
         self._current_edit_source = "cut"
         try:
             target.event_generate("<<Cut>>")
+            self._commit_widget_edit(target)
         except Exception:
             pass
         finally:
@@ -9157,7 +9297,8 @@ class MisoraApp(tk.Tk):
         self.current_box_idx = ins_idx
         self._mark_document_dirty(self.current_file_path)
         self._modified_boxes.add(ins_idx)
-        self._render_continuous_view()
+        if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
+            self._render_continuous_view()
         self._sync_clean_view_to_current_box()
         self._dirty_state_changed()
         self.show_toast(f"➕ Created new Box #{ins_idx + 1}")
@@ -9228,11 +9369,140 @@ class MisoraApp(tk.Tk):
         self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
         self._update_views()
-        self._sync_clean_view_to_current_box()
         self.show_toast(f"✂📦 Cut {len(targets)} box(es)")
 
-    def on_box_paste(self, confirm: bool = True) -> None:
-        """Paste box(es) from clipboard as new boxes after current box (Part C.2)."""
+    @staticmethod
+    def _clone_box_snapshot(snap: BoxSnapshot) -> BoxSnapshot:
+        """Return an independent deep copy of a BoxSnapshot preserving all 6 fields."""
+        return BoxSnapshot(
+            speaker=snap.speaker,
+            voice_cue=snap.voice_cue,
+            kind=snap.kind,
+            seg_texts=list(snap.seg_texts),
+            raw_breaks=list(snap.raw_breaks) if snap.raw_breaks is not None else None,
+            extra_args=[list(ea) for ea in snap.extra_args] if snap.extra_args is not None else None,
+        )
+
+    def _show_box_paste_mode_dialog(
+        self,
+        block_count: int,
+        sp_desc: str,
+        start_idx: int,
+        total_boxes: int,
+        locked_targets: List[int],
+        excess_count: int,
+    ) -> Optional[str]:
+        """Modal 3-way Paste Box chooser: Insert after Box #N, Replace Box #N..#M, or Cancel."""
+        t = self.theme
+        dlg = tk.Toplevel(self)
+        dlg.title("Paste Box(es)")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        dlg.configure(bg=t["bg_panel"])
+
+        choice: List[Optional[str]] = [None]
+
+        def _choose(val: Optional[str]) -> None:
+            choice[0] = val
+            safe_grab_release(dlg)
+            if dlg.winfo_exists():
+                dlg.destroy()
+
+        frame = tk.Frame(dlg, bg=t["bg_panel"], padx=16, pady=14)
+        frame.pack(fill="both", expand=True)
+
+        tk.Label(
+            frame,
+            text=f"Paste {block_count} Box(es) from Clipboard",
+            font=("Segoe UI", 11, "bold"),
+            fg=t["misora_pink"],
+            bg=t["bg_panel"],
+        ).pack(anchor="w", pady=(0, 6))
+
+        ins_desc = f"after Box #{self.current_box_idx + 1}" if total_boxes > 0 else "at beginning"
+        end_idx = min(total_boxes - 1, start_idx + block_count - 1) if total_boxes > 0 else 0
+        rep_range = f"Box #{start_idx + 1}" if end_idx == start_idx else f"Box #{start_idx + 1}..#{end_idx + 1}"
+
+        notes = [f"Speakers: {sp_desc}"]
+        if locked_targets:
+            notes.append(f"Locked targets skipped in Replace: {len(locked_targets)}")
+        if excess_count > 0:
+            notes.append(f"Excess blocks beyond story end clamped in Replace: {excess_count}")
+        tk.Label(
+            frame,
+            text="\n".join(notes),
+            font=("Segoe UI", 9),
+            fg=t["fg_text"],
+            bg=t["bg_panel"],
+            justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+
+        btn_ins = tk.Button(
+            frame,
+            text=f"Insert after Box #{self.current_box_idx + 1}" if total_boxes > 0 else f"Insert {ins_desc}",
+            font=("Segoe UI", 9, "bold"),
+            bg=t["highlight_bg"],
+            fg=best_contrast_fg(t["highlight_bg"]),
+            relief="raised",
+            bd=1,
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            command=lambda: _choose("insert"),
+        )
+        btn_ins.pack(fill="x", pady=2)
+
+        can_replace = total_boxes > 0
+        btn_rep = tk.Button(
+            frame,
+            text=f"Replace {rep_range}",
+            font=("Segoe UI", 9),
+            bg=t["bg_editor"],
+            fg=t["fg_text"],
+            relief="raised",
+            bd=1,
+            padx=10,
+            pady=5,
+            cursor="hand2" if can_replace else "arrow",
+            state="normal" if can_replace else "disabled",
+            command=lambda: _choose("replace"),
+        )
+        btn_rep.pack(fill="x", pady=2)
+
+        btn_cancel = tk.Button(
+            frame,
+            text="Cancel",
+            font=("Segoe UI", 9),
+            bg=t["bg_panel"],
+            fg=t["fg_muted"],
+            relief="groove",
+            bd=1,
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            command=lambda: _choose(None),
+        )
+        btn_cancel.pack(fill="x", pady=(6, 0))
+
+        dlg.bind("<Escape>", lambda e: _choose(None))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: _choose(None))
+        dlg.update_idletasks()
+        try:
+            px = self.winfo_rootx() + max(0, (self.winfo_width() - dlg.winfo_width()) // 2)
+            py = self.winfo_rooty() + max(0, (self.winfo_height() - dlg.winfo_height()) // 2)
+            dlg.geometry(f"+{px}+{py}")
+        except Exception:
+            pass
+        try:
+            dlg.grab_set()
+            dlg.focus_set()
+            self.wait_window(dlg)
+        except Exception:
+            pass
+        return choice[0]
+
+    def on_box_paste(self, confirm: bool = True, mode: Optional[str] = None) -> None:
+        """Paste box(es) from clipboard: Insert after cursor or Replace in-place with full BoxSnapshot."""
         if not self.current_doc:
             self.show_toast("No story document loaded")
             return
@@ -9242,77 +9512,191 @@ class MisoraApp(tk.Tk):
             self._box_clipboard = None
             self._box_clipboard_text = None
 
-        snaps_to_ins: List[BoxSnapshot] = []
+        snaps_to_apply: List[BoxSnapshot] = []
         if getattr(self, "_box_clipboard", None):
-            snaps_to_ins = [
-                BoxSnapshot(
-                    speaker=snap.speaker,
-                    voice_cue=snap.voice_cue,
-                    kind=snap.kind,
-                    seg_texts=list(snap.seg_texts),
-                    extra_args=[list(ea) for ea in snap.extra_args] if snap.extra_args else None,
-                )
-                for snap in self._box_clipboard
-            ]
+            snaps_to_apply = [self._clone_box_snapshot(snap) for snap in self._box_clipboard]
         elif clip_text.strip():
-            result = parse(clip_text)
+            try:
+                result = parse(clip_text)
+            except Exception as exc:
+                self.show_toast(f"Invalid clipboard script: {exc}")
+                self.set_status(f"Paste aborted: {exc}", is_error=True)
+                return
             parsed_blocks = result.blocks
             if parsed_blocks:
-                snaps_to_ins = [
+                snaps_to_apply = [
                     BoxSnapshot(
                         speaker="" if b.is_narration else b.speaker,
                         voice_cue="",
                         kind="tag" if (b.is_narration or not b.speaker) else "print",
-                        seg_texts=[b.text]
+                        seg_texts=[b.text],
                     )
                     for b in parsed_blocks
                 ]
 
-        if not snaps_to_ins:
+        if not snaps_to_apply:
             self.show_toast("Box clipboard is empty")
             return
 
-        ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
-        block_count = len(snaps_to_ins)
-        first_speakers = [
-            (s.speaker if s.speaker else "(Narration)")
-            for s in snaps_to_ins[:3]
-        ]
+        block_count = len(snaps_to_apply)
+        first_speakers = [(s.speaker if s.speaker else "(Narration)") for s in snaps_to_apply[:3]]
         sp_desc = ", ".join(first_speakers)
         if block_count > 3:
             sp_desc += f", ... (+{block_count - 3} more)"
 
-        if confirm:
-            ins_desc = f"after Box #{self.current_box_idx + 1}" if self.current_doc.boxes else "at beginning"
-            msg = f"Insert {block_count} box(es) {ins_desc}?\n\nSpeakers: {sp_desc}"
-            ans = messagebox.askyesno("Paste Box(es)", msg, parent=self)
-            if not ans:
-                return
+        total_boxes = len(self.current_doc.boxes)
+        start_idx = 0 if getattr(self, "is_box0_active", False) else max(0, self.current_box_idx)
+        locked_targets = [
+            start_idx + offset
+            for offset in range(block_count)
+            if (start_idx + offset) < total_boxes and self.is_box_locked(start_idx + offset)
+        ]
+        excess_count = max(0, (start_idx + block_count) - total_boxes)
 
-        self.undo_journal.begin_batch(f"Paste {block_count} Box(es)")
-        try:
-            for offset, snap in enumerate(snaps_to_ins):
-                target_idx = ins_idx + offset
-                self.current_doc.insert_box(target_idx, snap)
-                self._modified_boxes.add(target_idx)
-
-            self.undo_journal.record(
-                BoxStructuralDelta(
-                    op_type="insert",
-                    box_index=ins_idx,
-                    snapshots=snaps_to_ins,
-                    file_path=str(self.current_file_path or ""),
+        if mode is None:
+            if confirm:
+                chosen = self._show_box_paste_mode_dialog(
+                    block_count=block_count,
+                    sp_desc=sp_desc,
+                    start_idx=start_idx,
+                    total_boxes=total_boxes,
+                    locked_targets=locked_targets,
+                    excess_count=excess_count,
                 )
-            )
+                if not chosen:
+                    return
+                mode = chosen
+            else:
+                mode = "insert"
+
+        if mode == "insert":
+            ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
+            self.undo_journal.begin_batch(f"Paste {block_count} Box(es)")
+            try:
+                for offset, snap in enumerate(snaps_to_apply):
+                    target_idx = ins_idx + offset
+                    self.current_doc.insert_box(target_idx, snap)
+                    self._modified_boxes.add(target_idx)
+
+                self.undo_journal.record(
+                    BoxStructuralDelta(
+                        op_type="insert",
+                        box_index=ins_idx,
+                        snapshots=snaps_to_apply,
+                        file_path=str(self.current_file_path or ""),
+                    )
+                )
+            finally:
+                self.undo_journal.end_batch()
+
+            self.is_box0_active = False
+            self.current_box_idx = ins_idx + len(snaps_to_apply) - 1
+            self._resync_box_indices_from_uids()
+            self._mark_document_dirty(self.current_file_path)
+            self._dirty_state_changed()
+            self._update_views()
+            self.show_toast(f"📥📦 Inserted {len(snaps_to_apply)} box(es)")
+            return
+
+        if mode != "replace":
+            return
+
+        # Stage & validate all replacement targets BEFORE mutating any record
+        staged_ops: List[Tuple[int, BoxSnapshot]] = []
+        skipped_locked = 0
+        clamped_excess = 0
+        doc_rec_uids = {r.uid for r in self.current_doc.records}
+
+        for offset, snap in enumerate(snaps_to_apply):
+            t_idx = start_idx + offset
+            if t_idx >= total_boxes:
+                clamped_excess += 1
+                continue
+            if self.is_box_locked(t_idx):
+                skipped_locked += 1
+                continue
+            if not isinstance(snap, BoxSnapshot) or snap.kind not in ("print", "tag") or not snap.seg_texts:
+                self.set_status("Paste Replace aborted: invalid BoxSnapshot.", is_error=True)
+                self.show_toast("Paste Replace aborted: invalid snapshot")
+                return
+            t_box = self.current_doc.boxes[t_idx]
+            if any(seg.record.uid not in doc_rec_uids for seg in t_box.segs):
+                self.set_status("Paste Replace aborted: unowned record in target box.", is_error=True)
+                return
+            staged_ops.append((t_idx, self._clone_box_snapshot(snap)))
+
+        if not staged_ops:
+            if skipped_locked > 0:
+                self.show_toast(f"🔒 All {skipped_locked} target box(es) are locked; no edits applied.")
+            else:
+                self.show_toast("No target boxes available to replace.")
+            return
+
+        # Transactional rollback checkpoint in case replace_box raises mid-batch
+        backup_records = copy.deepcopy(self.current_doc.records)
+        backup_removed = set(self.current_doc.removed_records)
+        backup_mod_uids = set(getattr(self, "_modified_box_uids", set()))
+        backup_jp_by_uid = dict(getattr(self, "_original_jp_by_uid", {}))
+        file_str = str(self.current_file_path or "")
+        recorded_deltas: List[BoxSnapshotReplaceDelta] = []
+
+        try:
+            for t_idx, new_snap in staged_ops:
+                old_uid = self.current_doc.boxes[t_idx].uid
+                old_snap = self.current_doc.replace_box(t_idx, new_snap)
+                new_uid = self.current_doc.boxes[t_idx].uid
+                if old_uid in self._original_jp_by_uid:
+                    jp_val = self._original_jp_by_uid.pop(old_uid)
+                    self._original_jp_by_uid[new_uid] = jp_val
+                    if hasattr(self, "sync_manager") and self.sync_manager is not None:
+                        self.sync_manager.register_jp_key(new_uid, jp_val)
+                if not hasattr(self, "_modified_box_uids"):
+                    self._modified_box_uids = set()
+                self._modified_box_uids.add(new_uid)
+                recorded_deltas.append(
+                    BoxSnapshotReplaceDelta(
+                        box_index=t_idx,
+                        old_snapshot=old_snap,
+                        new_snapshot=self._clone_box_snapshot(new_snap),
+                        file_path=file_str,
+                        box_uid=None,
+                        source="box_replace",
+                    )
+                )
+        except Exception as exc:
+            self.current_doc.records = backup_records
+            self.current_doc.removed_records = backup_removed
+            self.current_doc._rebuild_boxes()
+            self._modified_box_uids = backup_mod_uids
+            self._original_jp_by_uid = backup_jp_by_uid
+            self._resync_box_indices_from_uids()
+            self.logger.exception("Box Replace paste failed; rolled back document:", exc)
+            self.set_status(f"Replace paste failed (rolled back): {exc}", is_error=True)
+            self.show_toast("Replace paste failed; document unchanged")
+            return
+
+        self.undo_journal.begin_batch(f"Replace {len(recorded_deltas)} Box(es)")
+        try:
+            for delta in recorded_deltas:
+                self.undo_journal.record(delta)
         finally:
             self.undo_journal.end_batch()
 
-        self.current_box_idx = ins_idx + len(snaps_to_ins) - 1
+        self.is_box0_active = False
+        self.current_box_idx = staged_ops[-1][0]
+        self._resync_box_indices_from_uids()
         self._mark_document_dirty(self.current_file_path)
         self._dirty_state_changed()
         self._update_views()
-        self._sync_clean_view_to_current_box()
-        self.show_toast(f"📥📦 Pasted {len(snaps_to_ins)} box(es)")
+
+        parts = [f"Replaced {len(recorded_deltas)} box(es)"]
+        if skipped_locked:
+            parts.append(f"skipped {skipped_locked} locked")
+        if clamped_excess:
+            parts.append(f"clamped {clamped_excess} excess")
+        msg = " · ".join(parts)
+        self.show_toast(f"🔄📦 {msg}")
+        self.lbl_status.config(text=msg)
 
     def _on_card_paste_caret(self, box_idx: int, txt_widget: tk.Text) -> str:
         """Intercept paste on card editors to perform caret-aware paste or CSIF handling."""
@@ -9429,7 +9813,8 @@ class MisoraApp(tk.Tk):
             self._resync_box_indices_from_uids()
             self._mark_document_dirty(self.current_file_path)
             self._dirty_state_changed()
-            self._render_continuous_view()
+            if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get():
+                self._render_continuous_view()
             self._sync_clean_view_to_current_box()
             self.show_toast(f"Pasted across {mutated_count} box(es)")
         else:
@@ -9457,6 +9842,10 @@ class MisoraApp(tk.Tk):
             self.show_toast(f"Box #{self.current_box_idx + 1} is locked.")
             return
 
+        if self.var_continuous_view.get() and self.current_doc:
+            self.var_continuous_view.set(False)
+            self._on_toggle_continuous_view()
+
         target = self.txt_dialogue
         if self.var_continuous_view.get() and hasattr(self, "_card_widgets") and self.current_box_idx in self._card_widgets:
             target = self._get_card_text_widget(self.current_box_idx)
@@ -9479,22 +9868,215 @@ class MisoraApp(tk.Tk):
         target.focus_set()
         self._commit_widget_edit(target)
 
+    def _resolve_all_script_box_at_index(self, tk_index: str) -> Optional[int]:
+        """Map a Tk text index inside txt_all_script to its owning box index (-1 for Box 0, 0..N-1)."""
+        if not hasattr(self, "txt_all_script") or not self.txt_all_script.winfo_exists():
+            return None
+        try:
+            abs_idx = self.txt_all_script.index(tk_index)
+            ln = int(abs_idx.split(".")[0])
+            if ln in self._all_script_line_to_box:
+                return self._all_script_line_to_box[ln]
+            # Nearest fallback by line number
+            best_idx = None
+            best_dist = 10**9
+            for b_idx, (s_ln, e_ln) in self._all_script_block_ranges.items():
+                if s_ln <= ln <= e_ln:
+                    return b_idx
+                dist = min(abs(ln - s_ln), abs(ln - e_ln))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = b_idx
+            return best_idx
+        except Exception:
+            return None
+
+    def _set_all_script_active_block(self, active_idx: int) -> None:
+        """Highlight the active block in txt_all_script in-place without re-rendering."""
+        if not hasattr(self, "txt_all_script") or not self.txt_all_script.winfo_exists():
+            return
+        txt = self.txt_all_script
+        try:
+            txt.tag_remove("all_script_active", "1.0", tk.END)
+            if active_idx in self._all_script_block_ranges:
+                s_ln, e_ln = self._all_script_block_ranges[active_idx]
+                txt.tag_add("all_script_active", f"{s_ln}.0", f"{e_ln + 1}.0")
+                txt.tag_lower("all_script_active")
+        except Exception:
+            pass
+
+    def _toggle_all_script_select_in_place(self, box_idx: int) -> None:
+        """Toggle Select Box state for `box_idx` in-place inside txt_all_script."""
+        if not hasattr(self, "txt_all_script") or not self.txt_all_script.winfo_exists():
+            return
+        if not self.var_select_box_mode.get():
+            return
+        if box_idx in self._selected_boxes:
+            self._selected_boxes.discard(box_idx)
+            new_tok = "[ ] "
+        else:
+            self._selected_boxes.add(box_idx)
+            new_tok = "[x] "
+        span = getattr(self, "_all_script_sel_ranges", {}).get(box_idx)
+        if span:
+            txt = self.txt_all_script
+            was_disabled = (str(txt.cget("state")) == "disabled")
+            if was_disabled:
+                txt.config(state="normal")
+            try:
+                tags = txt.tag_names(span[0])
+                txt.delete(span[0], span[1])
+                txt.insert(span[0], new_tok, tags)
+                self._all_script_sel_ranges[box_idx] = (span[0], f"{span[0].split('.')[0]}.{int(span[0].split('.')[1]) + len(new_tok)}")
+            finally:
+                if was_disabled:
+                    txt.config(state="disabled")
+        self._update_dialogue_select_box_ui()
+
+    def _refresh_all_script_lock_glyph_in_place(self, box_idx: int) -> None:
+        """Update inline lock glyph for `box_idx` inside txt_all_script without re-rendering."""
+        if not hasattr(self, "txt_all_script") or not self.txt_all_script.winfo_exists():
+            return
+        span = getattr(self, "_all_script_lock_ranges", {}).get(box_idx)
+        if not span:
+            return
+        is_locked = self.is_box_locked(box_idx)
+        new_tok = "🔒 " if is_locked else "🔓 "
+        txt = self.txt_all_script
+        was_disabled = (str(txt.cget("state")) == "disabled")
+        if was_disabled:
+            txt.config(state="normal")
+        try:
+            tags = txt.tag_names(span[0])
+            txt.delete(span[0], span[1])
+            txt.insert(span[0], new_tok, tags)
+            s_ln, s_col = span[0].split(".")
+            self._all_script_lock_ranges[box_idx] = (span[0], f"{s_ln}.{int(s_col) + len(new_tok)}")
+        finally:
+            if was_disabled:
+                txt.config(state="disabled")
+
+    def _on_all_script_click_at_index(self, tk_index: str) -> None:
+        """Handle single-click at `tk_index` in txt_all_script (select box, toggle inline slot/lock)."""
+        if not self.current_doc:
+            return
+        txt = self.txt_all_script
+        try:
+            abs_idx = txt.index(tk_index)
+        except Exception:
+            return
+
+        # 1. Check inline Select Box slot hit
+        if self.var_select_box_mode.get():
+            for b_idx, (s_pos, e_pos) in getattr(self, "_all_script_sel_ranges", {}).items():
+                if txt.compare(abs_idx, ">=", s_pos) and txt.compare(abs_idx, "<", e_pos):
+                    self._toggle_all_script_select_in_place(b_idx)
+                    return
+
+        # 2. Check inline Lock glyph hit
+        for b_idx, (s_pos, e_pos) in getattr(self, "_all_script_lock_ranges", {}).items():
+            if txt.compare(abs_idx, ">=", s_pos) and txt.compare(abs_idx, "<", e_pos):
+                self._on_toggle_card_lock(b_idx)
+                return
+
+        # 3. Select owning box in-place (NO full re-render)
+        box_idx = self._resolve_all_script_box_at_index(abs_idx)
+        if box_idx is None:
+            return
+        if box_idx == -1:
+            self.is_box0_active = True
+        else:
+            self.is_box0_active = False
+            if 0 <= box_idx < len(self.current_doc.boxes):
+                self.current_box_idx = box_idx
+        self._set_all_script_active_block(box_idx)
+        self._sync_header_controls_for_card(box_idx)
+        self._update_raw_view()
+        if box_idx >= 0 and 0 <= box_idx < len(self.current_doc.boxes):
+            self._update_char_overflow_indicator(self.current_doc.boxes[box_idx].clean_text)
+        else:
+            self._update_char_overflow_indicator("")
+        self._refresh_mtl_drawer_box()
+
+    def _on_all_script_click(self, event: tk.Event) -> Optional[str]:
+        """Single-click handler on txt_all_script."""
+        if not hasattr(self, "txt_all_script") or not self.txt_all_script.winfo_exists():
+            return None
+        try:
+            idx = self.txt_all_script.index(f"@{event.x},{event.y}")
+            self.txt_all_script.focus_set()
+            self._on_all_script_click_at_index(idx)
+        except Exception:
+            pass
+        return None
+
+    def _on_all_script_activate_at_index(self, tk_index: str) -> None:
+        """Jump cleanly from txt_all_script at `tk_index` into Dialogue View."""
+        if not self.current_doc:
+            return
+        box_idx = self._resolve_all_script_box_at_index(tk_index)
+        if box_idx is None:
+            box_idx = -1 if getattr(self, "is_box0_active", False) else self.current_box_idx
+        if box_idx == -1 and self.current_doc.has_metadata():
+            self.is_box0_active = True
+        else:
+            self.is_box0_active = False
+            if self.current_doc.boxes:
+                self.current_box_idx = max(0, min(box_idx, len(self.current_doc.boxes) - 1))
+        self.var_continuous_view.set(False)
+        self._on_toggle_continuous_view()
+
+    def _on_all_script_double_click(self, event: tk.Event) -> str:
+        """Double-click on txt_all_script jumps into Dialogue View at that box."""
+        if hasattr(self, "txt_all_script") and self.txt_all_script.winfo_exists():
+            idx = self.txt_all_script.index(f"@{event.x},{event.y}")
+            self._on_all_script_activate_at_index(idx)
+        return "break"
+
+    def _on_all_script_enter(self, _event: tk.Event) -> str:
+        """Pressing Enter in txt_all_script jumps into Dialogue View at active box."""
+        active_idx = -1 if getattr(self, "is_box0_active", False) else self.current_box_idx
+        if active_idx in getattr(self, "_all_script_block_ranges", {}):
+            s_ln, _ = self._all_script_block_ranges[active_idx]
+            self._on_all_script_activate_at_index(f"{s_ln}.0")
+        else:
+            self._on_all_script_activate_at_index("insert")
+        return "break"
+
     def _render_continuous_view(self) -> None:
-        """Render all dialogue boxes sequentially as a Box Card Stream."""
+        """Render all dialogue boxes inside ONE read-only tk.Text (Technique A) or plain-text fallback."""
         compiled = self.var_preview_compiled.get()
         self._suppress_continuous_events = True
         t = self.theme
         d_fam = getattr(self, "dialogue_font_family", self.prefs.get("dialogue_font_family", "Consolas"))
         d_sz = int(getattr(self, "dialogue_font_size", self.prefs.get("dialogue_font_size", 11)))
-        safe_w = self._measure_dialogue_metrics("")["safe_w"] if compiled else 0
+        d_font_tuple = self._get_dialogue_font_tuple(d_sz)
+        editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+        metrics_empty = self._measure_dialogue_metrics("")
+        safe_w = metrics_empty["safe_w"]
 
         try:
             self._card_widgets.clear()
-            # If plain text file: keep legacy txt_continuous view
+            self._all_script_block_ranges.clear()
+            self._all_script_line_to_box.clear()
+            self._all_script_sel_ranges.clear()
+            self._all_script_lock_ranges.clear()
+            self._all_script_body_starts.clear()
+            self._all_script_render_images.clear()
+            if not hasattr(self, "_all_script_body_ends"):
+                self._all_script_body_ends: Dict[int, str] = {}
+            self._all_script_body_ends.clear()
+
+            # If plain text file: keep legacy editable txt_continuous view
             if not self.is_bundle_file and not self.current_doc:
+                if hasattr(self, "txt_all_script") and self._is_widget_packed(self.txt_all_script):
+                    self.txt_all_script.pack_forget()
                 if hasattr(self, "cont_canvas") and self._is_widget_packed(self.cont_canvas):
                     self.cont_canvas.pack_forget()
-                    self.cont_scroll_y.pack_forget()
+                if hasattr(self, "cont_scroll_y"):
+                    self.cont_scroll_y.config(command=self._on_continuous_vscroll)
+                    if not self._is_widget_packed(self.cont_scroll_y):
+                        self.cont_scroll_y.pack(side="right", fill="y")
                 if hasattr(self, "txt_continuous") and not self._is_widget_packed(self.txt_continuous):
                     self.txt_continuous.pack(side="left", fill="both", expand=True)
                 self.txt_continuous.config(state="normal")
@@ -9507,344 +10089,213 @@ class MisoraApp(tk.Tk):
                     self._highlight_ngui_tags_for_widget(self.txt_continuous)
                 return
 
-            # Multi-Box Story Documents: Box Card Stream
+            # Multi-Box Story Documents: Technique A single read-only tk.Text (txt_all_script)
             if hasattr(self, "txt_continuous") and self._is_widget_packed(self.txt_continuous):
                 self.txt_continuous.pack_forget()
             if hasattr(self, "gutter_cont") and self._is_widget_packed(self.gutter_cont):
                 self.gutter_cont.pack_forget()
-
-            if hasattr(self, "cont_scroll_y") and not self._is_widget_packed(self.cont_scroll_y):
-                self.cont_scroll_y.pack(side="right", fill="y")
-            if hasattr(self, "cont_canvas") and not self._is_widget_packed(self.cont_canvas):
-                self.cont_canvas.pack(side="left", fill="both", expand=True)
-
-            # Clear existing cards
+            if hasattr(self, "cont_canvas") and self._is_widget_packed(self.cont_canvas):
+                self.cont_canvas.pack_forget()
             if hasattr(self, "cont_stream_frame"):
                 for child in self.cont_stream_frame.winfo_children():
                     child.destroy()
 
-            if not self.current_doc or not self.current_doc.boxes:
+            txt = getattr(self, "txt_all_script", None)
+            if txt is None or not txt.winfo_exists():
                 return
 
-            gutter_bg = "#e8e8e8" if self._is_light_theme() else "#2d2d30"
-            gutter_fg = "#707070" if self._is_light_theme() else "#858585"
+            if hasattr(self, "cont_scroll_y"):
+                self.cont_scroll_y.config(command=txt.yview)
+                if not self._is_widget_packed(self.cont_scroll_y):
+                    self.cont_scroll_y.pack(side="right", fill="y")
+            if not self._is_widget_packed(txt):
+                txt.pack(side="left", fill="both", expand=True)
 
-            # 1. Card #0: Story Metadata Card
+            canvas_bg = "#F4F2ED" if compiled else t["bg_panel"]
+            card_bg = "#FFFFFF" if compiled else t["bg_editor"]
+            hdr_bg = "#FFFFFF" if compiled else t["bg_panel"]
+            card_fg = "#333333" if compiled else editor_fg
+            sp_color = "#2D599E" if compiled else t["fg_text"]
+            narr_color = "#2D599E" if compiled else t["fg_muted"]
+            ov_gutter_fg = "#c9184a" if self._is_light_theme() else "#ff5c7c"
+
+            txt.config(state="normal")
+            txt.delete("1.0", tk.END)
+            txt.configure(
+                wrap="none" if compiled else "word",
+                bg=canvas_bg,
+                fg=card_fg,
+                font=(d_fam, d_sz) if compiled else d_font_tuple,
+            )
+            self._configure_editor_rich_tags(txt, d_fam, d_sz)
+
+            txt.tag_configure("all_script_active", background=t["highlight_bg"])
+            txt.tag_configure("as_hdr", lmargin1=16, lmargin2=16, rmargin=16, background=hdr_bg)
+            txt.tag_configure("as_body", lmargin1=20, lmargin2=20, rmargin=16, background=card_bg, foreground=card_fg)
+            txt.tag_configure("as_cap", lmargin1=12, rmargin=12, background=canvas_bg)
+            txt.tag_configure("as_sel_slot", font=("Consolas", max(8, d_sz - 2), "bold"), foreground=t["misora_pink"])
+            txt.tag_configure("as_lock_slot", font=("Segoe UI", max(8, d_sz - 2)), foreground=t["accent_yellow"])
+            txt.tag_configure("as_badge", font=("Consolas", max(8, d_sz - 3), "bold"), foreground=t["misora_pink"])
+            txt.tag_configure("as_speaker", font=(d_fam, max(9, d_sz - 1), "bold"), foreground=sp_color)
+            txt.tag_configure(
+                "as_narrator",
+                font=(d_fam, max(9, d_sz - 1), "bold") if compiled else (d_fam, max(8, d_sz - 2), "italic"),
+                foreground=narr_color,
+            )
+            txt.tag_configure("as_voice", font=("Segoe UI", max(7, d_sz - 4)), foreground=t["accent_blue"])
+            txt.tag_configure("as_segs", font=("Segoe UI", max(7, d_sz - 4), "bold"), foreground=t["misora_pink"])
+            txt.tag_configure("as_box0_meta", font=(d_fam, max(8, d_sz - 2)), foreground=t["fg_muted"])
+            txt.tag_configure("as_spacer", font=("Segoe UI", 4), spacing1=2, spacing3=2, background=canvas_bg)
+            txt.tag_configure("gutter_overflow", foreground=ov_gutter_fg, font=self._get_dialogue_font_tuple(d_sz, "bold"))
+
+            if not self.current_doc or not self.current_doc.boxes:
+                txt.config(state="disabled")
+                return
+
+            sel_mode = bool(self.var_select_box_mode.get())
+            card_w = max(460, int(safe_w + 64))
+            top_img = bot_img = dot_img = voice_img = None
+            if compiled:
+                top_img = get_all_script_card_top_image(card_w, height=10, radius=10, canvas_bg=canvas_bg, card_bg=card_bg, border_hex="#B8BCCA", master=txt)
+                bot_img = get_all_script_card_bottom_image(card_w, height=10, radius=10, canvas_bg=canvas_bg, card_bg=card_bg, border_hex="#B8BCCA", master=txt)
+                dot_img = get_all_script_dotted_rule_image(max(120, card_w - 40), height=5, dot_hex="#B8CCE8", bg_hex=card_bg, master=txt)
+                voice_img = get_voice_badge_image(size=18, master=txt)
+                for im in (top_img, bot_img, dot_img, voice_img):
+                    if im is not None:
+                        self._all_script_render_images.append(im)
+
+            # 1. Box 0 Metadata Block (-1)
             if self.current_doc.has_metadata():
                 meta = self.current_doc.get_metadata()
-                is_active_0 = getattr(self, "is_box0_active", False)
-                box0_bg = t["highlight_bg"] if is_active_0 else ("#dfd1f5" if self._is_light_theme() else "#2d1d29")
-                box0_border = "#bca0e8" if self._is_light_theme() else "#4a3556"
-                card_0 = tk.Frame(self.cont_stream_frame, bg=box0_bg, highlightbackground=box0_border, highlightthickness=1)
-                hdr_0 = tk.Frame(card_0, bg=box0_bg, padx=4, pady=1)
+                if compiled and top_img is not None:
+                    txt.image_create(tk.END, image=top_img)
+                    txt.insert(tk.END, "\n", ("as_cap",))
+                s_ln = int(txt.index("end-1c").split(".")[0])
 
-                slot_cb_0 = tk.Frame(hdr_0, width=22, height=18, bg=box0_bg)
-                slot_cb_0.pack_propagate(False)
-                slot_cb_0.pack(side="left", padx=(0, 2))
-                cb_sel_0 = None
-                if self.var_select_box_mode.get():
-                    var_box0_sel = tk.BooleanVar(master=self, value=(-1 in self._selected_boxes))
-                    def _make_box0_sel_cmd(v):
-                        def _cmd():
-                            if v.get():
-                                self._selected_boxes.add(-1)
-                            else:
-                                self._selected_boxes.discard(-1)
-                        return _cmd
-                    cb_sel_0 = tk.Checkbutton(
-                        slot_cb_0,
-                        variable=var_box0_sel,
-                        command=_make_box0_sel_cmd(var_box0_sel),
-                        bg=box0_bg,
-                        activebackground=box0_bg,
-                        selectcolor=t["bg_panel"],
-                        bd=0,
-                        cursor="hand2",
-                    )
-                    cb_sel_0.pack(fill="both", expand=True)
-                    cb_sel_0.bind("<MouseWheel>", self._on_cont_mousewheel)
-
-                slot_lock_0 = tk.Frame(hdr_0, width=18, height=18, bg=box0_bg)
-                slot_lock_0.pack_propagate(False)
-                slot_lock_0.pack(side="left", padx=(0, 2))
-
-                lbl_badge_0 = tk.Label(hdr_0, text="◆ [BOX #000]", font=("Consolas", max(8, d_sz - 3), "bold"), fg=t["misora_pink"], bg=box0_bg)
-                lbl_badge_0.pack(side="left")
-                lbl_title_0 = tk.Label(hdr_0, text="[STORY METADATA & SYNOPSIS]", font=(d_fam, max(8, d_sz - 3), "bold"), fg=t["fg_text"], bg=box0_bg)
-                lbl_title_0.pack(side="left", padx=(6, 4))
-                hdr_0.pack(fill="x")
-
-                meta_body = tk.Frame(card_0, bg=box0_bg, padx=4, pady=1)
-                tk.Label(meta_body, text=f"Title: {meta.get('title', '')}   |   Subtitle: {meta.get('subtitle', '')}", font=(d_fam, max(7, d_sz - 3)), fg=t["fg_muted"], bg=box0_bg).pack(anchor="w")
-                summary_lines = max(2, min(8, meta.get("summary", "").count("\n") + 1))
-                txt_summary = tk.Text(
-                    meta_body,
-                    wrap="word",
-                    undo=False,
-                    height=summary_lines,
-                    font=(d_fam, d_sz),
-                    bg=t["bg_editor"],
-                    fg=t["fg_text"],
-                    insertbackground=t["misora_pink"],
-                    selectbackground=t["highlight_bg"],
-                    selectforeground=t["misora_pink"],
-                    bd=1,
-                    relief="solid",
-                    highlightthickness=0,
-                    padx=8,
-                    pady=3,
-                    spacing1=2,
-                    spacing3=2
+                sel_tok = ("[x] " if -1 in self._selected_boxes else "[ ] ") if sel_mode else "    "
+                sel_s = txt.index("end-1c")
+                txt.insert(tk.END, sel_tok, ("as_hdr", "as_sel_slot"))
+                sel_e = txt.index("end-1c")
+                self._all_script_sel_ranges[-1] = (sel_s, sel_e)
+                txt.insert(tk.END, "   ", ("as_hdr", "as_lock_slot"))
+                txt.insert(tk.END, "◆ [BOX #000]  ", ("as_hdr", "as_badge"))
+                txt.insert(tk.END, "[STORY METADATA & SYNOPSIS]\n", ("as_hdr", "as_speaker"))
+                txt.insert(
+                    tk.END,
+                    f"Title: {meta.get('title', '')}   |   Subtitle: {meta.get('subtitle', '')}\n",
+                    ("as_body", "as_box0_meta"),
                 )
-                txt_summary.insert("1.0", meta.get("summary", ""))
-                txt_summary.pack(fill="x", pady=(1, 2))
-                meta_body.pack(fill="x")
+                b_start = txt.index("end-1c")
+                self._all_script_body_starts[-1] = b_start
+                sum_txt = meta.get("summary", "")
+                txt.insert(tk.END, sum_txt, ("as_body",))
+                b_end = txt.index("end-1c")
+                self._all_script_body_ends[-1] = b_end
+                txt.insert(tk.END, "\n", ("as_body",))
 
-                # Bindings for Card #0
-                self._install_shortcuts_bindtag(txt_summary)
-                txt_summary.bind("<FocusIn>", lambda e: self._on_card_focus_in(-1))
-                txt_summary.bind("<KeyRelease>", lambda e, w=txt_summary: self._commit_widget_edit(w))
-                txt_summary.bind("<<Cut>>", lambda e, w=txt_summary: self.after_idle(lambda: self._commit_widget_edit(w)))
-                txt_summary.bind("<<Paste>>", lambda e, w=txt_summary: self.after_idle(lambda: self._commit_widget_edit(w)))
-                txt_summary.bind("<Control-a>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
-                txt_summary.bind("<Control-A>", lambda e, w=txt_summary: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
+                e_ln = int(txt.index("end-1c").split(".")[0]) - 1
+                if compiled and bot_img is not None:
+                    txt.image_create(tk.END, image=bot_img)
+                    txt.insert(tk.END, "\n", ("as_cap",))
+                self._all_script_block_ranges[-1] = (s_ln, e_ln)
+                for ln in range(s_ln, e_ln + 1):
+                    self._all_script_line_to_box[ln] = -1
+                txt.insert(tk.END, "\n", ("as_spacer",))
 
-                for w in (card_0, hdr_0, lbl_badge_0, lbl_title_0, meta_body, txt_summary):
-                    w.bind("<MouseWheel>", self._on_cont_mousewheel)
-
-                card_0.pack(fill="x", padx=6, pady=(1, 2))
-
-                self._card_widgets[-1] = {
-                    "card": card_0,
-                    "hdr": hdr_0,
-                    "txt": txt_summary,
-                    "lbl_badge": lbl_badge_0,
-                    "lbl_title": lbl_title_0,
-                    "slot_cb": slot_cb_0,
-                    "cb_sel": cb_sel_0,
-                }
-
-            # 2. Cards #1..N: Dialogue Box Cards
-            cream_bg = "#fffcf4"
-            outer_gold = "#d4af37"
-            inner_gold = "#e6c875"
-            plate_bg = "#3b2c4e"
-            plate_fg = best_contrast_fg(plate_bg, "#ffffff", "#fffcf4")
-            preview_fg = best_contrast_fg(cream_bg, "#2b2118", "#1a1a1a")
-            arrow_fg = "#ff5c93"
-
+            # 2. Dialogue Boxes (0..N-1)
+            locked_set = getattr(self, "_locked_boxes", set())
             for i, box in enumerate(self.current_doc.boxes):
-                is_active = (not getattr(self, "is_box0_active", False) and i == self.current_box_idx)
+                if compiled and top_img is not None:
+                    txt.image_create(tk.END, image=top_img)
+                    txt.insert(tk.END, "\n", ("as_cap",))
+                s_ln = int(txt.index("end-1c").split(".")[0])
+
+                sel_tok = ("[x] " if i in self._selected_boxes else "[ ] ") if sel_mode else "    "
+                sel_s = txt.index("end-1c")
+                txt.insert(tk.END, sel_tok, ("as_hdr", "as_sel_slot"))
+                sel_e = txt.index("end-1c")
+                self._all_script_sel_ranges[i] = (sel_s, sel_e)
+
+                lk_tok = "🔒 " if i in locked_set else "🔓 "
+                lk_s = txt.index("end-1c")
+                txt.insert(tk.END, lk_tok, ("as_hdr", "as_lock_slot"))
+                lk_e = txt.index("end-1c")
+                self._all_script_lock_ranges[i] = (lk_s, lk_e)
+
                 if compiled:
-                    hdr_bg = "#f4e7c3" if is_active else cream_bg
-                    card_frame = tk.Frame(self.cont_stream_frame, bg=outer_gold, padx=2, pady=2)
-                    inner_card = tk.Frame(
-                        card_frame,
-                        bg=cream_bg,
-                        highlightbackground=inner_gold,
-                        highlightthickness=1,
-                        padx=6,
-                        pady=4,
-                    )
-                    inner_card.pack(fill="both", expand=True)
-                    hdr = tk.Frame(inner_card, bg=hdr_bg, padx=4, pady=2)
+                    sp_disp = box.speaker if box.speaker.strip() else "Narration"
+                    sp_tag = "as_speaker" if box.speaker.strip() else "as_narrator"
+                    txt.insert(tk.END, sp_disp, ("as_hdr", sp_tag))
+                    txt.insert(tk.END, f"   [#{i+1:03d}]", ("as_hdr", "as_badge"))
+                    if box.voice_cue:
+                        txt.insert(tk.END, "   ", ("as_hdr",))
+                        if voice_img is not None:
+                            txt.image_create(tk.END, image=voice_img)
+                        txt.insert(tk.END, f" {box.voice_cue}", ("as_hdr", "as_voice"))
+                    txt.insert(tk.END, "\n", ("as_hdr",))
+                    if dot_img is not None:
+                        txt.image_create(tk.END, image=dot_img)
+                        txt.insert(tk.END, "\n", ("as_hdr",))
                 else:
-                    hdr_bg = t["highlight_bg"] if is_active else t["bg_panel"]
-                    card_frame = tk.Frame(self.cont_stream_frame, bg=t["bg_panel"])
-                    inner_card = card_frame
-                    hdr = tk.Frame(card_frame, bg=hdr_bg, padx=4, pady=0)
+                    txt.insert(tk.END, f"◆ [BOX #{i+1:03d}] ", ("as_hdr", "as_badge"))
+                    sp_disp = box.speaker if box.speaker else "(Narration)"
+                    sp_tag = "as_speaker" if box.speaker else "as_narrator"
+                    txt.insert(tk.END, sp_disp, ("as_hdr", sp_tag))
+                    if box.voice_cue:
+                        txt.insert(tk.END, f"  ♪ {box.voice_cue}", ("as_hdr", "as_voice"))
+                    if len(box.segs) > 1:
+                        txt.insert(tk.END, f"  [{len(box.segs)} segs]", ("as_hdr", "as_segs"))
+                    txt.insert(tk.END, "\n", ("as_hdr",))
 
-                # Fixed reserved checkbox slot (prevents header shift when Select Box toggles)
-                slot_cb = tk.Frame(hdr, width=22, height=18, bg=hdr_bg)
-                slot_cb.pack_propagate(False)
-                slot_cb.pack(side="left", padx=(0, 2))
-
-                if self.var_select_box_mode.get():
-                    var_box_sel = tk.BooleanVar(master=self, value=(i in self._selected_boxes))
-                    def _make_box_sel_cmd(b_idx, v):
-                        def _cmd():
-                            if v.get():
-                                self._selected_boxes.add(b_idx)
-                            else:
-                                self._selected_boxes.discard(b_idx)
-                        return _cmd
-                    cb_sel = tk.Checkbutton(
-                        slot_cb,
-                        variable=var_box_sel,
-                        command=_make_box_sel_cmd(i, var_box_sel),
-                        bg=hdr_bg,
-                        activebackground=hdr_bg,
-                        selectcolor=t["bg_panel"],
-                        bd=0,
-                        cursor="hand2",
-                    )
-                    cb_sel.pack(fill="both", expand=True)
-                    cb_sel.bind("<MouseWheel>", self._on_cont_mousewheel)
-
-                # Translation Lock indicator immediately to the RIGHT of checkbox slot (fixed width=2)
-                is_locked = i in getattr(self, "_locked_boxes", set())
-                lbl_lock = tk.Label(
-                    hdr,
-                    text="🔒" if is_locked else "",
-                    font=("Segoe UI", max(7, d_sz - 4)),
-                    fg=t["accent_yellow"],
-                    bg=hdr_bg,
-                    width=2,
-                    cursor="hand2",
-                )
-                lbl_lock.pack(side="left", padx=(0, 2))
-                lbl_lock.bind("<Button-1>", lambda e, b_idx=i: self._on_toggle_card_lock(b_idx))
-                lbl_lock.bind("<MouseWheel>", self._on_cont_mousewheel)
-                create_tooltip(lbl_lock, "Click to toggle Translation Lock (Ctrl+L)")
-
-                lbl_badge = tk.Label(
-                    hdr,
-                    text=f"◆ [BOX #{i+1:03d}]",
-                    font=("Consolas", max(8, d_sz - 3), "bold"),
-                    fg=best_contrast_fg(hdr_bg, t["misora_pink"], "#7a1c4b") if compiled else t["misora_pink"],
-                    bg=hdr_bg,
-                )
-                lbl_badge.pack(side="left")
-
-                sp_text = box.speaker if box.speaker else "(Narration)"
+                b_start = txt.index("end-1c")
+                self._all_script_body_starts[i] = b_start
+                body_text = box.clean_text
                 if compiled:
-                    lbl_sp = tk.Label(
-                        hdr,
-                        text=sp_text,
-                        font=(d_fam, max(8, d_sz - 2), "bold" if box.speaker else "italic"),
-                        fg=plate_fg,
-                        bg=plate_bg,
-                        padx=6,
-                        pady=1,
-                    )
+                    self._insert_compiled_ngui_text(txt, b_start, body_text, base_tags=("as_body",))
+                    b_end = txt.index("end-1c")
                 else:
-                    sp_fg = t["fg_text"] if box.speaker else t["fg_muted"]
-                    sp_font = (d_fam, max(8, d_sz - 3), "bold" if box.speaker else "italic")
-                    lbl_sp = tk.Label(hdr, text=sp_text, font=sp_font, fg=sp_fg, bg=hdr_bg)
-                lbl_sp.pack(side="left", padx=(6, 4))
+                    txt.insert(tk.END, body_text, ("as_body",))
+                    b_end = txt.index("end-1c")
+                    for m in NGUI_TAG_RE.finditer(body_text):
+                        txt.tag_add("ngui_tag", f"{b_start} + {m.start()}c", f"{b_start} + {m.end()}c")
+                self._all_script_body_ends[i] = b_end
+                txt.insert(tk.END, "\n", ("as_body",))
 
-                vc_text = f"♪ {box.voice_cue}" if box.voice_cue else ""
-                lbl_vc = tk.Label(hdr, text=vc_text, font=("Segoe UI", max(7, d_sz - 4)), fg=t["accent_blue"], bg=hdr_bg)
-                lbl_vc.pack(side="left", padx=(2, 4))
+                # Pixel-calibrated overflow & line 4+ highlights
+                body_start_ln = int(b_start.split(".")[0])
+                raw_metrics = self._measure_dialogue_metrics(body_text)
+                for info in raw_metrics["lines"]:
+                    rel_ln = info["line_no"]
+                    abs_ln = body_start_ln + (rel_ln - 1)
+                    if rel_ln >= 4:
+                        txt.tag_add("gutter_overflow", f"{abs_ln}.0", f"{abs_ln}.end")
+                    if info["overflow_raw_start"] is not None:
+                        if compiled:
+                            rendered_line = txt.get(f"{abs_ln}.0", f"{abs_ln}.end")
+                            rm = self._measure_dialogue_metrics(rendered_line)
+                            ov_col = rm["lines"][0]["overflow_raw_start"]
+                        else:
+                            ov_col = info["overflow_raw_start"]
+                        if ov_col is not None:
+                            txt.tag_add("line_overflow", f"{abs_ln}.{ov_col}", f"{abs_ln}.end")
 
-                if len(box.segs) > 1:
-                    lbl_segs = tk.Label(hdr, text=f"{len(box.segs)} segs", font=("Segoe UI", max(7, d_sz - 4), "bold"), fg=t["misora_pink"], bg=hdr_bg)
-                    lbl_segs.pack(side="left", padx=(2, 4))
+                e_ln = int(txt.index("end-1c").split(".")[0]) - 1
+                if compiled and bot_img is not None:
+                    txt.image_create(tk.END, image=bot_img)
+                    txt.insert(tk.END, "\n", ("as_cap",))
+                self._all_script_block_ranges[i] = (s_ln, e_ln)
+                for ln in range(s_ln, e_ln + 1):
+                    self._all_script_line_to_box[ln] = i
+                txt.insert(tk.END, "\n", ("as_spacer",))
 
-                hdr.pack(fill="x", pady=0)
+            txt.tag_raise("line_overflow")
+            txt.tag_raise("ngui_tag")
+            txt.tag_raise("search_hit")
 
-                # Editor Row with dynamic line-number gutter (or lightweight Game-Style Preview body)
-                editor_row = tk.Frame(inner_card, bg=cream_bg if compiled else t["bg_panel"])
-                editor_row.pack(fill="x", padx=0, pady=0)
-
-                line_count = max(1, box.clean_text.count("\n") + 1)
-                eff_height = max(3, line_count) if compiled else max(2, min(10, line_count))
-
-                gutter = tk.Text(
-                    editor_row,
-                    width=2,
-                    height=eff_height,
-                    font=("Consolas", max(8, d_sz - 2)),
-                    bg=gutter_bg,
-                    fg=gutter_fg,
-                    bd=0,
-                    relief="flat",
-                    wrap="none",
-                    takefocus=0,
-                    cursor="arrow",
-                    padx=1,
-                    pady=3,
-                    spacing1=2,
-                    spacing3=2,
-                )
-                gutter.insert("1.0", "\n".join(str(n) for n in range(1, line_count + 1)))
-                self._apply_gutter_overflow_tag(gutter)
-                gutter.config(state="disabled")
-                if self.show_line_numbers and not compiled:
-                    gutter.pack(side="left", fill="y", padx=(0, 2))
-
-                txt = tk.Text(
-                    editor_row,
-                    wrap="none" if compiled else "word",
-                    undo=False,
-                    height=eff_height,
-                    font=(d_fam, d_sz),
-                    bg=cream_bg if compiled else t["bg_editor"],
-                    fg=preview_fg if compiled else t["fg_text"],
-                    insertbackground=t["misora_pink"],
-                    selectbackground=t["highlight_bg"],
-                    selectforeground=t["misora_pink"],
-                    bd=0 if compiled else 1,
-                    relief="flat" if compiled else "solid",
-                    highlightthickness=0,
-                    padx=8,
-                    pady=3,
-                    spacing1=2,
-                    spacing3=2
-                )
-                self._configure_editor_rich_tags(txt, d_fam, d_sz)
-                if compiled:
-                    self._insert_compiled_ngui_text(txt, "1.0", box.clean_text)
-                    self._apply_overflow_highlights(txt)
-                    txt.config(state="disabled")
-                else:
-                    txt.insert("1.0", box.clean_text)
-                    self._highlight_ngui_tags_for_widget(txt)
-
-                txt.pack(side="left", fill="x", expand=True)
-
-                if compiled:
-                    footer_row = tk.Frame(inner_card, bg=cream_bg)
-                    footer_row.pack(fill="x", pady=(2, 0))
-                    safe_bar = tk.Frame(footer_row, width=safe_w, height=2, bg=inner_gold)
-                    safe_bar.pack(side="left", anchor="w")
-                    lbl_arrow = tk.Label(
-                        footer_row,
-                        text="▼",
-                        font=(d_fam, max(8, d_sz - 2), "bold"),
-                        fg=arrow_fg,
-                        bg=cream_bg,
-                    )
-                    lbl_arrow.pack(side="right", padx=(4, 2))
-                    for fw in (inner_card, footer_row, safe_bar, lbl_arrow):
-                        fw.bind("<MouseWheel>", self._on_cont_mousewheel)
-
-                # Bindings on card widgets
-                for w in (card_frame, hdr, lbl_badge, lbl_sp, lbl_vc, editor_row, gutter, txt):
-                    w.bind("<MouseWheel>", self._on_cont_mousewheel)
-
-                self._install_shortcuts_bindtag(txt)
-                txt.bind("<KeyRelease>", lambda e, idx=i, w=txt, g=gutter: self._commit_widget_edit(w))
-                txt.bind("<<Cut>>", lambda e, w=txt: self.after_idle(lambda: self._commit_widget_edit(w)))
-                txt.bind("<FocusIn>", lambda e, idx=i: self._on_card_focus_in(idx))
-                txt.bind("<Control-a>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
-                txt.bind("<Control-A>", lambda e, w=txt: (w.tag_add("sel", "1.0", "end-1c"), "break")[1])
-                txt.bind("<Control-Shift-C>", lambda e: (self.on_copy_script(), "break")[1])
-                txt.bind("<Control-Shift-c>", lambda e: (self.on_copy_script(), "break")[1])
-                txt.bind("<Control-v>", lambda e, idx=i, w=txt: self._on_card_paste_caret(idx, w))
-                txt.bind("<<Paste>>", lambda e, idx=i, w=txt: (self._on_card_paste_caret(idx, w) or self.after_idle(lambda: self._commit_widget_edit(w))))
-                txt.bind("<Control-Shift-V>", lambda e: (self.on_paste_cross_box(), "break")[1])
-                txt.bind("<Control-Shift-v>", lambda e: (self.on_paste_cross_box(), "break")[1])
-                txt.bind("<Control-b>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[b]", "[/b]"), "break")[1])
-                txt.bind("<Control-i>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[i]", "[/i]"), "break")[1])
-                txt.bind("<Control-u>", lambda e, w=txt: (self._card_shortcut_wrap(w, "[u]", "[/u]"), "break")[1])
-
-                card_frame.pack(fill="x", padx=6, pady=(1, 2))
-
-                self._card_widgets[i] = {
-                    "card": card_frame,
-                    "hdr": hdr,
-                    "editor_row": editor_row,
-                    "gutter": gutter,
-                    "txt": txt,
-                    "lbl_badge": lbl_badge,
-                    "lbl_sp": lbl_sp,
-                    "lbl_vc": lbl_vc,
-                    "slot_cb": slot_cb,
-                    "lbl_lock": lbl_lock,
-                }
-
+            active_idx = -1 if getattr(self, "is_box0_active", False) else self.current_box_idx
+            self._set_all_script_active_block(active_idx)
             self._highlight_continuous_matches()
+            txt.config(state="disabled")
         finally:
             self._suppress_continuous_events = False
 
@@ -9855,7 +10306,7 @@ class MisoraApp(tk.Tk):
         char_offset: int = 0,
         explicit_span: Optional[Tuple[int, int]] = None
     ) -> None:
-        """Scroll Continuous View to `box_idx`, highlight its card header, and sync metadata."""
+        """Scroll All Script (Technique A) to `box_idx`, highlight block in-place, and sync metadata."""
         if not self.current_doc:
             return
 
@@ -9868,39 +10319,27 @@ class MisoraApp(tk.Tk):
             self.current_box_idx = max(0, min(box_idx, total - 1)) if total > 0 else 0
             target_idx = self.current_box_idx
 
-        self._highlight_active_card_header(target_idx)
+        self._set_all_script_active_block(target_idx)
         self._sync_header_controls_for_card(target_idx)
         self._update_raw_view()
 
-        if hasattr(self, "_card_widgets") and target_idx in self._card_widgets:
-            card_info = self._card_widgets[target_idx]
-            card = card_info["card"]
-            self.update_idletasks()
+        txt = getattr(self, "txt_all_script", None)
+        if txt is not None and txt.winfo_exists() and target_idx in self._all_script_block_ranges:
+            s_ln, _e_ln = self._all_script_block_ranges[target_idx]
             try:
-                total_h = self.cont_stream_frame.winfo_height()
-                if total_h > 0:
-                    card_y = card.winfo_y()
-                    fraction = max(0.0, min(1.0, card_y / total_h))
-                    self.cont_canvas.yview_moveto(fraction)
+                txt.see(f"{s_ln}.0")
+                b_start = self._all_script_body_starts.get(target_idx, f"{s_ln}.0")
+                if move_cursor:
+                    txt.mark_set("insert", f"{b_start} + {max(0, char_offset)}c")
+                    txt.see("insert")
+                if explicit_span is not None and not self.var_preview_compiled.get():
+                    s, e = explicit_span
+                    if e > s:
+                        txt.tag_remove("search_hit", "1.0", tk.END)
+                        txt.tag_add("search_hit", f"{b_start} + {s}c", f"{b_start} + {e}c")
+                        txt.see(f"{b_start} + {s}c")
             except Exception:
                 pass
-
-            txt_w = card_info["txt"]
-            if move_cursor and str(txt_w.cget("state")) != "disabled":
-                try:
-                    target_pos = f"1.0 + {max(0, char_offset)}c"
-                    txt_w.mark_set("insert", target_pos)
-                    txt_w.see("insert")
-                    txt_w.focus_set()
-                except Exception:
-                    pass
-
-            if explicit_span is not None and not self.var_preview_compiled.get():
-                s, e = explicit_span
-                if e > s:
-                    txt_w.tag_remove("search_hit", "1.0", tk.END)
-                    txt_w.tag_add("search_hit", f"1.0 + {s}c", f"1.0 + {e}c")
-                    txt_w.see(f"1.0 + {s}c")
 
     def _find_continuous_box_at_index(self, tk_index: str) -> Optional[int]:
         """Return active box index (compatibility shim for Card Stream architecture)."""
@@ -9975,10 +10414,11 @@ class MisoraApp(tk.Tk):
             pass
 
     def _highlight_continuous_matches(self) -> None:
-        """Highlight active search keyword spans across all cards in Continuous View."""
+        """Highlight active search keyword spans across all blocks in All Script (Technique A)."""
         if self.var_preview_compiled.get():
             return
-        if not hasattr(self, "_card_widgets") or not self._card_widgets:
+        txt = getattr(self, "txt_all_script", None)
+        if txt is None or not txt.winfo_exists() or not self.current_doc:
             return
 
         matcher = None
@@ -9988,19 +10428,20 @@ class MisoraApp(tk.Tk):
             except Exception:
                 matcher = None
 
-        for b_idx, card_info in self._card_widgets.items():
-            txt_w = card_info.get("txt")
-            if not txt_w:
-                continue
-            try:
-                txt_w.tag_remove("search_hit", "1.0", tk.END)
-                if matcher:
-                    box_tx = txt_w.get("1.0", "end-1c")
-                    for s, e, _ in matcher(box_tx):
-                        if e > s:
-                            txt_w.tag_add("search_hit", f"1.0 + {s}c", f"1.0 + {e}c")
-            except Exception:
-                pass
+        try:
+            txt.tag_remove("search_hit", "1.0", tk.END)
+            if not matcher:
+                return
+            for b_idx, b_start in getattr(self, "_all_script_body_starts", {}).items():
+                b_end = getattr(self, "_all_script_body_ends", {}).get(b_idx)
+                if not b_end:
+                    continue
+                box_tx = txt.get(b_start, b_end)
+                for s, e, _ in matcher(box_tx):
+                    if e > s:
+                        txt.tag_add("search_hit", f"{b_start} + {s}c", f"{b_start} + {e}c")
+        except Exception:
+            pass
 
     def _commit_speaker_edit(self) -> bool:
         """Central edit commit path for speaker entry edits (Rule 11, F20).
@@ -10432,7 +10873,11 @@ class MisoraApp(tk.Tk):
             cur_p = Path(self.current_file_path).resolve()
             if cur_p in self.open_documents:
                 self.open_documents[cur_p]["locked_box_uids"] = set(self._locked_box_uids)
-        self._update_views()
+        if getattr(self, "var_continuous_view", None) and self.var_continuous_view.get() and hasattr(self, "_refresh_all_script_lock_glyph_in_place"):
+            self._refresh_all_script_lock_glyph_in_place(b_idx)
+            self._update_raw_view()
+        else:
+            self._update_views()
 
     def _resync_box_indices_from_uids(self) -> None:
         """Re-sync positional indices (_locked_boxes, _modified_boxes, _original_box_texts) from authoritative UIDs (S06 / S07)."""
@@ -10689,12 +11134,20 @@ class MisoraApp(tk.Tk):
             self._draw_single_pixel_ruler(self.ruler_clean, max(0, x0_clean))
 
         if hasattr(self, "ruler_cont") and self.ruler_cont.winfo_exists():
-            x0_cont = (24 if getattr(self, "show_line_numbers", True) else 0) + 17
+            x0_cont = 32
             try:
-                cards = getattr(self, "_card_widgets", {})
-                first_txt = next((c.get("txt") for c in cards.values() if c.get("txt") and c["txt"].winfo_ismapped()), None)
-                if first_txt is not None and self.ruler_cont.winfo_ismapped():
-                    x0_cont = (first_txt.winfo_rootx() - self.ruler_cont.winfo_rootx()) + int(first_txt.cget("bd") or 1) + int(first_txt.cget("padx") or 8)
+                if hasattr(self, "txt_all_script") and self.txt_all_script.winfo_ismapped() and self.ruler_cont.winfo_ismapped():
+                    x0_cont = (
+                        (self.txt_all_script.winfo_rootx() - self.ruler_cont.winfo_rootx())
+                        + int(self.txt_all_script.cget("bd") or 1)
+                        + int(self.txt_all_script.cget("padx") or 12)
+                        + 20
+                    )
+                else:
+                    cards = getattr(self, "_card_widgets", {})
+                    first_txt = next((c.get("txt") for c in cards.values() if c.get("txt") and c["txt"].winfo_ismapped()), None)
+                    if first_txt is not None and self.ruler_cont.winfo_ismapped():
+                        x0_cont = (first_txt.winfo_rootx() - self.ruler_cont.winfo_rootx()) + int(first_txt.cget("bd") or 1) + int(first_txt.cget("padx") or 8)
             except Exception:
                 pass
             self._draw_single_pixel_ruler(self.ruler_cont, max(0, x0_cont))
@@ -10826,15 +11279,17 @@ class MisoraApp(tk.Tk):
                 pass
             elif self.var_preview_compiled.get():
                 if 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                    box = self.current_doc.boxes[self.current_box_idx]
                     new_sp = self.speaker_var.get()
-                    cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-                    self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+                    if new_sp != box.speaker:
+                        self.current_doc.inject_box(self.current_box_idx, new_sp, box.clean_text)
             elif self.var_continuous_view.get():
                 self._sync_continuous_box_from_widget()
                 if 0 <= self.current_box_idx < len(self.current_doc.boxes):
+                    box = self.current_doc.boxes[self.current_box_idx]
                     new_sp = self.speaker_var.get()
-                    cur_tx = self.current_doc.boxes[self.current_box_idx].clean_text
-                    self.current_doc.inject_box(self.current_box_idx, new_sp, cur_tx)
+                    if new_sp != box.speaker:
+                        self.current_doc.inject_box(self.current_box_idx, new_sp, box.clean_text)
             else:
                 if 0 <= self.current_box_idx < len(self.current_doc.boxes):
                     new_sp = self.speaker_var.get()
@@ -12539,6 +12994,28 @@ class MisoraApp(tk.Tk):
                 target_is_box0 = delta.old_is_box0 if reverse else delta.new_is_box0
                 self.is_box0_active = bool(target_is_box0 and self.current_doc.has_metadata())
                 self._mark_document_dirty(target_p)
+                if refresh_ui:
+                    self._update_views()
+        elif isinstance(delta, BoxSnapshotReplaceDelta):
+            target_snap = delta.old_snapshot if reverse else delta.new_snapshot
+            target_file = Path(delta.file_path) if delta.file_path else None
+            if target_file and target_file != self.current_file_path:
+                self.open_file(target_file)
+            if self.current_doc and 0 <= delta.box_index < len(self.current_doc.boxes):
+                old_uid = self.current_doc.boxes[delta.box_index].uid
+                self.current_doc.replace_box(delta.box_index, target_snap)
+                new_uid = self.current_doc.boxes[delta.box_index].uid
+                if hasattr(self, "_original_jp_by_uid") and old_uid in self._original_jp_by_uid:
+                    jp_val = self._original_jp_by_uid.pop(old_uid)
+                    self._original_jp_by_uid[new_uid] = jp_val
+                    if hasattr(self, "sync_manager") and self.sync_manager is not None:
+                        self.sync_manager.register_jp_key(new_uid, jp_val)
+                if hasattr(self, "_modified_box_uids"):
+                    self._modified_box_uids.add(new_uid)
+                self.is_box0_active = False
+                self.current_box_idx = delta.box_index
+                self._resync_box_indices_from_uids()
+                self._mark_document_dirty(target_file or self.current_file_path)
                 if refresh_ui:
                     self._update_views()
         elif isinstance(delta, BoxStructuralDelta):

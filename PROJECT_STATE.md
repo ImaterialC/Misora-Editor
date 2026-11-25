@@ -1,10 +1,10 @@
 # Misora: Story Editor — Canonical Project State
 
-Last updated: 2026-11-25
+Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.2 — S02)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.2"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Target release: v1.5.0 (Current session build: v1.4.3 — S03)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.3"`; unified across UI, splash, MTL engine, and tests (`U00`).
 Starting baseline pinned at commit `32ad313376343e1e6a2f46970f8081b949f8e0d8` (+ pre-existing local S24 working-tree state).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
@@ -41,12 +41,12 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S02 Verification Baseline — 2026-11-25):
-py -3.12 -m unittest tests.test_v15_s02_fonts_ruler_metrics tests.test_p3_s17_pixel_rulers -v
+Unit Test Suite (v1.5 S03 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s03_all_script_preview_paste -v
 Result: Ran 10 tests (10 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 363 tests across 47 modules (320 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.2 bump)
+Result: Ran 373 tests across 48 modules (330 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.3 bump; 0 S03 regressions)
 
 Test suites included in the 344 tests (exact disk discovery):
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -112,6 +112,27 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S03 (`v1.4.3`) — All Script Technique A Overhaul (`U08`, `U-7`), Leaked 3rd Window Fix, Precision Priconne Preview (`U-5`), & Lossless `BoxSnapshot` Paste Insert/Replace (`4.1`) (2026-11-26)
+- **Leaked 3rd Window & Redundant Rebuild Fixes (`misora.py`, `U08`):**
+  - `_update_empty_state_visibility()` now inspects `var_continuous_view.get()` before packing `gd_scroll_wrap` or `continuous_wrap`, preventing Dialogue View from leaking below All Script above Raw Commands.
+  - Eliminated unconditional `_render_continuous_view()` calls in `on_box_new()` and `_on_card_paste_caret()`, removed duplicate `_sync_clean_view_to_current_box()` calls in `on_box_cut()` and `on_box_paste()`, and committed `on_text_cut()` synchronously so Ribbon Cut persists across Next/Prev navigation.
+- **All Script Technique A Overhaul (`misora.py`, `U08`, `U-7`):**
+  - Replaced per-box `tk.Frame`/`tk.Text` card widget explosion in `_render_continuous_view()` with single read-only `tk.Text` (`self.txt_all_script`, preserving `self.txt_continuous` as editable plain-text fallback).
+  - Maintains deterministic block map (`_all_script_block_ranges`, `_all_script_line_to_box`), in-place single-click selection & header/Raw/MTL sync, double-click/`Enter` jump to Dialogue View (preserving `is_box0_active` on Box 0), and fixed-width ASCII (`[x] ` / `[ ] ` / `    `) Select Box + Lock slots updating in-place with zero horizontal shift.
+  - 150-box synthetic render benchmark (`Python 3.12.10`, `Tk 8.6`, `Windows-11-10.0.26100-SP0`): `2953.72 ms` (`cards=151`) pre-patch -> `1452.28 ms` (`0` card widgets) post-patch.
+- **Clean-Room Priconne Preview (`assets/preview_frames.py`, `assets/__init__.py`, `misora.py`, `U-5`):**
+  - Pure Pillow supersampled anti-aliased frame/badge generator with bounded root-scoped cache (`prune_preview_cache()` on `destroy()`), zero `AtlasAdv` sprites (`NO-02`).
+  - Dialogue Preview: warm cream-white capsule (`#F8F6F0`), champagne-gold border (`#C8A86B`), inner rim, pink white-outlined `▼`, no nameplate for narration, `50d x 3` safe interior with `wrap="none"` bleed and `_sweep_cstyle_tags()`.
+  - All Script Preview: warm-gray canvas (`#F4F2ED`), rounded white card caps (`#FFFFFF`, `#B8BCCA`), steel-blue speaker (`#2D599E` / `'Narration'`), pale-blue dotted divider, blue voice badge, compiled NGUI rich text (`wrap="none"`), and overflow tags.
+- **Lossless Native Paste Box Insert vs Replace (`core/story_ast.py`, `core/undo_journal.py`, `core/__init__.py`, `misora.py`, `4.1`, `AMD-05`):**
+  - Added `StoryDocument.replace_box()` preserving all 6 `BoxSnapshot` fields (`speaker`, `voice_cue`, `kind`, `seg_texts`, `raw_breaks`, `extra_args`), surrounding commands, and adjacent narration separation (`QW-B01`).
+  - Added `BoxSnapshotReplaceDelta` in `core/undo_journal.py` and handled forward/reverse application in `_apply_delta()`.
+  - Extended `on_box_paste(confirm=True, mode=None)` with 3-way modal chooser (`Insert after Box #N` / `Replace Box #N..#M` / `Cancel`), pre-mutation staging & validation, transactional rollback on failure, locked-target skipping, and excess-block clamping.
+- **Manual Windows QA Pending (Project Lead):**
+  - Toggle All Script and All Script Preview on a 100+ box `.unity3d` story and confirm fast rendering and ZERO 3rd window above Raw Commands.
+  - Visually compare Dialogue Preview and All Script Preview against both Bandicam reference screenshots.
+  - Cut Box #2 & #3 -> move to Box #6 -> Paste Box -> test both `Insert after #6` and `Replace #6..#7` (plus Undo & Redo, verifying voice cues & multi-segment data survive).
 
 ### v1.5 S02 (`v1.4.2`) — Font Policy & Custom Loader (`U16`–`U18`), Constant Ruler & Overlap Fix (`U19`), Gutter Sync (`U20`), Fast Metrics & Char Indicator (`U06`, `U15`) (2026-11-25)
 - **Font Policy & Win32 Private Custom Font Loader (`core/font_manager.py`, `core/__init__.py`, `.gitignore`):**

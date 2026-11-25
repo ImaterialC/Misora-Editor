@@ -152,8 +152,8 @@ class TestP3S18GamePreview(unittest.TestCase):
         self.assertEqual(self.app.undo_journal.undo_depth, 0)
 
     def test_02_probe_all_script_preview_lightweight_frames_no_canvas(self):
-        """[Probe 2 — FEAT-10] All Script Preview renders lightweight tk.Frame cards with wrap='none'
-        and zero per-card tk.Canvas widgets.
+        """[Probe 2 — FEAT-10 / Technique A] All Script Preview renders in single read-only txt_all_script
+        with wrap='none', overflow bleed, and zero per-card tk.Canvas widgets.
         """
         four_lines = "Line 1\nLine 2\nLine 3\n" + ("1234567890" * 6)
         self._load_v2_story([("Pecorine", four_lines), ("", "Narration line.")])
@@ -166,13 +166,13 @@ class TestP3S18GamePreview(unittest.TestCase):
         # Zero per-card tk.Canvas widgets inside cont_stream_frame
         canvases = _find_widgets_of_type(self.app.cont_stream_frame, tk.Canvas)
         self.assertEqual(len(canvases), 0)
+        self.assertEqual(self.app._card_widgets, {})
 
-        # Dialogue cards use wrap='none' and height >= 4 for 4-line text (visible bleed, no auto-shrink)
-        card0 = self.app._card_widgets[0]
-        txt0 = card0["txt"]
-        self.assertEqual(str(txt0.cget("wrap")), "none")
-        self.assertEqual(str(txt0.cget("state")), "disabled")
-        self.assertGreaterEqual(int(txt0.cget("height")), 4)
+        # Single read-only txt_all_script uses wrap='none' and marks overflow bleed
+        self.assertEqual(str(self.app.txt_all_script.cget("wrap")), "none")
+        self.assertEqual(str(self.app.txt_all_script.cget("state")), "disabled")
+        self.assertTrue(len(self.app.txt_all_script.tag_ranges("line_overflow")) >= 2)
+        self.assertTrue(len(self.app.txt_all_script.tag_ranges("gutter_overflow")) >= 2)
 
         # Pure presentation: zero dirty / undo mutation
         self.assertFalse(self.app.is_dirty)

@@ -60,6 +60,17 @@ class BoxStructuralDelta:
 
 
 @dataclass
+class BoxSnapshotReplaceDelta:
+    """Lossless in-place BoxSnapshot replacement (Paste Box Replace mode)."""
+    box_index: int
+    old_snapshot: BoxSnapshot
+    new_snapshot: BoxSnapshot
+    file_path: str = ""
+    box_uid: Optional[int] = None
+    source: str = "box_replace"
+
+
+@dataclass
 class PlainTextDelta:
     """Plain-text (.txt) file edit — full snapshot before/after."""
     file_path: str
@@ -385,6 +396,8 @@ def _auto_label(delta: Any) -> str:
         elif delta.op_type == "delete":
             return f"Delete {count} box(es)"
         return f"{delta.op_type.capitalize()} box"
+    if isinstance(delta, BoxSnapshotReplaceDelta):
+        return f"Replace box #{delta.box_index + 1}"
     if isinstance(delta, PlainTextDelta):
         import os
         return f"Edit {os.path.basename(delta.file_path)}"

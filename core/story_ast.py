@@ -676,6 +676,39 @@ class StoryDocument:
     # -------------------------------------------------------------------------
     # Structural AST Mutation APIs
     # -------------------------------------------------------------------------
+    def _records_from_snapshot(self, snap: BoxSnapshot) -> Tuple[List[Record], str, str]:
+        """Build Record list from all 6 fields of BoxSnapshot without mutating the document."""
+        norm_sp = PLAYER_PLACEHOLDER_RE.sub("{0}", snap.speaker) if snap.speaker else ""
+        is_print = (snap.kind == "print" and bool(norm_sp))
+        target_kind = "print" if is_print else "tag"
+        target_sp = norm_sp if is_print else ""
+
+        new_records: List[Record] = []
+        if snap.voice_cue:
+            if snap.voice_cue.startswith("vo_"):
+                new_records.append(Record(cmd_id=12, cmd_name="touch", args=[snap.voice_cue]))
+            else:
+                new_records.append(Record(cmd_id=9, cmd_name="voice", args=[snap.voice_cue]))
+
+        seg_texts = snap.seg_texts if snap.seg_texts else [""]
+        for k, seg_tx in enumerate(seg_texts):
+            if snap.raw_breaks is not None and k < len(snap.raw_breaks) and snap.raw_breaks[k] is not None:
+                rb = snap.raw_breaks[k]
+                if rb in ("\n", "\r\n", "\r", "\\n"):
+                    norm_tx = xuat_to_game(seg_tx, rb)
+                else:
+                    norm_tx = PLAYER_PLACEHOLDER_RE.sub("{0}", rb)
+            else:
+                norm_tx = xuat_to_game(seg_tx, self.break_char)
+            ext = list(snap.extra_args[k]) if (snap.extra_args and k < len(snap.extra_args)) else []
+            if is_print:
+                r = Record(cmd_id=6, cmd_name="print", args=[target_sp, norm_tx] + ext)
+            else:
+                r = Record(cmd_id=35, cmd_name="tag", args=[norm_tx] + ext)
+            new_records.append(r)
+
+        return new_records, target_kind, target_sp
+
     def insert_box(
         self,
         index: int,
@@ -691,26 +724,20 @@ class StoryDocument:
             vc = snapshot.get("voice_cue", "")
             kd = snapshot.get("kind", "print" if sp else "tag")
             texts = snapshot.get("seg_texts") or [snapshot.get("clean_text", "")]
+            raw_b = snapshot.get("raw_breaks")
             extra = snapshot.get("extra_args")
-            snap = BoxSnapshot(speaker=sp, voice_cue=vc, kind=kd, seg_texts=texts, extra_args=extra)
+            snap = BoxSnapshot(
+                speaker=sp,
+                voice_cue=vc,
+                kind=kd,
+                seg_texts=texts,
+                raw_breaks=raw_b,
+                extra_args=extra,
+            )
         else:
             snap = snapshot
 
-        # Build records for the new box
-        new_records: List[Record] = []
-        is_print = (snap.kind == "print" and bool(snap.speaker))
-
-        if snap.voice_cue:
-            new_records.append(Record(cmd_id=12, cmd_name="touch", args=[snap.voice_cue]))
-
-        for k, seg_tx in enumerate(snap.seg_texts):
-            norm_tx = xuat_to_game(seg_tx, self.break_char)
-            ext = (snap.extra_args[k] if snap.extra_args and k < len(snap.extra_args) else [])
-            if is_print:
-                r = Record(cmd_id=6, cmd_name="print", args=[snap.speaker, norm_tx] + ext)
-            else:
-                r = Record(cmd_id=35, cmd_name="tag", args=[norm_tx] + ext)
-            new_records.append(r)
+        new_records, _, _ = self._records_from_snapshot(snap)
 
         if not self.boxes:
             # Document has no boxes yet: append records
@@ -735,6 +762,76 @@ class StoryDocument:
         self._rebuild_boxes()
         target_box_idx = max(0, min(index, len(self.boxes) - 1))
         return self.boxes[target_box_idx]
+
+    def replace_box(self, box_index: int, snapshot: BoxSnapshot) -> BoxSnapshot:
+        """
+        Replace the box at `box_index` in-place from all 6 fields of `snapshot`,
+        preserving surrounding interstitial commands and box separation (QW-B01).
+        Returns the complete original BoxSnapshot captured prior to mutation.
+        """
+        if not (0 <= box_index < len(self.boxes)):
+            raise IndexError(f"Box index {box_index} out of range (0-{len(self.boxes)-1})")
+        if not isinstance(snapshot, BoxSnapshot):
+            raise TypeError("snapshot must be a BoxSnapshot")
+        if snapshot.kind not in ("print", "tag"):
+            raise ValueError(f"Unknown snapshot kind: {snapshot.kind!r}")
+        if not snapshot.seg_texts:
+            raise ValueError("BoxSnapshot.seg_texts must not be empty")
+
+        old_box = self.boxes[box_index]
+        doc_record_uids = {r.uid for r in self.records}
+        for seg in old_box.segs:
+            if seg.record.uid not in doc_record_uids:
+                raise ValueError("Cannot replace box containing records not owned by this document.")
+
+        old_snapshot = BoxSnapshot.from_box(old_box)
+        start_idx, end_idx, _ = self._get_box_record_span(old_box)
+        new_records, target_kind, target_sp = self._records_from_snapshot(snapshot)
+
+        # Preserve separation from preceding/following same-kind/same-speaker boxes (QW-B01)
+        prec_text_cmd = None
+        has_breaker_before = False
+        for i in range(start_idx - 1, -1, -1):
+            r = self.records[i]
+            if r.uid in self.removed_records:
+                continue
+            if r.cmd_id in DEFAULT_BREAKER_IDS:
+                has_breaker_before = True
+                break
+            if r.cmd_name in DEFAULT_TEXT_CMDS:
+                prec_text_cmd = r
+                break
+
+        if prec_text_cmd is not None and not has_breaker_before:
+            prec_kind = prec_text_cmd.cmd_name
+            prec_sp = prec_text_cmd.args[0] if prec_kind == "print" and len(prec_text_cmd.args) >= 2 else ""
+            if prec_kind == target_kind and prec_sp == target_sp:
+                new_records.insert(0, Record(cmd_id=10, cmd_name="touch", args=[]))
+
+        foll_text_cmd = None
+        has_breaker_after = False
+        for i in range(end_idx + 1, len(self.records)):
+            r = self.records[i]
+            if r.uid in self.removed_records:
+                continue
+            if r.cmd_id in DEFAULT_BREAKER_IDS:
+                has_breaker_after = True
+                break
+            if r.cmd_name in DEFAULT_TEXT_CMDS:
+                foll_text_cmd = r
+                break
+
+        if foll_text_cmd is not None and not has_breaker_after:
+            foll_kind = foll_text_cmd.cmd_name
+            foll_sp = foll_text_cmd.args[0] if foll_kind == "print" and len(foll_text_cmd.args) >= 2 else ""
+            if foll_kind == target_kind and foll_sp == target_sp:
+                new_records.append(Record(cmd_id=10, cmd_name="touch", args=[]))
+
+        self.records[start_idx : end_idx + 1] = new_records
+        self.prune_removed_records()
+        self._collapse_duplicate_breakers()
+        self._rebuild_boxes()
+        return old_snapshot
 
     def delete_boxes(self, indices: List[int]) -> List[BoxSnapshot]:
         """

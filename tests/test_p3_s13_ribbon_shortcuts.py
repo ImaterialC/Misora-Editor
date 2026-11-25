@@ -139,53 +139,59 @@ class TestP3S13RibbonShortcuts(unittest.TestCase):
         self.assertEqual(doc.boxes[0].clean_text, "[b]Yabai desu ne![/b]")
         self.assertTrue(self.app.undo_journal.can_undo(), "Undo journal must record delta on first click")
 
-        # --- Subtest 2: Continuous View card targeting ---
+        # --- Subtest 2: All Script (Technique A) selection + jump & ribbon/size commit ---
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
+        self.app.update_idletasks()
 
-        # Ensure cards exist and card 1 is selected
-        self.assertIn(1, self.app._card_widgets, "Card 1 must exist in Continuous View")
-        self.app.current_box_idx = 1
-        card1 = self.app._get_card_text_widget(1)
-        card1.focus_set()
-        card1.tag_add("sel", "1.0", "end-1c")
+        # Technique A renders inside single read-only txt_all_script with block map
+        self.assertEqual(self.app._card_widgets, {}, "Technique A must not create per-box card widgets")
+        self.assertIn(1, self.app._all_script_block_ranges, "Box 1 must exist in All Script block map")
+        s_ln, _ = self.app._all_script_block_ranges[1]
+        self.app._on_all_script_click_at_index(f"{s_ln}.0")
+        self.assertEqual(self.app.current_box_idx, 1)
 
         # Clear hidden txt_continuous to verify it is NOT polluted
         self.app.txt_continuous.delete("1.0", tk.END)
 
-        # Bold format on card 1
+        # Jump to Dialogue View for editing Box 1 and apply bold + font size
+        self.app._on_all_script_activate_at_index(f"{s_ln}.0")
+        self.app.update_idletasks()
+        self.assertFalse(self.app.var_continuous_view.get())
+        self.app.txt_dialogue.focus_set()
+        self.app.txt_dialogue.tag_add("sel", "1.0", "end-1c")
         self.app.apply_ngui_wrapper("[b]", "[/b]")
 
-        self.assertEqual(card1.get("1.0", "end-1c"), "[b]Baka![/b]",
-                         "Active card text widget must be updated by apply_ngui_wrapper in Continuous View")
+        self.assertEqual(self.app.txt_dialogue.get("1.0", "end-1c"), "[b]Baka![/b]",
+                         "Dialogue editor must be updated by apply_ngui_wrapper")
         self.assertEqual(doc.boxes[1].clean_text, "[b]Baka![/b]",
-                         "AST box 1 clean_text must be updated in Continuous View")
+                         "AST box 1 clean_text must be updated")
         self.assertEqual(self.app.txt_continuous.get("1.0", "end-1c"), "",
-                         "Hidden txt_continuous fallback widget must NOT be modified when editing cards")
+                         "Hidden txt_continuous fallback widget must NOT be modified")
 
-        # Font size on card 1
-        card1.tag_add("sel", "1.0", "end-1c")
+        # Font size on box 1
+        self.app.txt_dialogue.tag_add("sel", "1.0", "end-1c")
         self.app.on_insert_font_size("16")
 
-        self.assertEqual(card1.get("1.0", "end-1c"), "<size=16>[b]Baka![/b]</size>",
-                         "Active card text widget must receive size tag from on_insert_font_size")
+        self.assertEqual(self.app.txt_dialogue.get("1.0", "end-1c"), "<size=16>[b]Baka![/b]</size>",
+                         "Dialogue editor must receive size tag from on_insert_font_size")
         self.assertEqual(doc.boxes[1].clean_text, "<size=16>[b]Baka![/b]</size>",
                          "AST box 1 clean_text must receive size tag from on_insert_font_size commit")
 
-        # --- Subtest 3: Locked Box Safeguard ---
+        # --- Subtest 3: Locked Box Safeguard (in All Script mode too) ---
+        self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
         self.app.current_box_idx = 1
         self.app.on_toggle_lock_current_box()
         self.assertTrue(self.app.is_box_locked(1), "Box 1 should now be locked")
 
-        card1 = self.app._get_card_text_widget(1)
-        before_lock_text = card1.get("1.0", "end-1c")
-        card1.tag_add("sel", "1.0", "end-1c")
+        before_lock_text = doc.boxes[1].clean_text
         self.app.apply_ngui_wrapper("[i]", "[/i]")
-        self.assertEqual(card1.get("1.0", "end-1c"), before_lock_text,
+        self.assertEqual(doc.boxes[1].clean_text, before_lock_text,
                          "Locked box text must NOT be mutated by apply_ngui_wrapper")
 
         self.app.on_insert_font_size("18")
-        self.assertEqual(card1.get("1.0", "end-1c"), before_lock_text,
+        self.assertEqual(doc.boxes[1].clean_text, before_lock_text,
                          "Locked box text must NOT be mutated by on_insert_font_size")
 
     # -------------------------------------------------------------------------

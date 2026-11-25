@@ -132,50 +132,48 @@ class TestP3S15SelectionDrawerOpen(unittest.TestCase):
             "Checking Box 1 and Box 3 in Dialogue view must yield _selected_boxes == {0, 2}"
         )
 
-        # Part 2: All Script (Continuous View) Card #0 & Reserved Lock Slot
+        # Part 2: All Script (Technique A) Box #0 inline Select Box & Reserved Lock Slot
         self.app.var_continuous_view.set(True)
         self.app._update_views()
         self.app.update()
 
-        # Card #0 must have Select Box checkbox
-        self.assertIn(-1, self.app._card_widgets, "Card #0 must be present in _card_widgets")
-        card_0 = self.app._card_widgets[-1]
-        self.assertTrue(
-            "cb_sel" in card_0 or hasattr(self.app, "_card0_cb_sel") or any(
-                isinstance(w, type(self.app.cb_dialogue_select)) for w in card_0["hdr"].winfo_children()
-            ),
-            "Card #0 must have Select Box checkbutton in All Script view"
-        )
+        # Box #0 (-1) must have inline Select Box slot in txt_all_script
+        self.assertIn(-1, self.app._all_script_block_ranges, "Box #0 must be present in All Script block map")
+        self.assertIn(-1, self.app._all_script_sel_ranges, "Box #0 must have inline Select Box slot")
 
-        # Check Card 1 lock icon position with Select Box ON
-        card_1 = self.app._card_widgets[0]
-        self.assertIn("lbl_lock", card_1, "card_1 must have lbl_lock widget registered")
-        lbl_lock = card_1["lbl_lock"]
+        # Check Box 1 lock glyph horizontal position with Select Box ON
+        self.assertIn(0, self.app._all_script_lock_ranges, "Box 1 must have inline lock slot registered")
+        lock_s_on, _ = self.app._all_script_lock_ranges[0]
+        sel_s_on, _ = self.app._all_script_sel_ranges[0]
+        self.app.txt_all_script.see(lock_s_on)
         self.app.update()
-        lock_x_on = lbl_lock.winfo_x()
-        self.assertGreater(lock_x_on, 0, "lbl_lock must have positive x coordinate")
+        lock_bbox_on = self.app.txt_all_script.bbox(lock_s_on)
+        self.assertIsNotNone(lock_bbox_on, "Lock glyph must be visible")
+        lock_x_on = lock_bbox_on[0]
+        self.assertGreater(lock_x_on, 0, "Lock glyph must have positive x coordinate")
 
         # Toggle Select Box Mode OFF
         self.app.var_select_box_mode.set(False)
         self.app._on_toggle_select_box_mode()
         self.app.update()
 
-        card_1_off = self.app._card_widgets[0]
-        lbl_lock_off = card_1_off["lbl_lock"]
-        lock_x_off = lbl_lock_off.winfo_x()
+        lock_s_off, _ = self.app._all_script_lock_ranges[0]
+        sel_s_off, _ = self.app._all_script_sel_ranges[0]
+        lock_bbox_off = self.app.txt_all_script.bbox(lock_s_off)
+        sel_bbox_off = self.app.txt_all_script.bbox(sel_s_off)
+        self.assertIsNotNone(lock_bbox_off)
+        self.assertIsNotNone(sel_bbox_off)
+        lock_x_off = lock_bbox_off[0]
 
         # Both x coordinates must be strictly equal (zero horizontal shifting)
         self.assertEqual(
             lock_x_on, lock_x_off,
             f"Lock icon horizontal position must not shift when Select Box mode toggles! (ON: {lock_x_on}, OFF: {lock_x_off})"
         )
-
-        # Verify lock icon sits immediately to the right of checkbox slot
-        self.assertIn("slot_cb", card_1_off, "card_1_off must have slot_cb registered")
-        slot_w = card_1_off["slot_cb"].winfo_width()
-        self.assertGreaterEqual(
-            lock_x_off, slot_w,
-            f"Lock icon (x={lock_x_off}) must sit right of checkbox slot (w={slot_w})"
+        # Verify lock icon sits to the right of checkbox slot
+        self.assertGreater(
+            lock_x_off, sel_bbox_off[0],
+            f"Lock icon (x={lock_x_off}) must sit right of checkbox slot (x={sel_bbox_off[0]})"
         )
 
     # -------------------------------------------------------------------------

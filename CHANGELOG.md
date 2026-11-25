@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 
+### S03 (v1.4.3) — All Script Technique A Overhaul (`U08`, `U-7`), Leaked 3rd Window Fix, Precision Priconne Preview (`U-5`), & Lossless `BoxSnapshot` Paste Insert/Replace (`4.1`)
+- **Leaked 3rd Window & Redundant Rebuild Fixes (`misora.py`, `U08`):**
+  - Updated `_update_empty_state_visibility()` to inspect `var_continuous_view` before packing `gd_scroll_wrap` or `continuous_wrap`, preventing Dialogue View from leaking below All Script above Raw Commands.
+  - Eliminated unconditional `_render_continuous_view()` rebuilds in `on_box_new()` and `_on_card_paste_caret()`, removed duplicate `_sync_clean_view_to_current_box()` calls in `on_box_cut()` and `on_box_paste()`, and committed `on_text_cut()` synchronously so Ribbon Cut persists immediately across navigation.
+- **All Script Technique A Overhaul (`misora.py`, `U08`, `U-7`):**
+  - Replaced per-box `tk.Frame`/`tk.Text` card widget explosion in `_render_continuous_view()` with **Technique A** inside a single read-only `tk.Text` (`self.txt_all_script`, keeping `self.txt_continuous` intact as editable plain-text fallback).
+  - Maintained deterministic block map (`_all_script_block_ranges`, `_all_script_line_to_box`), in-place single-click selection & header/Raw/MTL sync, double-click/`Enter` jump to Dialogue View (preserving `is_box0_active` for Box 0), and fixed-width inline Select Box & Lock slots that update in-place without horizontal shifting.
+- **Clean-Room Priconne Preview Redesign (`assets/preview_frames.py`, `assets/__init__.py`, `misora.py`, `U-5`):**
+  - Added Pillow supersampled anti-aliased frame/badge generator with bounded root-scoped cache (`prune_preview_cache()` on `destroy()`), zero copyrighted `AtlasAdv` sprites (`NO-02`).
+  - **Dialogue Preview:** Warm cream-white rounded capsule (`#F8F6F0`), thin champagne-gold border (`#C8A86B`), inner rim, pink white-outlined downward triangle (`▼`), **no nameplate for narration**, `50d x 3` safe interior with `wrap="none"` visible bleed and `_sweep_cstyle_tags()`.
+  - **All Script Preview:** Soft warm-gray canvas (`#F4F2ED`), rounded white card caps (`#FFFFFF`, `#B8BCCA`), steel-blue bold speaker heading (`#2D599E` / `'Narration'`), pale-blue dotted divider rule, blue speaker badge for voiced lines, compiled NGUI rich text (`wrap="none"`), and overflow highlighting.
+- **Lossless Native Paste Box Insert vs Replace (`core/story_ast.py`, `core/undo_journal.py`, `core/__init__.py`, `misora.py`, `4.1`, `AMD-05`):**
+  - Added `StoryDocument.replace_box(box_index, snapshot)` preserving all 6 `BoxSnapshot` fields (`speaker`, `voice_cue`, `kind`, `seg_texts`, `raw_breaks`, `extra_args`), surrounding commands, and adjacent narration separation (`QW-B01`).
+  - Added `BoxSnapshotReplaceDelta` in `core/undo_journal.py` and handled forward/reverse application in `MisoraApp._apply_delta()`.
+  - Extended `on_box_paste(confirm=True, mode=None)` with a 3-way modal chooser (`Insert after Box #N` / `Replace Box #N..#M` / `Cancel`), pre-mutation validation & staging, transactional rollback on failure, locked-target skipping, and excess-block clamping.
+- **Tests & Versioning (`__init__.py`, `tests/`):**
+  - Bumped `__version__` to `"1.4.3"`. Added `tests/test_v15_s03_all_script_preview_paste.py` (6 failing-first Defect Probes + 4 Regression Guards) and updated S08/S13/S15/S17/S18 continuous-view tests under `AMD-03`.
+
 ### S02 (v1.4.2) — Font Policy & Custom Loader (`U16`–`U18`), Constant Ruler & Overlap Fix (`U19`), Gutter Sync (`U20`), Fast Metrics & Char Indicator (`U06`, `U15`)
 - **Font Manager & Win32 Private Loader (`core/font_manager.py`, `core/__init__.py`, `.gitignore`):**
   - Added pure-Python `FontManager` (stdlib `ctypes`/`struct`/`pathlib`, zero implicit Tk root) supporting strictly 2 built-in dialogue font presets: `Global — Nunito Bold` (resolving `Nunito Bold` / `Nunito` bold / `Segoe UI` fallback) and `Japanese — nintendoP_Humming-E_002pr` (resolving `nintendoP_Humming-E_002pr` / `Yu Gothic UI` / `Meiryo UI` fallback).

@@ -350,18 +350,15 @@ class TestP3S08SearchRootsFocus(unittest.TestCase):
         self.assertEqual(len(updated_gutter), 4,
                          f"_on_dialogue_edited must call _update_gutter_clean(); expected 4 lines, got {len(updated_gutter)}")
 
-        # 3. No-op KeyRelease in card and Box 0 triggers 0 _refresh_opened_files_list calls
+        # 3. No-op KeyRelease in All Script (txt_all_script) and Box 0 triggers 0 _refresh_opened_files_list calls
         self.app.var_continuous_view.set(True)
         self.app._render_continuous_view()
-        card_txt = self.app._card_widgets[1]["txt"]
+        self.app.update_idletasks()
         with patch.object(self.app, "_refresh_opened_files_list") as spy_refresh:
-            # Simulate arrow key in card (text unchanged)
-            ret_card = self.app._on_card_text_edited(1, card_txt, None)
-            self.assertFalse(ret_card, "_on_card_text_edited must return False when text is unchanged")
-
-            self.app._commit_widget_edit(card_txt)
+            # Simulate no-op edit commit in All Script (Technique A single read-only txt_all_script)
+            self.app._commit_widget_edit(self.app.txt_all_script)
             self.assertEqual(spy_refresh.call_count, 0,
-                             "Arrow key in card text widget must not trigger _refresh_opened_files_list")
+                             "No-op edit commit in All Script must not trigger _refresh_opened_files_list")
 
             # Simulate arrow key in Box 0 synopsis
             self.app.is_box0_active = True
