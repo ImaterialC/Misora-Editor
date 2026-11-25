@@ -3,9 +3,9 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.5 — S05)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.5"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `92dd3750f1e0c7c2a658e3b919c4c527fb966c03` (+ pre-existing local S04 test files).
+Target release: v1.5.0 (Current session build: v1.4.6 — S06)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.6"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `d7eb22ca36d74a1b3c13f48750f7bdb2088b2944` (+ pre-existing local S04/S05 test working-tree changes).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,17 +41,15 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S05 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s05_speaker_console_about -v
-Result: Ran 7 tests in 20.6s (7 pass, 0 failures, 0 errors, exit code 0)
-
-py -3.12 -m unittest tests.test_v15_s05_speaker_console_about tests.test_phase4_import_export_preview tests.test_s7_undo_speaker_safety -v
-Result: Ran 22 tests in 23.460s (22 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S06 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s06_tools_word_wrap -v
+Result: Ran 8 tests in 24.596s (8 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 388 tests in 544.971s across 50 modules (345 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.5 bump; 0 S05 regressions)
+Result: Ran 396 tests in 486.120s across 51 modules (353 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.6 bump; 0 S06 regressions)
 
-Test suites included in the 344 tests (exact disk discovery):
+Test suites included in the 396 tests (exact disk discovery):
+  tests/test_v15_s06_tools_word_wrap.py   — 8 S06 Tools menu, pure-Python NGUI/grapheme/kinsoku word wrap, locks/JP-keys/multi-segment single-batch Undo, and XUAT/Script opt-in wrap tests (all pass)
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
   tests/test_p3_s22_import_xuat.py          — 4 S22 unified core/xuat_index.py, O(1) MTL cache, & floating ImportFromXUATDialog (paired 3x50 read-only, duplicates, lock/skip, Pre-Apply prompt, atomic Undo) tests (all pass)
   tests/test_p3_s21_mtl_drawer_all_script.py — 3 S21 All Script MTL drawer (exact 2 tk.Text widgets, 5 static status tags, Translate All / Apply All lock & box.uid batch) tests (all pass)
@@ -115,6 +113,19 @@ Test suites included in the 344 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S06 (`v1.4.6`) — Top-Level `Tools` Menu & Lossless Pixel-Calibrated Auto Word Wrap (`U07`, `4.5`) (2026-11-26)
+- **Pure-Python Lossless Word Wrap (`core/word_wrap.py`, `core/__init__.py`, `U07`):**
+  - Added zero-Tkinter `wrap_text()`, `iter_graphemes()`, and `WrapResult` using `core.ngui_tags` (`NGUI_TOKEN_RE`, `RUBY_RE`, `PLACEHOLDER_RE`) as single source of truth (`AGENTS.md` §19).
+  - Atomic NGUI tags (`0px`), `[rub:ruby]base[/rub]` (`base` width), `{playername}`/`{N}` (`'PlayerName'` proxy width), Unicode grapheme clusters (combining marks `Mn`/`Mc`/`Me`, variation selectors, ZWJ), safe literal fallback for unclosed/malformed tags, intentional whitespace preservation (collapsing only the single break-point space replaced by `\n`), opening/closing tag orphan guards, Latin word-boundary + single-token hard-break fallback, CJK/JP kinsoku rules, O(1) fast path + binary search, and `still_overflows_lines` / `still_overflows_width` reporting.
+- **Top-Level `Tools` Menu & `AutoWordWrapDialog` (`misora.py`, `U07`):**
+  - Placed `Tools` immediately right of `View` in `_build_menu()` with `Auto Word Wrap...` opening modal `AutoWordWrapDialog` (`Current Box` / `Selected Boxes (N)` / `All Boxes in Document`, default `Preserve existing line breaks` vs `Reflow all paragraphs`).
+  - `MisoraApp.apply_auto_word_wrap()` calibrates active editor font measure against constant `50d` `Nunito Bold` (`_get_ruler_measure_font()`), skips `is_box_locked()` boxes, preserves multi-segment structure (`old_seg_texts`/`new_seg_texts` via `game_to_xuat`), preserves immutable JP keys (`_original_jp_by_uid` / `sync_manager.jp_source_cache`), commits in ONE Undo batch (`BoxEditDelta(..., source="word_wrap")`), refreshes views/overflow indicator, and reports `Wrapped X | Skipped Y locked | Z still >3 lines`.
+- **Opt-In Import Auto Word Wrap (`misora.py`, `4.5`):**
+  - Added default-OFF `'Auto Word Wrap imported lines to 50d x 3'` opt-in checkboxes to `ImportFromXUATDialog` and `ScriptPastePreviewDialog` (with dynamic preview update on toggle), wrapping unlocked targets prior to `inject_box()` / `apply_to_document()` inside the single import Undo batch and reporting remaining `>3`-line counts.
+- **Manual Windows QA Pending (Project Lead):**
+  - Import a real single-line English XUAT story with `Auto Word Wrap` checked vs unchecked and confirm `50d` ruler compliance and single-step Undo.
+  - Run `Tools -> Auto Word Wrap...` on a mixed JP/EN story with ruby tags, multi-segment boxes, and locked boxes.
 
 ### v1.5 S05 (`v1.4.5`) — Speaker Cyclic Jump & Focus-Safe Autocomplete (`U-3`, `U-4`), Win32 Console Toggle (`U02`), & About Sequential-Frame Support Me Dialog (`U05`) (2026-11-26)
 - **Speaker Cyclic Jump & Focus-Safe Autocomplete (`misora.py`, `U-3`, `U-4`):**

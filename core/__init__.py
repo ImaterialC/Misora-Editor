@@ -33,6 +33,7 @@ from .xuat_index import (
 from .font_manager import (
     FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
 )
+from .word_wrap import WrapResult, iter_graphemes, wrap_text
 
 __all__ = [
     "StoryDocument", "Box", "BoxSnapshot", "Seg", "Record", "game_to_xuat", "xuat_to_game", "norm_search",
@@ -57,4 +58,5 @@ __all__ = [
     "resolve_xuat_text_roots", "build_xuat_index", "build_xuat_index_async",
     "analyze_story_matches",
     "FontManager", "PRESET_GLOBAL", "PRESET_JP", "BUILTIN_FONT_PRESETS",
+    "WrapResult", "iter_graphemes", "wrap_text",
 ]

@@ -81,6 +81,7 @@ try:
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
+        game_to_xuat, WrapResult, wrap_text,
     )
     from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 except ImportError:
@@ -116,6 +117,7 @@ except ImportError:
         XuatIndex, build_xuat_index, build_xuat_index_async, resolve_xuat_text_roots,
         analyze_story_matches, normalize_xuat_key,
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
+        game_to_xuat, WrapResult, wrap_text,
     )
     from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
 
@@ -4031,6 +4033,21 @@ class MisoraApp(tk.Tk):
         )
         menubar.add_cascade(label="View", menu=view_menu)
         self._all_menus.append(view_menu)
+
+        self.tools_menu = tools_menu = tk.Menu(
+            menubar,
+            tearoff=0,
+            bg=t["bg_panel"],
+            fg=panel_fg,
+            activebackground=t["misora_pink"],
+            activeforeground=accent_fg,
+        )
+        tools_menu.add_command(
+            label="Auto Word Wrap...",
+            command=self.on_open_auto_word_wrap,
+        )
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+        self._all_menus.append(tools_menu)
 
         search_menu = tk.Menu(menubar, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
         search_menu.add_command(label="Find...", command=self.on_show_find, accelerator="Ctrl+F")
@@ -16588,6 +16605,7 @@ class MisoraApp(tk.Tk):
         script_text: str,
         source_label: str = "Script Paste",
         confirm: bool = True,
+        auto_word_wrap: bool = False,
     ) -> bool:
         """Unified method to parse, preview, and atomically apply script content to the open document (Phase 4 / Phase 5)."""
         if not self.current_doc or not self.current_doc.boxes:
@@ -16654,6 +16672,7 @@ class MisoraApp(tk.Tk):
 
         apply_speakers = any(bool(b.speaker.strip()) for _, b in targets)
         apply_meta = not result.metadata.is_empty()
+        wrap_enabled = bool(auto_word_wrap)
 
         if confirm:
             # Headless / mocked test compatibility check
@@ -16692,21 +16711,55 @@ class MisoraApp(tk.Tk):
                     return False
                 apply_speakers = dlg.apply_speakers
                 apply_meta = dlg.apply_metadata
+                wrap_enabled = bool(getattr(dlg, "auto_word_wrap", False))
 
         # Atomic commit via batch undo
         self._commit_widget_edit()
-        locked_set = getattr(self, "_locked_boxes", set())
+        locked_set = {
+            idx for idx in range(total_boxes) if self.is_box_locked(idx)
+        }
         skipped_locked = 0
+        still_over_3 = 0
+
+        effective_result = result
+        effective_targets = targets
+        if wrap_enabled:
+            measure_fn, safe_w = self._get_word_wrap_params()
+            wrapped_blocks: List[DialogueBlock] = []
+            for blk in result.blocks:
+                w_res = wrap_text(blk.text, measure_fn, safe_w, reflow_existing_breaks=False)
+                wrapped_blocks.append(
+                    DialogueBlock(
+                        speaker=blk.speaker,
+                        text=w_res.wrapped_text,
+                        is_narration=blk.is_narration,
+                        index=blk.index,
+                        raw_header=blk.raw_header,
+                    )
+                )
+            effective_result = ParseResult(
+                blocks=wrapped_blocks,
+                metadata=result.metadata,
+                is_sparse=result.is_sparse,
+                format=result.format,
+                warnings=list(result.warnings),
+            )
+            if result.is_sparse:
+                effective_targets = [
+                    (blk.index - 1, blk) for blk in wrapped_blocks if blk.index is not None
+                ]
+            else:
+                effective_targets = [(start_idx + k, wrapped_blocks[k]) for k in range(count)]
 
         self.undo_journal.begin_batch(f"Apply Script ({source_label})")
         try:
             # Apply metadata if requested and present
-            if apply_meta and not result.metadata.is_empty():
+            if apply_meta and not effective_result.metadata.is_empty():
                 old_meta = self.current_doc.get_metadata()
                 self.current_doc.set_metadata(
-                    title=result.metadata.title,
-                    subtitle=result.metadata.subtitle,
-                    summary=result.metadata.summary,
+                    title=effective_result.metadata.title,
+                    subtitle=effective_result.metadata.subtitle,
+                    summary=effective_result.metadata.summary,
                 )
                 self.undo_journal.record(
                     MetadataDelta(
@@ -16714,14 +16767,14 @@ class MisoraApp(tk.Tk):
                         old_title=old_meta.get("title", ""),
                         old_subtitle=old_meta.get("subtitle", ""),
                         old_summary=old_meta.get("summary", ""),
-                        new_title=result.metadata.title or "",
-                        new_subtitle=result.metadata.subtitle or "",
-                        new_summary=result.metadata.summary or "",
+                        new_title=effective_result.metadata.title or "",
+                        new_subtitle=effective_result.metadata.subtitle or "",
+                        new_summary=effective_result.metadata.summary or "",
                     )
                 )
 
             # Record box-level deltas in undo journal
-            for b_idx, new_blk in targets:
+            for b_idx, new_blk in effective_targets:
                 if b_idx in locked_set:
                     skipped_locked += 1
                     continue
@@ -16730,6 +16783,8 @@ class MisoraApp(tk.Tk):
                 old_uid = old_box.segs[0].record.uid if old_box.segs and old_box.segs[0].record else old_box.uid
                 old_segs = [s.text for s in old_box.segs] if len(old_box.segs) > 1 else None
                 new_segs = [new_blk.text] if len(old_box.segs) > 1 else None
+                if wrap_enabled and self._measure_dialogue_metrics(new_blk.text)["has_line_overflow"]:
+                    still_over_3 += 1
                 self.undo_journal.record(
                     BoxEditDelta(
                         box_index=b_idx,
@@ -16747,14 +16802,14 @@ class MisoraApp(tk.Tk):
 
             applied_count = apply_to_document(
                 self.current_doc,
-                result,
+                effective_result,
                 mode="replace",
-                start_box_index=start_idx if not result.is_sparse else 0,
+                start_box_index=start_idx if not effective_result.is_sparse else 0,
                 apply_speakers=apply_speakers,
                 apply_metadata=apply_meta,
                 locked_indices=locked_set,
             )
-            for b_idx, _ in targets:
+            for b_idx, _ in effective_targets:
                 if b_idx not in locked_set:
                     self._modified_boxes.add(b_idx)
         finally:
@@ -16766,6 +16821,8 @@ class MisoraApp(tk.Tk):
         msg = f"✓ Applied script across {applied_count} boxes"
         if skipped_locked > 0:
             msg += f" ({skipped_locked} locked boxes preserved)"
+        if wrap_enabled:
+            msg += f" | {still_over_3} still >3 lines"
         self.show_toast(msg)
         self.lbl_status.config(text=f"Applied {source_label} across {applied_count} boxes.")
         return True
@@ -16963,6 +17020,160 @@ class MisoraApp(tk.Tk):
 
     # Universal alias for cross-box script pasting
     on_apply_translation_clipboard = on_paste_cross_box
+
+    def _get_word_wrap_params(self) -> Tuple[Callable[[str], int], int]:
+        """Return (measure_fn, constant_50d_safe_width) calibrated to Nunito Bold 50d."""
+        f = self._get_dialogue_measure_font()
+        rf = self._get_ruler_measure_font()
+        safe_w = max(1, int(rf.measure("1234567890" * 5)))
+        return f.measure, safe_w
+
+    def apply_auto_word_wrap(
+        self,
+        scope: str = "all",
+        reflow_existing_breaks: bool = False,
+    ) -> Dict[str, int]:
+        """Apply lossless pixel-calibrated Auto Word Wrap across selected dialogue scope in ONE Undo batch."""
+        stats = {"wrapped": 0, "skipped_locked": 0, "still_over_3": 0, "total_targets": 0}
+        doc = self.current_doc
+        if not doc or not doc.boxes:
+            self.show_toast("No story document loaded")
+            return stats
+
+        self._commit_widget_edit()
+        total = len(doc.boxes)
+        if scope == "current":
+            if getattr(self, "is_box0_active", False):
+                self.show_toast("Box 0 metadata cannot be word-wrapped.")
+                return stats
+            targets = [self.current_box_idx] if 0 <= self.current_box_idx < total else []
+        elif scope == "selected":
+            targets = sorted(i for i in getattr(self, "_selected_boxes", set()) if 0 <= i < total)
+        else:
+            targets = list(range(total))
+
+        stats["total_targets"] = len(targets)
+        if not targets:
+            self.show_toast("No dialogue boxes selected for Auto Word Wrap.")
+            return stats
+
+        measure_fn, safe_w = self._get_word_wrap_params()
+        wrapped_count = 0
+        skipped_locked = 0
+        still_over_3 = 0
+
+        self.undo_journal.begin_batch("Auto Word Wrap")
+        try:
+            for b_idx in targets:
+                if not (0 <= b_idx < len(doc.boxes)):
+                    continue
+                if self.is_box_locked(b_idx):
+                    skipped_locked += 1
+                    continue
+
+                box = doc.boxes[b_idx]
+                b_uid = _get_box_uid(box)
+                old_sp = box.speaker
+                old_tx = box.clean_text
+
+                if len(box.segs) > 1:
+                    old_segs = [game_to_xuat(s.text) for s in box.segs]
+                    new_segs = [
+                        wrap_text(
+                            seg_tx,
+                            measure_fn,
+                            safe_w,
+                            reflow_existing_breaks=reflow_existing_breaks,
+                        ).wrapped_text
+                        if seg_tx
+                        else ""
+                        for seg_tx in old_segs
+                    ]
+                    if new_segs != old_segs:
+                        joined_tx = "".join(new_segs)
+                        doc.inject_box(b_idx, old_sp, joined_tx, seg_texts=new_segs)
+                        refreshed_box = doc.boxes[b_idx]
+                        committed_tx = refreshed_box.clean_text
+                        committed_new_segs = [game_to_xuat(s.text) for s in refreshed_box.segs]
+                        self.undo_journal.record(
+                            BoxEditDelta(
+                                box_index=b_idx,
+                                old_speaker=old_sp,
+                                new_speaker=old_sp,
+                                old_text=old_tx,
+                                new_text=committed_tx,
+                                file_path=str(self.current_file_path or ""),
+                                box_uid=b_uid,
+                                source="word_wrap",
+                                old_seg_texts=old_segs,
+                                new_seg_texts=committed_new_segs,
+                            )
+                        )
+                        self._modified_boxes.add(b_idx)
+                        if b_uid is not None and hasattr(self, "_modified_box_uids"):
+                            self._modified_box_uids.add(b_uid)
+                        wrapped_count += 1
+                else:
+                    res = wrap_text(
+                        old_tx,
+                        measure_fn,
+                        safe_w,
+                        reflow_existing_breaks=reflow_existing_breaks,
+                    )
+                    if res.changed:
+                        doc.inject_box(b_idx, old_sp, res.wrapped_text)
+                        refreshed_box = doc.boxes[b_idx]
+                        committed_tx = refreshed_box.clean_text
+                        self.undo_journal.record(
+                            BoxEditDelta(
+                                box_index=b_idx,
+                                old_speaker=old_sp,
+                                new_speaker=old_sp,
+                                old_text=old_tx,
+                                new_text=committed_tx,
+                                file_path=str(self.current_file_path or ""),
+                                box_uid=b_uid,
+                                source="word_wrap",
+                                old_seg_texts=None,
+                                new_seg_texts=None,
+                            )
+                        )
+                        self._modified_boxes.add(b_idx)
+                        if b_uid is not None and hasattr(self, "_modified_box_uids"):
+                            self._modified_box_uids.add(b_uid)
+                        wrapped_count += 1
+
+                if self._measure_dialogue_metrics(doc.boxes[b_idx].clean_text)["has_line_overflow"]:
+                    still_over_3 += 1
+        finally:
+            self.undo_journal.end_batch()
+
+        if wrapped_count > 0:
+            self._mark_document_dirty(self.current_file_path)
+            self._dirty_state_changed()
+            self._update_views()
+            self._update_char_overflow_indicator()
+
+        summary = f"Wrapped {wrapped_count} | Skipped {skipped_locked} locked | {still_over_3} still >3 lines"
+        self.show_toast(summary)
+        if hasattr(self, "lbl_status") and self.lbl_status.winfo_exists():
+            self.lbl_status.config(text=summary)
+        return {
+            "wrapped": wrapped_count,
+            "skipped_locked": skipped_locked,
+            "still_over_3": still_over_3,
+            "total_targets": len(targets),
+        }
+
+    def on_open_auto_word_wrap(self) -> Optional["AutoWordWrapDialog"]:
+        """Open the Auto Word Wrap dialog (Tools -> Auto Word Wrap...)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            messagebox.showwarning("No Story Open", "Open a story bundle or text file first.", parent=self)
+            return None
+        self._commit_widget_edit()
+        dlg = AutoWordWrapDialog(self)
+        self._auto_word_wrap_dialog = dlg
+        return dlg
 
     def on_clear_dialogue_skeleton(self) -> None:
         """Clear all dialogue text across all boxes, keeping speaker names and skeleton intact."""
@@ -17502,9 +17713,11 @@ class ScriptPastePreviewDialog(tk.Toplevel):
 
         self.var_apply_speakers = tk.BooleanVar(master=self, value=has_speakers)
         self.var_apply_metadata = tk.BooleanVar(master=self, value=has_meta)
+        self.var_auto_word_wrap = tk.BooleanVar(master=self, value=False)
 
         self.apply_speakers = has_speakers
         self.apply_metadata = has_meta
+        self.auto_word_wrap = False
 
         self._build_ui(t, fg_panel, fg_editor, total_doc_boxes, blocks, has_meta)
 
@@ -17587,7 +17800,15 @@ class ScriptPastePreviewDialog(tk.Toplevel):
                 text="Apply metadata (title / subtitle / summary) to Box 0",
                 variable=self.var_apply_metadata,
             )
-            cb_meta.pack(side="left")
+            cb_meta.pack(side="left", padx=(0, 16))
+
+        cb_wrap = ttk.Checkbutton(
+            opts_frame,
+            text="Auto Word Wrap imported lines to 50d x 3",
+            variable=self.var_auto_word_wrap,
+            command=self._populate_tree,
+        )
+        cb_wrap.pack(side="left")
 
         # 3. Comparison Treeview
         tree_frame = tk.Frame(container, bg=t["bg_editor"], bd=1, relief="solid")
@@ -17662,6 +17883,11 @@ class ScriptPastePreviewDialog(tk.Toplevel):
 
         blocks = self.result.blocks
         apply_speakers = self.var_apply_speakers.get()
+        auto_wrap = bool(self.var_auto_word_wrap.get())
+        measure_fn = None
+        safe_w = 1
+        if auto_wrap:
+            measure_fn, safe_w = self.app._get_word_wrap_params()
 
         if self.result.is_sparse:
             for new_blk in blocks:
@@ -17678,7 +17904,11 @@ class ScriptPastePreviewDialog(tk.Toplevel):
                     new_spk = f"{cur_spk} (keep)"
 
                 cur_txt = " ".join(old_box.clean_text.splitlines())[:80]
-                new_txt = " ".join(new_blk.text.splitlines())[:80]
+                if auto_wrap and measure_fn is not None:
+                    w_txt = wrap_text(new_blk.text, measure_fn, safe_w, reflow_existing_breaks=False).wrapped_text
+                    new_txt = " ↵ ".join(w_txt.splitlines())[:80]
+                else:
+                    new_txt = " ".join(new_blk.text.splitlines())[:80]
                 self.tree.insert("", "end", values=(f"Box {new_blk.index}", cur_spk, new_spk, cur_txt, new_txt))
         else:
             for k in range(self.count):
@@ -17693,13 +17923,18 @@ class ScriptPastePreviewDialog(tk.Toplevel):
                     new_spk = f"{cur_spk} (keep)"
 
                 cur_txt = " ".join(old_box.clean_text.splitlines())[:80]
-                new_txt = " ".join(new_blk.text.splitlines())[:80]
+                if auto_wrap and measure_fn is not None:
+                    w_txt = wrap_text(new_blk.text, measure_fn, safe_w, reflow_existing_breaks=False).wrapped_text
+                    new_txt = " ↵ ".join(w_txt.splitlines())[:80]
+                else:
+                    new_txt = " ".join(new_blk.text.splitlines())[:80]
 
                 self.tree.insert("", "end", values=(f"Box {b_idx + 1}", cur_spk, new_spk, cur_txt, new_txt))
 
     def on_apply(self) -> None:
         self.apply_speakers = self.var_apply_speakers.get()
         self.apply_metadata = self.var_apply_metadata.get()
+        self.auto_word_wrap = bool(self.var_auto_word_wrap.get())
         self.confirmed = True
         safe_grab_release(self)
         self.destroy()
@@ -17708,6 +17943,161 @@ class ScriptPastePreviewDialog(tk.Toplevel):
         self.confirmed = False
         safe_grab_release(self)
         self.destroy()
+
+
+# =============================================================================
+# Auto Word Wrap Dialog (S06 / U07)
+# =============================================================================
+class AutoWordWrapDialog(tk.Toplevel):
+    """Modal configuration dialog for Tools -> Auto Word Wrap... (U07)."""
+
+    def __init__(self, parent: "MisoraApp"):
+        super().__init__(parent)
+        self.app = parent
+        self.applied_stats: Optional[Dict[str, int]] = None
+
+        self.title("Auto Word Wrap (50d x 3)")
+        self.geometry("460x290")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        t = self.app.theme
+        self.configure(bg=t["bg_panel"])
+        apply_window_icon(self)
+
+        doc = self.app.current_doc
+        total_boxes = len(doc.boxes) if doc and doc.boxes else 0
+        sel_count = len([i for i in getattr(self.app, "_selected_boxes", set()) if 0 <= i < total_boxes])
+        is_box0 = bool(getattr(self.app, "is_box0_active", False))
+
+        default_scope = "selected" if sel_count > 0 else ("all" if is_box0 else "current")
+        self.var_scope = tk.StringVar(master=self, value=default_scope)
+        self.var_preserve_breaks = tk.BooleanVar(master=self, value=True)
+
+        self._build_ui(t, sel_count, is_box0, total_boxes)
+
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+            py = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda _e=None: self._on_close())
+
+    def _build_ui(self, t: dict, sel_count: int, is_box0: bool, total_boxes: int) -> None:
+        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
+        container = tk.Frame(self, bg=t["bg_panel"], padx=16, pady=12)
+        container.pack(fill="both", expand=True)
+
+        tk.Label(
+            container,
+            text="Auto Word Wrap to 50d x 3",
+            font=("Segoe UI", 11, "bold"),
+            bg=t["bg_panel"],
+            fg=t["misora_pink"],
+        ).pack(anchor="w")
+
+        tk.Label(
+            container,
+            text="Wraps overflowing lines losslessly while skipping 🔒 locked boxes.",
+            font=("Segoe UI", 8),
+            bg=t["bg_panel"],
+            fg=t["fg_muted"],
+        ).pack(anchor="w", pady=(2, 10))
+
+        scope_box = tk.LabelFrame(
+            container,
+            text="Target Scope",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=6,
+        )
+        scope_box.pack(fill="x", pady=(0, 8))
+
+        rb_cur = ttk.Radiobutton(
+            scope_box,
+            text=f"Current Box (#{self.app.current_box_idx + 1})" if not is_box0 else "Current Box (Box 0 metadata skipped)",
+            variable=self.var_scope,
+            value="current",
+            style="Panel.TRadiobutton",
+            state="disabled" if (is_box0 or total_boxes == 0) else "normal",
+        )
+        rb_cur.pack(anchor="w", pady=1)
+
+        rb_sel = ttk.Radiobutton(
+            scope_box,
+            text=f"Selected Boxes ({sel_count})",
+            variable=self.var_scope,
+            value="selected",
+            style="Panel.TRadiobutton",
+            state="disabled" if sel_count == 0 else "normal",
+        )
+        rb_sel.pack(anchor="w", pady=1)
+
+        rb_all = ttk.Radiobutton(
+            scope_box,
+            text=f"All Boxes in Document ({total_boxes})",
+            variable=self.var_scope,
+            value="all",
+            style="Panel.TRadiobutton",
+            state="disabled" if total_boxes == 0 else "normal",
+        )
+        rb_all.pack(anchor="w", pady=1)
+
+        opt_box = tk.LabelFrame(
+            container,
+            text="Line Break Handling",
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
+            pady=6,
+        )
+        opt_box.pack(fill="x", pady=(0, 10))
+
+        ttk.Radiobutton(
+            opt_box,
+            text="Preserve existing line breaks (wrap long lines only)",
+            variable=self.var_preserve_breaks,
+            value=True,
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w", pady=1)
+
+        ttk.Radiobutton(
+            opt_box,
+            text="Reflow all paragraphs",
+            variable=self.var_preserve_breaks,
+            value=False,
+            style="Panel.TRadiobutton",
+        ).pack(anchor="w", pady=1)
+
+        btn_row = tk.Frame(container, bg=t["bg_panel"])
+        btn_row.pack(fill="x", side="bottom")
+
+        ttk.Button(btn_row, text="Cancel", style="TButton", command=self._on_close).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_row, text="Apply Wrap", style="Pink.TButton", command=self._on_apply).pack(side="right")
+
+    def _on_apply(self) -> None:
+        scope = self.var_scope.get()
+        reflow = not bool(self.var_preserve_breaks.get())
+        self.applied_stats = self.app.apply_auto_word_wrap(
+            scope=scope,
+            reflow_existing_breaks=reflow,
+        )
+        self._on_close()
+
+    def _on_close(self) -> None:
+        if getattr(self.app, "_auto_word_wrap_dialog", None) is self:
+            self.app._auto_word_wrap_dialog = None
+        safe_grab_release(self)
+        if self.winfo_exists():
+            self.destroy()
 
 
 # =============================================================================
@@ -17741,6 +18131,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         apply_window_icon(self)
 
         self.var_translate_speakers = tk.BooleanVar(master=self, value=False)
+        self.var_auto_word_wrap = tk.BooleanVar(master=self, value=False)
         self._build_ui()
         self._populate_rows()
 
@@ -17811,6 +18202,20 @@ class ImportFromXUATDialog(tk.Toplevel):
             activeforeground=fg_panel,
         )
         cb_spk.pack(side="right")
+
+        opts_row = tk.Frame(top, bg=t["bg_panel"])
+        opts_row.pack(fill="x", pady=(4, 0))
+        cb_wrap = tk.Checkbutton(
+            opts_row,
+            text="Auto Word Wrap imported lines to 50d x 3",
+            variable=self.var_auto_word_wrap,
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            selectcolor=t["bg_dark"],
+            activebackground=t["bg_panel"],
+            activeforeground=fg_panel,
+        )
+        cb_wrap.pack(side="right")
 
         # Outer scrollable list (single outer vertical scrollbar)
         list_wrap = tk.Frame(self, bg=t["bg_dark"], bd=1, relief="solid")
@@ -18296,19 +18701,33 @@ class ImportFromXUATDialog(tk.Toplevel):
 
         self.app._commit_widget_edit()
 
+        auto_wrap = bool(self.var_auto_word_wrap.get()) if self.var_auto_word_wrap is not None else False
+        measure_fn = None
+        safe_w = 1
+        if auto_wrap:
+            measure_fn, safe_w = self.app._get_word_wrap_params()
+
         applied_count = 0
+        still_over_3 = 0
         self.app.undo_journal.begin_batch("Import from XUAT")
         try:
-            for b_idx, b_uid, new_sp, new_tx in plan:
+            for b_idx, b_uid, new_sp, raw_tx in plan:
                 if not (0 <= b_idx < len(doc.boxes)):
                     continue
                 if self.app.is_box_locked(b_idx):
                     continue
+                new_tx = (
+                    wrap_text(raw_tx, measure_fn, safe_w, reflow_existing_breaks=False).wrapped_text
+                    if (auto_wrap and measure_fn is not None)
+                    else raw_tx
+                )
                 old_box = doc.boxes[b_idx]
                 old_sp = old_box.speaker
                 old_tx = old_box.clean_text
                 if new_sp == old_sp and new_tx == old_tx:
                     continue
+                if auto_wrap and self.app._measure_dialogue_metrics(new_tx)["has_line_overflow"]:
+                    still_over_3 += 1
                 old_segs = [s.text for s in old_box.segs]
                 # Mutate AST first (BUG-13)
                 doc.inject_box(b_idx, new_sp, new_tx)
@@ -18338,7 +18757,10 @@ class ImportFromXUATDialog(tk.Toplevel):
             self.app._mark_document_dirty(self.app.current_file_path)
             self.app._dirty_state_changed()
             self.app._update_views()
-            self.app.show_toast(f"✓ Imported XUAT translations for {applied_count} box(es)")
+            msg = f"✓ Imported XUAT translations for {applied_count} box(es)"
+            if auto_wrap:
+                msg += f" ({still_over_3} still >3 lines)"
+            self.app.show_toast(msg)
         else:
             self.app.show_toast("No changes were applied from XUAT.")
 
@@ -18351,6 +18773,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._filter_buttons.clear()
         self._speaker_matches.clear()
         self.var_translate_speakers = None
+        self.var_auto_word_wrap = None
         try:
             for w in (self.list_canvas, self.rows_frame):
                 if w and w.winfo_exists():
