@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.7`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
 
+### S08 (Release Gate Hold at v1.4.7) — End-to-End Stress QA & Release Gate Verification
+- **Release Gate Hold Decision (`__init__.py` remains `"1.4.7"`):**
+  - Per `U00` and `misora-safety.md` §7, `__version__` is held at `"1.4.7"` until the Project Lead completes manual Windows QA across S01–S07 and confirms/waives the missing proprietary fixture (`storydata_1001005.unity3d`).
+- **Stress & Release Gate Verification Suite (`tests/test_v15_s08_release_gate_stress.py` — `8/8` PASS):**
+  - `test_stress_1_memory_leak_and_env_disposal_open_close_cycles`: 20 open/close cycles release `StoryDocument` weakrefs (`0` alive) and prune `_mtl_all_*`, `_latest_applied_mtl_seq`, and `jp_source_cache` to `0` (`tracemalloc` delta `+34.40 KiB` cycle 5 -> 20; `tracemalloc.stop()` in `finally`).
+  - `test_stress_2_search_cancel_race_and_thread_cleanup`: 5 rapid folder search start/cancel cycles via `on_cancel_search()` leave zero live `_search_thread` workers and empty `search_queue`.
+  - `test_stress_3_500_box_word_wrap_csif_and_binary_roundtrip`: 500-box story survives `apply_auto_word_wrap()`, single-batch Undo/Redo, CSIF `serialize()`/`parse()`, and `to_binary()`/`from_binary()`.
+  - `test_stress_3b_mtl_cancel_pending_futures_and_stale_rejection`: cancelling `Translate All` mid-flight drains `_mtl_all_executor` and `MisoraMTL*` threads to `0` and prevents closed-doc cache repopulation.
+  - `test_stress_4_all_script_technique_a_widget_budget_and_preview_bleed`: 150-box All Script keeps exactly 1 mapped `tk.Text` (`txt_all_script`), `<= 3` total `tk.Text` descendants, 0 `ttk.Treeview` widgets, 150 block ranges, and `wrap="none"` Dialogue Preview (`1436.37 ms` informational benchmark).
+  - `test_stress_5_version_parity_and_no_hardcoded_duplicates`: AST-verified single-source `__version__ == "1.4.7"` across root `__init__.py`, `misora.py`, `core/mtl_engine.py`, and `assets/splash.py`, plus `'Misora: Story Editor'` branding.
+  - `test_guard_1_misora_workspace_v1_schema_and_stable_locks`: validates `.misora` v1 JSON against `WorkspaceSession.to_dict()` (zero drafts, zero blobs, zero `Record.uid`).
+  - `test_guard_2_binary_cmd_35_32_and_empty_arg_sentinel_intact`: verifies `cmd_id == 35`, `cmd_id == 32`, empty-arg `" "` sentinel, adjacent-narration separation, `BoxSnapshot.replace_box()`, and MTL All Script 2-widget contract.
+
 ### S07 (v1.4.7) — Transactional XUAT Post-Import Cleanup, Mandatory Archival Engine, & `Debug > Safety` (`U01`)
 - **Pure-Python Per-File Transactional XUAT Cleanup & Archival Engine (`core/xuat_cleanup.py`, `core/xuat_index.py`, `core/__init__.py`, `U01`):**
   - Added zero-Tkinter, zero-`misora` cleanup and archival engine (`core/xuat_cleanup.py`) with injected `backup_path_fn` callback and pure-Python collision-resistant fallback.

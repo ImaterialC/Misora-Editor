@@ -8,8 +8,8 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-pink.svg" alt="License: MIT"></a>
   <a href="https://github.com/K0lb3/UnityPy"><img src="https://img.shields.io/badge/UnityPy-1.20+-green.svg" alt="UnityPy"></a>
-  <img src="https://img.shields.io/badge/version-1.4.1-brightgreen.svg" alt="Version 1.4.1">
-  <img src="https://img.shields.io/badge/tests-234%20passed-success.svg" alt="234 Tests Passed">
+  <img src="https://img.shields.io/badge/version-1.4.7-brightgreen.svg" alt="Version 1.4.7">
+  <img src="https://img.shields.io/badge/tests-413%20discovered-blue.svg" alt="413 Tests Discovered">
 </p>
 
 > *"A dedicated, zero-pipeline revision editor, multi-scope search engine, and interchange suite for Princess Connect! Re:Dive Unity3D story assets and XUAT translation dictionaries."*

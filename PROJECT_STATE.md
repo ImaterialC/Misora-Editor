@@ -3,9 +3,9 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.7 — S07)
+Target release: v1.5.0 (Current session build: v1.4.7 — S08 Release Gate Hold)
 Current code baseline: root `__init__.py` reports `__version__ = "1.4.7"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `5b0f0147d82ea5098de7a10ff252d43e22fa5eed` (+ pre-existing local S04/S05/S06 test working-tree changes).
+Starting baseline pinned at commit `8935d0a7f4a765e6aacdb2cd50021861efc37ec5` (clean working tree after S07).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,14 +41,15 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S07 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s07_xuat_cleanup_archive -v
-Result: Ran 9 tests in 21.821s (9 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S08 Release Gate Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s08_release_gate_stress -v
+Result: Ran 8 tests in 38.073s (8 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 405 tests in 437.821s across 52 modules (362 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.7 bump; 0 S07 regressions)
+Result: Ran 413 tests in 457.257s across 53 modules (370 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.7 bump; 0 S08 regressions)
 
-Test suites included in the 405 tests (exact disk discovery):
+Test suites included in the 413 tests (exact disk discovery):
+  tests/test_v15_s08_release_gate_stress.py — 8 S08 stress & release-gate tests (20-cycle weakref/tracemalloc +34.40 KiB & 0 cache, 5-cycle search cancel thread/queue cleanup, 500-box wrap+CSIF+binary, MTL cancel/stale rejection, 150-box All Script widget budget & 1436.37 ms benchmark, AST version parity at 1.4.7, .misora v1 schema, cmd_id 35/32/empty sentinel + BoxSnapshot + MTL 2-widget) (all pass)
   tests/test_v15_s07_xuat_cleanup_archive.py — 9 S07 pure-core transactional XUAT cleanup, SHA-256 stale guard, mandatory combined/per-file archival, conservative 3-tier classification, empty-file 2-step delete & Debug > Safety tests (all pass)
   tests/test_v15_s06_tools_word_wrap.py   — 8 S06 Tools menu, pure-Python NGUI/grapheme/kinsoku word wrap, locks/JP-keys/multi-segment single-batch Undo, and XUAT/Script opt-in wrap tests (all pass)
   tests/test_p3_s23_dead_code_cleanup.py   — 4 S23 HYG-08 dead code & misleading label cleanup (removed _update_gutter_cont & BatchTranslateDialog._toggle_pin_top, hyphen gradient label, no CWD picker_error.log, CSIF prompt wording, _update_gutter_clean guard) tests (all pass)
@@ -114,6 +115,38 @@ Test suites included in the 405 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S08 (Release Gate Hold at `v1.4.7`) — End-to-End Stress QA, 100% Traceability Audit, & Release Gate Verification (2026-11-26)
+- **Release Gate Hold (`__version__ = "1.4.7"`):** Version bump to `1.5.0` is intentionally **HELD** until the Project Lead completes manual Windows QA across S01–S07 and explicitly waives/resolves the missing `storydata_1001005.unity3d` fixture blocker (`U00`, `misora-safety.md` §7). Zero new defects were discovered in `misora.py` or `core/*.py` during S08 read-only audit.
+- **Stress & Gate Suite (`tests/test_v15_s08_release_gate_stress.py`, `8/8` PASS in `38.073s`):**
+  - `test_stress_1`: 20 open/close cycles release all `StoryDocument` weakrefs (`0` alive after `gc.collect()`), prune `_mtl_all_results`, `_mtl_all_statuses`, `_mtl_all_errors`, `_mtl_all_req_seqs`, `_latest_applied_mtl_seq`, and `sync_manager.jp_source_cache` to `0`, with `tracemalloc` delta `+34.40 KiB` (cycle 5 -> 20).
+  - `test_stress_2`: 5 rapid folder search start/cancel cycles via `on_cancel_search()` leave `0` live `_search_thread` workers and empty `search_queue`.
+  - `test_stress_3`: 500-box story survives `apply_auto_word_wrap()`, single-batch Undo/Redo, CSIF `serialize()`/`parse()`, and `to_binary()`/`from_binary()`.
+  - `test_stress_3b`: Cancelling `Translate All` mid-flight drains `_mtl_all_executor` and `MisoraMTL*` threads to `0` and prevents closed-document cache repopulation.
+  - `test_stress_4`: 150-box All Script Technique A keeps `1` mapped `tk.Text` (`txt_all_script`), `<=3` total `tk.Text` descendants, `0` `ttk.Treeview` widgets, `150` block ranges, and `wrap="none"` Dialogue Preview (informational timing: `1436.37 ms` on `Windows-11-10.0.26100-SP0`, `Python 3.12.10`, `Tk 8.6`).
+  - `test_stress_5`: AST-verified single-source `__version__ == "1.4.7"` across root `__init__.py`, `misora.py`, `core/mtl_engine.py`, and `assets/splash.py`, plus `'Misora: Story Editor'` window title branding.
+  - `test_guard_1` & `test_guard_2`: `.misora` v1 schema matches `WorkspaceSession.to_dict()` (no drafts/blobs/`Record.uid`), `cmd_id` `35`/`32` and `" "` sentinel preserved, adjacent narration kept separate, lossless `BoxSnapshot.replace_box()`, and MTL All Script 2-widget contract intact.
+- **v1.5 Track Traceability Audit (`S01..S08`):**
+  - `BUG-01..06`, `BONUS-01..03`: `PASS` (automated S01/S08 stress tests green; Windows Task Manager plateau `MANUAL-PENDING`).
+  - `U00`, `U04`: `PASS` (`__version__ = "1.4.7"` single source; `'Misora: Story Editor'` branding).
+  - `U01` (S07): `PASS` automated (`9/9` S07); post-import cleanup / `.txt` warning / `Debug > Safety` `MANUAL-PENDING`.
+  - `U02` (S05), `U05` (S05), `U-3`, `U-4`: `PASS` automated (`7/7` S05); Win32 `F12`, `Service.gif` loop, Speaker jump/autocomplete `MANUAL-PENDING`.
+  - `U03` (S04), `U09..U14`, `U21`, `U22`, `U-1`, `U-2`, `U-6`, `4.2`, `4.4`: `PASS` automated (`8/8` S04); DPI/drawer/theme visual QA `MANUAL-PENDING`.
+  - `U06`, `U15..U20` (S02): `PASS` automated (`8/8` S02); font switching, ruler, and custom `.ttf` drop `MANUAL-PENDING`.
+  - `U07`, `4.5` (S06): `PASS` automated (`8/8` S06); XUAT/Tools word-wrap QA `MANUAL-PENDING`.
+  - `U08`, `U-5`, `U-7`, `4.1` (S03): `PASS` automated (`10/10` S03); All Script / Preview visual match & Paste Box `Insert`/`Replace` `MANUAL-PENDING`.
+  - `BUG-09` (real `storydata_1001005.unity3d` fixture): `BLOCKED` (fixture intentionally excluded from repo).
+- **Manual Windows QA Checklist (Project Lead — `MANUAL-PENDING`):**
+  1. Ribbon Cut persistence after navigation (Dialogue & All Script) (`AGENTS.md` §29).
+  2. Native Paste Box lossless `Insert` vs `Replace` in both views + Undo & Redo (`AGENTS.md` §29).
+  3. All Script & All Script Preview speed and visual match vs Bandicam references (zero 3rd window).
+  4. Font switching (`Global — Nunito Bold` vs `Japanese`) + constant ruler + aligned line numbers + red overflow indicator.
+  5. Layout at 100%, 125%, 150% DPI with repeated Left/Right Drawer minimize/reopen & window resize.
+  6. Speaker cyclic jump (`▼`) + focus-safe Google-style autocomplete + Lock protection.
+  7. Win32 Console toggle (`F12`) under `python.exe` and `pythonw.exe`; About `Support Me` sequential `Service.gif` loop + Ko-fi/Patreon/PayPal.
+  8. Opt-in Auto Word Wrap on Import + manual `Tools -> Auto Word Wrap...`.
+  9. XUAT Post-Import Cleanup, mandatory `.xuat.old` archive (Combined & Per-File), SHA-256 stale check, `.txt` warning, `Debug > Safety` toggle, and 2-step empty file deletion.
+  10. Windows Task Manager / process-memory plateau observation across repeated open/close, Search Cancel, and Translate All.
 
 ### v1.5 S07 (`v1.4.7`) — Transactional XUAT Post-Import Cleanup, Mandatory Archival Engine, & `Debug > Safety` (`U01`) (2026-11-26)
 - **Pure-Python Per-File Transactional Engine (`core/xuat_cleanup.py`, `core/xuat_index.py`, `core/__init__.py`, `U01`):**
