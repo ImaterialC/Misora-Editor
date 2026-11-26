@@ -665,6 +665,81 @@ class TestV15S09CoreFixes54d(unittest.TestCase):
         self.assertEqual(len(doc.boxes), 1)
         self.assertEqual(doc.boxes[0].clean_text, "Locked line")
 
+    # ------------------------------------------------------------------
+    # Guard 4: Post-Autocomplete-Select Focus Restoration (Windows Micro-Fix)
+    # ------------------------------------------------------------------
+    def test_guard_4_post_autocomplete_select_focus_restoration(self) -> None:
+        """After selecting from autocomplete popup, entry_speaker must remain
+        state='normal', popup must be closed, and the user must be able to
+        type again and re-open autocomplete for a 2nd/3rd selection."""
+        doc = self._make_sample_doc()
+        self._attach_doc(doc)
+        self.app.current_box_idx = 0
+        self.app._update_views()
+        self.app.update_idletasks()
+        self.app.update()
+
+        # --- Round 1: Open autocomplete, select "Kokkoro" ---
+        self.app._open_speaker_autocomplete()
+        self.app.update_idletasks()
+        self.assertTrue(self.app._is_speaker_popup_open(), "Popup must be open after _open_speaker_autocomplete")
+        vals = [val for _lbl, val in self.app._speaker_popup_items]
+        self.assertIn("Kokkoro", vals)
+
+        # Select Kokkoro
+        kok_idx = vals.index("Kokkoro")
+        self.app._speaker_listbox.selection_clear(0, tk.END)
+        self.app._speaker_listbox.selection_set(kok_idx)
+        self.app._accept_speaker_autocomplete_selection()
+        # Process deferred after_idle focus restoration
+        self.app.update_idletasks()
+        self.app.update()
+
+        # Assertions after selection
+        self.assertFalse(self.app._is_speaker_popup_open(), "Popup must be closed after selection")
+        self.assertEqual(doc.boxes[0].speaker, "Kokkoro")
+        self.assertEqual(str(self.app.entry_speaker.cget("state")), "normal",
+                         "entry_speaker must remain state='normal' after autocomplete selection")
+
+        # Verify _restore_speaker_entry_focus helper exists and was used
+        self.assertTrue(hasattr(self.app, "_restore_speaker_entry_focus"),
+                        "Deferred focus restoration helper must exist")
+
+        # --- Simulate typing after selection (user types "Pe" to filter) ---
+        self.app.speaker_var.set("Pe")
+        self.app._on_speaker_key_release(types.SimpleNamespace(keysym="e"))
+        self.assertEqual(self.app.speaker_var.get(), "Pe",
+                         "speaker_var must reflect typed text after autocomplete selection")
+
+        # Popup should re-open from typing
+        self.assertTrue(self.app._is_speaker_popup_open(),
+                        "Popup must re-open when user types after prior selection")
+        vals2 = [val for _lbl, val in self.app._speaker_popup_items]
+        self.assertIn("Pecorine", vals2, "Typing 'Pe' must filter to Pecorine")
+
+        # --- Round 2: Select "Pecorine" from re-opened popup ---
+        pec_idx = vals2.index("Pecorine")
+        self.app._speaker_listbox.selection_clear(0, tk.END)
+        self.app._speaker_listbox.selection_set(pec_idx)
+        self.app._accept_speaker_autocomplete_selection()
+        self.app.update_idletasks()
+        self.app.update()
+
+        self.assertFalse(self.app._is_speaker_popup_open(), "Popup must close after 2nd selection")
+        self.assertEqual(doc.boxes[0].speaker, "Pecorine")
+        self.assertEqual(str(self.app.entry_speaker.cget("state")), "normal",
+                         "entry_speaker must stay normal after 2nd autocomplete selection")
+
+        # --- Round 3: Verify autocomplete works identically a 3rd time ---
+        self.app._open_speaker_autocomplete()
+        self.app.update_idletasks()
+        self.assertTrue(self.app._is_speaker_popup_open(), "3rd popup open must succeed")
+        vals3 = [val for _lbl, val in self.app._speaker_popup_items]
+        # Must have at least the actors remaining in the document + {playername} + narration
+        self.assertTrue(len(vals3) >= 2, f"3rd popup must have candidates; got {vals3}")
+        self.assertIn("", vals3, "Narration option must always be present")
+        self.app._close_speaker_autocomplete()
+
 
 if __name__ == "__main__":
     unittest.main()

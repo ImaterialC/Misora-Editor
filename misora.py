@@ -6390,6 +6390,7 @@ class MisoraApp(tk.Tk):
         if popup is not None:
             try:
                 if popup.winfo_exists():
+                    popup.withdraw()       # Release overrideredirect from Win32 focus chain
                     popup.destroy()
             except Exception:
                 pass
@@ -6497,13 +6498,33 @@ class MisoraApp(tk.Tk):
         if chosen_val is not None:
             self.speaker_var.set(chosen_val)
             self._commit_speaker_edit(source="autocomplete")
-            if hasattr(self, "entry_speaker") and self.entry_speaker.winfo_exists():
-                self._suppress_speaker_popup = True
-                try:
-                    self.entry_speaker.focus_set()
-                except Exception:
-                    pass
+            # Deferred focus restoration: on Windows, destroying an overrideredirect(True)
+            # Toplevel mid-click breaks Win32 focus/capture; immediate focus_set() fails.
+            # Set suppress flag NOW (before the deferred callback) to prevent _on_speaker_focus_in
+            # from reopening the popup when focus returns to entry_speaker.
+            self._suppress_speaker_popup = True
+            self.after_idle(self._restore_speaker_entry_focus)
         return "break"
+
+    def _restore_speaker_entry_focus(self) -> None:
+        """Deferred focus restoration for entry_speaker after autocomplete selection.
+
+        Called via after_idle() so the Win32 window manager has processed the
+        overrideredirect Toplevel destruction before we attempt to reclaim focus.
+        Uses focus_force() (not focus_set()) for reliable OS-level focus acquisition
+        on Windows after an overrideredirect popup was destroyed mid-click.
+        """
+        if getattr(self, "_destroyed", False):
+            return
+        if not hasattr(self, "entry_speaker") or not self.entry_speaker.winfo_exists():
+            return
+        if str(self.entry_speaker.cget("state")) == "disabled":
+            return
+        try:
+            self.entry_speaker.focus_force()
+            self.entry_speaker.icursor("end")
+        except Exception:
+            pass
 
     def _on_speaker_focus_out(self, _event: Optional[tk.Event] = None) -> None:
         """Defer FocusOut briefly so focus moving into our own autocomplete popup does not commit prematurely."""
