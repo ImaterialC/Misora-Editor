@@ -298,9 +298,9 @@ class TestP3S22ImportXUAT(S22TestBase):
         dlg = self.app.on_import_from_xuat()
         self.assertIsNotNone(dlg)
         try:
-            # User skips Box 3 (index 3), enables speaker translation
+            # User skips Box 3 (index 3); keep XUAT files untouched via var_archive_xuat=False
             dlg._rows[3]["var_skip"].set(True)
-            dlg.var_translate_speakers.set(True)
+            dlg.var_archive_xuat.set(False)
 
             captured_prompts = []
 

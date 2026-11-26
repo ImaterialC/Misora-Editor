@@ -290,6 +290,7 @@ class TestV15S06ToolsWordWrap(unittest.TestCase):
         self._attach_doc(doc, "s06_xuat_off.unity3d")
 
         dlg_off = misora.ImportFromXUATDialog(self.app, xuat_index)
+        dlg_off.var_archive_xuat.set(False)
         self.assertFalse(dlg_off.var_auto_word_wrap.get(), "Opt-in wrap must default to False")
         self.assertTrue(dlg_off._on_apply_import())
         self.assertEqual(doc.boxes[0].clean_text, long_tr)
@@ -301,6 +302,7 @@ class TestV15S06ToolsWordWrap(unittest.TestCase):
         orig_jp_uid = doc2.boxes[0].uid
 
         dlg_on = misora.ImportFromXUATDialog(self.app, xuat_index)
+        dlg_on.var_archive_xuat.set(False)
         dlg_on.var_auto_word_wrap.set(True)
         undo_before = self.app.undo_journal.get_undo_depth(self.app.current_file_path)
         self.assertTrue(dlg_on._on_apply_import())

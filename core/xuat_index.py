@@ -22,7 +22,7 @@ import threading
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from .ngui_tags import strip_tags
 from .story_ast import ALL_WS_RE, DASH_MAP, PLAYER_PLACEHOLDER_RE
@@ -54,6 +54,18 @@ def _to_long_path(path: Path) -> Path:
         if abs_s.startswith("\\\\"):
             return Path("\\\\?\\UNC\\" + abs_s[2:])
         return Path("\\\\?\\" + abs_s)
+    return path
+
+
+def _strip_long_path_prefix(path: Path) -> Path:
+    """Strip Windows \\\\?\\ prefix so stored Path keys match normal paths cleanly."""
+    if os.name != "nt":
+        return path
+    s = str(path)
+    if s.startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + s[8:])
+    if s.startswith("\\\\?\\"):
+        return Path(s[4:])
     return path
 
 
@@ -324,73 +336,97 @@ class XuatIndex:
 def build_xuat_index(
     roots: Iterable[Union[str, Path]],
     cancel_event: Optional[threading.Event] = None,
+    progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> XuatIndex:
-    """Synchronously scan strict Text roots and build an in-memory XuatIndex."""
+    """Synchronously scan strict Text roots and build an in-memory XuatIndex.
+
+    Uses iterative os.walk() so cancel_event is honored during directory discovery
+    as well as file parsing, while stripping \\\\?\\ prefixes from stored Paths.
+    """
     strict_roots = resolve_xuat_text_roots(roots)
     idx = XuatIndex(roots=strict_roots)
     seen_files: Set[str] = set()
+    processed_count = 0
+
+    def _process_file(tf: Path, base_root: Path) -> None:
+        nonlocal processed_count
+        clean_tf = _strip_long_path_prefix(tf)
+        clean_base = _strip_long_path_prefix(base_root)
+        if _is_excluded_xuat_file(clean_tf):
+            return
+        try:
+            fkey = os.path.normcase(os.path.normpath(str(clean_tf.resolve())))
+        except Exception:
+            fkey = os.path.normcase(os.path.normpath(str(clean_tf)))
+        if fkey in seen_files:
+            return
+        seen_files.add(fkey)
+
+        processed_count += 1
+        if progress_cb is not None:
+            try:
+                progress_cb(processed_count, clean_tf.name)
+            except Exception:
+                pass
+
+        try:
+            raw_bytes = _to_long_path(clean_tf).read_bytes()
+            sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
+            decoded = detect_encoding_and_decode(raw_bytes)
+        except Exception as exc:
+            idx.skipped_files.append((clean_tf, str(exc)))
+            return
+
+        try:
+            rel_p = str(clean_tf.relative_to(clean_base))
+        except Exception:
+            rel_p = clean_tf.name
+
+        idx.files_indexed.append(clean_tf)
+        idx.file_fingerprints[clean_tf] = sha256_hex
+        nl = decoded.newline or "\n"
+        for line_no, raw_line in enumerate(decoded.text.split(nl), start=1):
+            pair = split_xuat_line(raw_line)
+            if not pair:
+                continue
+            k_part, v_part = pair
+            if not k_part.strip():
+                continue
+            val_unescaped = unescape_xuat_value(v_part)
+            idx.add_entry(
+                XuatEntry(
+                    file_path=clean_tf,
+                    rel_path=rel_p,
+                    line_number=line_no,
+                    raw_key=k_part,
+                    raw_value=v_part,
+                    value=val_unescaped,
+                )
+            )
 
     for root in strict_roots:
         if cancel_event is not None and cancel_event.is_set():
             break
         lroot = _to_long_path(root)
         if lroot.is_file():
-            txt_files = [root]
-            base_root = root.parent
-        else:
-            txt_files = sorted(
-                (p for p in lroot.rglob("*.txt") if not _is_excluded_xuat_file(p)),
-                key=lambda p: str(p).casefold(),
-            )
-            base_root = root
+            _process_file(root, root.parent)
+            continue
 
-        for tf in txt_files:
+        base_root = _strip_long_path_prefix(root)
+        for dirpath, dirnames, filenames in os.walk(str(lroot)):
             if cancel_event is not None and cancel_event.is_set():
                 break
-            if _is_excluded_xuat_file(tf):
-                continue
-            try:
-                fkey = os.path.normcase(os.path.normpath(str(tf.resolve())))
-            except Exception:
-                fkey = os.path.normcase(os.path.normpath(str(tf)))
-            if fkey in seen_files:
-                continue
-            seen_files.add(fkey)
-
-            try:
-                raw_bytes = _to_long_path(tf).read_bytes()
-                sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
-                decoded = detect_encoding_and_decode(raw_bytes)
-            except Exception as exc:
-                idx.skipped_files.append((tf, str(exc)))
-                continue
-
-            try:
-                rel_p = str(tf.relative_to(base_root))
-            except Exception:
-                rel_p = tf.name
-
-            idx.files_indexed.append(tf)
-            idx.file_fingerprints[tf] = sha256_hex
-            nl = decoded.newline or "\n"
-            for line_no, raw_line in enumerate(decoded.text.split(nl), start=1):
-                pair = split_xuat_line(raw_line)
-                if not pair:
+            dirnames.sort(key=str.casefold)
+            filenames.sort(key=str.casefold)
+            clean_dir = _strip_long_path_prefix(Path(dirpath))
+            for fname in filenames:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                if not fname.lower().endswith(".txt"):
                     continue
-                k_part, v_part = pair
-                if not k_part.strip():
-                    continue
-                val_unescaped = unescape_xuat_value(v_part)
-                idx.add_entry(
-                    XuatEntry(
-                        file_path=tf,
-                        rel_path=rel_p,
-                        line_number=line_no,
-                        raw_key=k_part,
-                        raw_value=v_part,
-                        value=val_unescaped,
-                    )
-                )
+                _process_file(clean_dir / fname, base_root)
+            if cancel_event is not None and cancel_event.is_set():
+                break
 
     return idx
 
@@ -400,13 +436,14 @@ def build_xuat_index_async(
     out_queue: queue.Queue,
     metadata: Optional[Any] = None,
     cancel_event: Optional[threading.Event] = None,
+    progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> threading.Thread:
     """Build XuatIndex in a background daemon thread (100% Tk-free - Rule 15)."""
     root_list = [Path(r) for r in roots if r]
 
     def worker() -> None:
         try:
-            idx = build_xuat_index(root_list, cancel_event=cancel_event)
+            idx = build_xuat_index(root_list, cancel_event=cancel_event, progress_cb=progress_cb)
             out_queue.put(("xuat_index_ready", metadata, idx))
         except Exception as exc:
             out_queue.put(("xuat_index_error", metadata, str(exc)))

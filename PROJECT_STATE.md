@@ -3,8 +3,8 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.9 — S10 Virtualized All Script Card Pool & Segment-Aware Quick Edit)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.9"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Target release: v1.5.0 (Current session build: v1.4.10 — S11 Async XUAT Translation Archiving, Pre-Import Archive Checkbox, Complete Speaker Exclusion, 1-Line 54d Metadata/Actor Import, & Unified Progress Controller)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.10"`; unified across UI, splash, MTL engine, and tests (`U00`).
 Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
@@ -41,17 +41,18 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S10 Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s10_all_script_quick_edit tests.test_v15_s08_release_gate_stress tests.test_s4_view_model_sync -v
-Result: Ran 29 tests in 71.170s (29 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S11 Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s11_xuat_archiving_progress tests.test_v15_s07_xuat_cleanup_archive tests.test_p3_s22_import_xuat tests.test_v15_s06_tools_word_wrap tests.test_s8b1_notification_manager -v
+Result: Ran 38 tests (38 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 433 tests in 489.660s across 55 modules (390 pass, 35 skipped, 6 failures, 2 errors):
+Result: Ran 440 tests across 56 modules (397 pass, 35 skipped, 6 pre-existing failures + 2 pre-existing errors, plus 0 S11 regressions after _deferred_restore show_progress=False fix verified by s8b1 10/10):
   - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards + 35 skips across test_misora_core / test_misora_ui_integration;
   - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8);
-  - S10 Regressions: 0 (all S10, S08, S03, S13, S14, S15, S17, S18, S09/S09b, and S4 tests pass).
+  - S11 Regressions: 0.
 
-Test suites included in the 433 tests (exact disk discovery):
+Test suites included in the 440 tests (exact disk discovery):
+  tests/test_v15_s11_xuat_archiving_progress.py — 7 S11 async XUAT Translation Archiving (batched ttk.Treeview, cancel/stale), pre-import Archive checkbox, U-11 complete speaker exclusion, U-14 1-line 54d metadata/actor import (identity guard, Synopsis preservation, multi-seg rename, rollback), & U-12/U-13 _ProgressTaskManager + cancellable os.walk tests (all pass)
   tests/test_v15_s10_all_script_quick_edit.py — 7 S10 virtualized All Script card pool (54d x 3, Box 0 unclipped, Shift+Wheel/key scroll, active highlight, U-05 Preview removal) & raw_breaks-safe segment-aware Quick Edit (4-seg binary round-trip, 1-op Undo/Redo, View-Aware sync, S09b Lock parity) tests (all pass)
   tests/test_v15_s09_core_fixes_54d.py     — 9 S09 core bug fixes, 54d reference, Box 0 immunity, preview arrow, MTL apply left, console removal tests (all pass)
   tests/test_v15_s08_release_gate_stress.py — 8 S08 stress & release-gate tests (20-cycle weakref/tracemalloc +34.40 KiB & 0 cache, 5-cycle search cancel thread/queue cleanup, 500-box wrap+CSIF+binary, MTL cancel/stale rejection, 150-box All Script widget budget & 1436.37 ms benchmark, AST version parity at 1.4.7, .misora v1 schema, cmd_id 35/32/empty sentinel + BoxSnapshot + MTL 2-widget) (all pass)
@@ -120,6 +121,18 @@ Test suites included in the 433 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S11 (`v1.4.10`) — Async XUAT Translation Archiving (`ttk.Treeview`), Pre-Import Archive Checkbox, Complete Speaker Exclusion, 1-Line `54d` Metadata/Actor Import, & Unified Progress Controller (2026-11-26)
+- **`U-11` Pre-Pass Speaker Exclusion (`core/xuat_cleanup.py`):** `_build_protected_actor_sets()` builds `protected_actor_keys` & `protected_actor_values` before Pass 1 from `doc.boxes[*].speaker`, `protected_actors`, forward index matches, and conservative reverse `lookup_by_value()`, enforcing exclusion before insertion across Pass 1/2/3 (`0` speaker rows, including multi-file duplicates and ambiguous right-side values). Added `doc.get_metadata()` Title/Subtitle matching in Pass 3 and cooperative `cancel_event` + `progress_cb`.
+- **`U-09` & `U-14` `ImportFromXUATDialog` (`misora.py`):** Removed `Include Actor` checkbox and Box 0 from dialogue list; added default-ON `Archive the XUAT translation` checkbox with inline risk warning when unchecked (import-only, 0 disk changes); added 1-line × `54d` Title, Subtitle, and Unique Actor sections (with `◀ 1/N ▶` switcher + `Skip`) sized via `_get_54d_reference_safe_w()` across both font presets; added Document Identity Guard, `MetadataDelta` (Synopsis preserved), segment-preserving `inject_box(..., seg_texts=...)` speaker renames, and atomic AST/dirty/Undo rollback.
+- **`U-08` & `U-10` Async `XUAT Translation Archiving` (`misora.py`):** Renamed dialog/menu (`Tools -> XUAT Translation Archiving...`), added `_XuatDocSnapshot`, background classification with separated O(1) progress + `_scan_terminal_queue`, and `80`-row batched `ttk.Treeview` population with controls locked until batch insertion finishes.
+- **`U-12` & `U-13` Unified Progress Controller & Cancellable Discovery (`misora.py`, `core/xuat_index.py`):** `_ProgressTaskManager` shares `status_progress_bar` across Search, Reload XUAT, and Archiving Scan with O(1) coalesced progress, reliable `_lifecycle_queue`, and concurrent task isolation; `build_xuat_index()` uses iterative `os.walk()` checking `cancel_event` per directory/file while stripping `\\?\` from stored `Path` keys.
+- **Manual Windows QA Checklist (Updated S11 — `MANUAL-PENDING`):**
+  1. Open `Import from XUAT...` -> verify 1-line `54d` Title/Subtitle/Unique Actor rows at top, 3-line `54d` dialogue rows below (no Box 0, no `Include Actor`), constant `54d` width across `Global — Nunito Bold` ↔ `Japanese`, and single `Ctrl+Z` Undo/Redo.
+  2. Verify `Archive the XUAT translation` defaults ON; uncheck -> inline warning + Apply leaves XUAT files untouched; check -> opens `XUAT Translation Archiving` non-blockingly.
+  3. Open `Tools -> XUAT Translation Archiving...` -> verify async scan (no freeze), `ttk.Treeview` `[✓]` toggles, and zero speaker/actor rows.
+  4. Trigger Search + Reload XUAT concurrently -> verify shared status-bar progress controller keeps remaining active task visible when one finishes.
+  5. Retain all S10 & S09b Manual QA items.
 
 ### v1.5 S10 (`v1.4.9`) — Virtualized Read-Only All Script Card Pool (`54d x 3`), Segment-Aware `Quick Edit` Tab, View-Aware Sync, & All Script Preview Removal (2026-11-26)
 - **`U-05` All Script Preview Removal (`misora.py`):** Entering `All Script` mode disables/unchecks `cb_compiled` and `View -> Preview Compiled NGUI Attributes` (`_idx_view_preview`), locks `lbl_gd_title` to `"All Script"`, and removes All Script Preview Pillow image calls (`get_all_script_card_*`, `get_all_script_dotted_rule_image`, `get_voice_badge_image`). `Dialogue Preview` (cream/gold capsule, pink `#C24270` nameplate, unclipped pink `▼`) remains 100% functional in `Dialogue` mode.

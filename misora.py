@@ -26,6 +26,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import colorchooser, filedialog, font as tkfont, messagebox, ttk
@@ -1674,6 +1675,330 @@ class _AllScriptBox0Card(tk.Frame):
         self.app._install_shortcuts_bindtag(self.txt_summary)
 
 
+@dataclass(frozen=True)
+class _XuatBoxSnapshot:
+    """Immutable pure-Python snapshot of one StoryDocument Box for background XUAT workers."""
+    speaker: str
+    clean_text: str
+    text: str
+
+
+class _XuatDocSnapshot:
+    """Immutable, Tk-free snapshot of StoryDocument boxes & Box 0 metadata (Guardrail #1)."""
+
+    def __init__(self, doc: Any) -> None:
+        boxes_snap: List[_XuatBoxSnapshot] = []
+        if doc and getattr(doc, "boxes", None):
+            for b in doc.boxes:
+                boxes_snap.append(
+                    _XuatBoxSnapshot(
+                        speaker=str(getattr(b, "speaker", "") or ""),
+                        clean_text=str(getattr(b, "clean_text", "") or ""),
+                        text=str(getattr(b, "text", "") or ""),
+                    )
+                )
+        self.boxes: Tuple[_XuatBoxSnapshot, ...] = tuple(boxes_snap)
+        raw_meta: Dict[str, str] = {}
+        if doc and callable(getattr(doc, "get_metadata", None)):
+            try:
+                m = doc.get_metadata() or {}
+                raw_meta = {
+                    "title": str(m.get("title", "") or ""),
+                    "subtitle": str(m.get("subtitle", "") or ""),
+                    "summary": str(m.get("summary", "") or ""),
+                }
+            except Exception:
+                raw_meta = {}
+        self._meta: Dict[str, str] = raw_meta
+
+    def get_metadata(self) -> Dict[str, str]:
+        return dict(self._meta)
+
+
+@dataclass
+class _ProgressTask:
+    """Represents one active background progress task in the unified status bar."""
+    task_id: str
+    label: str
+    gen: int
+    progress: float = -1.0  # <0 => indeterminate; 0.0..1.0 => determinate
+    is_active: bool = True
+
+
+class _ProgressTaskManager:
+    """Unified status-bar progress controller (U-12 / U-13).
+
+    Separates two thread-safe channels:
+      1. O(1) lock-protected latest-progress dict (_latest_progress[task_id]) so high-frequency
+         progress updates coalesce without unbounded queue growth or dropping terminal events.
+      2. Dedicated reliable _lifecycle_queue for discrete start/complete/fail/cancel events.
+
+    Workers NEVER touch Tkinter directly; only the main thread drains queues and updates widgets.
+    """
+
+    TASK_PRIORITY: Dict[str, int] = {
+        "archiving_scan": 3,
+        "search": 2,
+        "reload_xuat": 1,
+    }
+
+    def __init__(self, app: "MisoraApp") -> None:
+        self.app = app
+        self._progress_lock = threading.Lock()
+        self._latest_progress: Dict[str, Tuple[int, float, str]] = {}
+        self._lifecycle_queue: queue.Queue = queue.Queue()
+        self._active_tasks: Dict[str, _ProgressTask] = {}
+        self._latest_gen: Dict[str, int] = {}
+        self._cancel_events: Dict[Tuple[str, int], threading.Event] = {}
+        self._poll_job: Optional[str] = None
+        self._indeterminate_running: bool = False
+        self._last_terminal_msg: str = ""
+
+    # ------------------------------------------------------------------
+    # Worker-safe methods (ZERO Tkinter calls)
+    # ------------------------------------------------------------------
+    def post_start(
+        self,
+        task_id: str,
+        gen: int,
+        label: str,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
+        self._lifecycle_queue.put(("start", str(task_id), int(gen), (str(label), cancel_event)))
+
+    def post_progress(
+        self,
+        task_id: str,
+        gen: int,
+        fraction: float,
+        label: Optional[str] = None,
+    ) -> None:
+        with self._progress_lock:
+            self._latest_progress[str(task_id)] = (
+                int(gen),
+                float(fraction),
+                str(label) if label is not None else "",
+            )
+
+    def post_complete(self, task_id: str, gen: int, message: str = "") -> None:
+        self._lifecycle_queue.put(("complete", str(task_id), int(gen), str(message)))
+
+    def post_fail(self, task_id: str, gen: int, message: str = "") -> None:
+        self._lifecycle_queue.put(("fail", str(task_id), int(gen), str(message)))
+
+    def post_cancel(self, task_id: str, gen: int, message: str = "") -> None:
+        self._lifecycle_queue.put(("cancel", str(task_id), int(gen), str(message)))
+
+    # ------------------------------------------------------------------
+    # Main-thread convenience API (thread-safe if called off main thread)
+    # ------------------------------------------------------------------
+    def start(
+        self,
+        task_id: str,
+        gen: int,
+        label: str,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
+        self.post_start(task_id, gen, label, cancel_event=cancel_event)
+        if threading.current_thread() is threading.main_thread():
+            self.drain_now()
+
+    def update(
+        self,
+        task_id: str,
+        gen: int,
+        fraction: float,
+        label: Optional[str] = None,
+    ) -> None:
+        self.post_progress(task_id, gen, fraction, label=label)
+        if threading.current_thread() is threading.main_thread():
+            self.drain_now()
+
+    def complete(self, task_id: str, gen: int, message: str = "") -> None:
+        self.post_complete(task_id, gen, message=message)
+        if threading.current_thread() is threading.main_thread():
+            self.drain_now()
+
+    def fail(self, task_id: str, gen: int, message: str = "") -> None:
+        self.post_fail(task_id, gen, message=message)
+        if threading.current_thread() is threading.main_thread():
+            self.drain_now()
+
+    def cancel(self, task_id: str, gen: int, message: str = "") -> None:
+        self.post_cancel(task_id, gen, message=message)
+        if threading.current_thread() is threading.main_thread():
+            self.drain_now()
+
+    def _ensure_polling(self) -> None:
+        if (
+            self._poll_job is None
+            and not getattr(self.app, "_destroyed", False)
+            and self.app.winfo_exists()
+        ):
+            try:
+                self._poll_job = self.app.after(40, self._poll)
+            except Exception:
+                self._poll_job = None
+
+    def _poll(self) -> None:
+        self._poll_job = None
+        if getattr(self.app, "_destroyed", False) or not self.app.winfo_exists():
+            return
+        self.drain_now()
+        if self._active_tasks or not self._lifecycle_queue.empty():
+            self._ensure_polling()
+
+    def drain_now(self) -> None:
+        """Process all queued lifecycle events and coalesced progress on the Tk main thread."""
+        if getattr(self.app, "_destroyed", False) or not self.app.winfo_exists():
+            return
+
+        # 1. Drain discrete reliable lifecycle events (never dropped)
+        while True:
+            try:
+                kind, task_id, gen, payload = self._lifecycle_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            prev_latest = self._latest_gen.get(task_id, -1)
+            if kind == "start":
+                if gen < prev_latest:
+                    continue
+                self._latest_gen[task_id] = gen
+                label, cancel_ev = payload
+                if cancel_ev is not None:
+                    self._cancel_events[(task_id, gen)] = cancel_ev
+                self._active_tasks[task_id] = _ProgressTask(
+                    task_id=task_id,
+                    label=label,
+                    gen=gen,
+                    progress=-1.0,
+                    is_active=True,
+                )
+            elif kind in ("complete", "fail", "cancel"):
+                if gen < prev_latest:
+                    continue
+                cur_task = self._active_tasks.get(task_id)
+                if cur_task is not None and cur_task.gen != gen:
+                    if gen < cur_task.gen:
+                        continue
+                if kind == "cancel":
+                    cev = self._cancel_events.get((task_id, gen))
+                    if cev is not None:
+                        try:
+                            cev.set()
+                        except Exception:
+                            pass
+                self._cancel_events.pop((task_id, gen), None)
+                self._active_tasks.pop(task_id, None)
+                with self._progress_lock:
+                    prog_entry = self._latest_progress.get(task_id)
+                    if prog_entry is not None and prog_entry[0] <= gen:
+                        self._latest_progress.pop(task_id, None)
+                if payload:
+                    self._last_terminal_msg = str(payload)
+
+        # 2. Apply coalesced latest progress snapshot (O(1) per task_id)
+        with self._progress_lock:
+            snap = dict(self._latest_progress)
+            # Prune entries belonging to inactive tasks with older/equal generation
+            for tid, (pgen, _frac, _lbl) in list(self._latest_progress.items()):
+                cur_task = self._active_tasks.get(tid)
+                if cur_task is None or pgen < cur_task.gen:
+                    self._latest_progress.pop(tid, None)
+
+        for tid, (pgen, frac, lbl) in snap.items():
+            cur_task = self._active_tasks.get(tid)
+            if cur_task is not None and cur_task.gen == pgen:
+                cur_task.progress = frac
+                if lbl:
+                    cur_task.label = lbl
+
+        self._refresh_display()
+        if self._active_tasks:
+            self._ensure_polling()
+
+    def _refresh_display(self) -> None:
+        if getattr(self.app, "_destroyed", False) or not self.app.winfo_exists():
+            return
+        bar = getattr(self.app, "status_progress_bar", None)
+        lbl = getattr(self.app, "lbl_status", None)
+
+        if self._active_tasks:
+            top = max(
+                self._active_tasks.values(),
+                key=lambda t: (self.TASK_PRIORITY.get(t.task_id, 0), t.gen),
+            )
+            n_active = len(self._active_tasks)
+            prefix = f"[{n_active} active] " if n_active > 1 else ""
+            if lbl is not None and lbl.winfo_exists():
+                lbl.config(text=f"{prefix}{top.label}")
+            if bar is not None and bar.winfo_exists():
+                if not bar.winfo_manager():
+                    pack_kw: Dict[str, Any] = {"side": "left", "padx": (4, 8), "pady": 4}
+                    if lbl is not None and lbl.winfo_exists() and lbl.winfo_manager():
+                        pack_kw["after"] = lbl
+                    bar.pack(**pack_kw)
+                if top.progress < 0:
+                    if str(bar.cget("mode")) != "indeterminate":
+                        bar.config(mode="indeterminate")
+                    if not self._indeterminate_running:
+                        bar.start(12)
+                        self._indeterminate_running = True
+                else:
+                    if self._indeterminate_running:
+                        bar.stop()
+                        self._indeterminate_running = False
+                    if str(bar.cget("mode")) != "determinate":
+                        bar.config(mode="determinate")
+                    bar["value"] = max(0.0, min(100.0, top.progress * 100.0))
+        else:
+            if bar is not None and bar.winfo_exists():
+                if self._indeterminate_running:
+                    try:
+                        bar.stop()
+                    except Exception:
+                        pass
+                    self._indeterminate_running = False
+                bar["value"] = 0
+                if bar.winfo_manager():
+                    bar.pack_forget()
+            if self._last_terminal_msg and lbl is not None and lbl.winfo_exists():
+                lbl.config(text=self._last_terminal_msg)
+                self._last_terminal_msg = ""
+
+    def shutdown(self) -> None:
+        if self._poll_job is not None:
+            try:
+                self.app.after_cancel(self._poll_job)
+            except Exception:
+                pass
+            self._poll_job = None
+        if self._indeterminate_running:
+            bar = getattr(self.app, "status_progress_bar", None)
+            if bar is not None:
+                try:
+                    if bar.winfo_exists():
+                        bar.stop()
+                except Exception:
+                    pass
+            self._indeterminate_running = False
+        for cev in list(self._cancel_events.values()):
+            try:
+                cev.set()
+            except Exception:
+                pass
+        self._cancel_events.clear()
+        self._active_tasks.clear()
+        with self._progress_lock:
+            self._latest_progress.clear()
+        while True:
+            try:
+                self._lifecycle_queue.get_nowait()
+            except queue.Empty:
+                break
+
+
 class MisoraApp(tk.Tk):
     """Main Application Window for Misora: Story Editor."""
 
@@ -1773,10 +2098,12 @@ class MisoraApp(tk.Tk):
         self._xuat_index_seq: int = 0
         self._xuat_index_cancel: Optional[threading.Event] = None
         self._xuat_index_thread: Optional[threading.Thread] = None
+        self._xuat_index_callbacks: List[Tuple[int, Callable[[Optional[XuatIndex], Optional[str]], None]]] = []
         self._xuat_global_choice_overrides: Dict[str, str] = {}
         self._import_xuat_dialog: Optional[Any] = None
         self._xuat_cleanup_dialog: Optional[Any] = None
         self._xuat_cleanup_settings_dialog: Optional[Any] = None
+        self._progress_mgr: _ProgressTaskManager = _ProgressTaskManager(self)
         self._ui_ready: bool = False
         self.selected_search_folder: Optional[Path] = None
 
@@ -2000,7 +2327,7 @@ class MisoraApp(tk.Tk):
             if not self.winfo_exists() or getattr(self, "_destroyed", False):
                 return
             if restore_session and getattr(self, "xuat_search_roots", None) and self.xuat_index is None:
-                self._refresh_xuat_index_async()
+                self._refresh_xuat_index_async(show_progress=False)
             if initial_path and os.path.exists(initial_path):
                 init_p = Path(initial_path)
                 if init_p.is_dir():
@@ -2185,6 +2512,11 @@ class MisoraApp(tk.Tk):
                 except Exception:
                     pass
                 self._xuat_index_poll_id = None
+            if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+                try:
+                    self._progress_mgr.shutdown()
+                except Exception:
+                    pass
             if hasattr(self, "_toast_after_id") and self._toast_after_id:
                 try:
                     self.after_cancel(self._toast_after_id)
@@ -2270,6 +2602,11 @@ class MisoraApp(tk.Tk):
             except Exception:
                 pass
             self._xuat_index_poll_id = None
+        if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+            try:
+                self._progress_mgr.shutdown()
+            except Exception:
+                pass
         if hasattr(self, "_toast_after_id") and self._toast_after_id:
             try:
                 self.after_cancel(self._toast_after_id)
@@ -4309,7 +4646,7 @@ class MisoraApp(tk.Tk):
         )
         tools_menu.add_separator()
         tools_menu.add_command(
-            label="Clean / Archive XUAT...",
+            label="XUAT Translation Archiving...",
             command=self.on_clean_archive_xuat,
         )
         menubar.add_cascade(label="Tools", menu=tools_menu)
@@ -4786,10 +5123,6 @@ class MisoraApp(tk.Tk):
         self.folder_path_entry.pack(side="left", fill="x", expand=True, padx=(0, 2))
         self.folder_path_entry.bind("<Return>", lambda e: self.on_start_search())
         self.folder_path_entry.bind("<FocusOut>", lambda e: self._save_user_prefs(silent=True))
-
-        self.progress_bar = ttk.Progressbar(self.search_frame, mode="determinate")
-        self.progress_bar.pack(fill="x", padx=8, pady=(0, 2))
-        self.progress_bar.pack_forget()
 
         # Initialize scope widgets with project path
         self._sync_scope_widgets()
@@ -8508,6 +8841,11 @@ class MisoraApp(tk.Tk):
             "label_muted"
         )
         self.lbl_status.pack(side="left", padx=8, pady=6)
+
+        self.status_progress_bar = ttk.Progressbar(action_bar, mode="determinate", length=150)
+        self.status_progress_bar.pack(side="left", padx=(4, 8), pady=4)
+        self.status_progress_bar.pack_forget()
+        self.progress_bar = self.status_progress_bar
 
         self.var_sync_xuat = tk.BooleanVar(master=self, value=True)
         cb_sync = ttk.Checkbutton(
@@ -13439,14 +13777,14 @@ class MisoraApp(tk.Tk):
         self.lbl_results_title.config(text="Searching...")
         self.btn_find.config(state="disabled")
         self.btn_cancel.config(state="normal")
-        self.progress_bar.pack(fill="x", padx=8, pady=(0, 2))
-        self.progress_bar["value"] = 0
         cancel_event = threading.Event()
         self._search_cancel_event = cancel_event
         self.search_cancel_flag = False
         self._search_seq = getattr(self, "_search_seq", 0) + 1
         current_seq = self._search_seq
         self._is_searching = True
+        if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+            self._progress_mgr.start("search", current_seq, f"Searching '{query}'...", cancel_event=cancel_event)
         self.logger.info("Search", f"Started search query='{query}' scope={scope} roots={len(target_paths)}")
 
         mem_docs: Dict[Path, Any] = {}
@@ -13537,7 +13875,10 @@ class MisoraApp(tk.Tk):
             self._search_cancel_event.set()
         self._is_searching = False
         self.btn_cancel.config(state="disabled")
-        self.lbl_status.config(text="Cancelling search...")
+        if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+            self._progress_mgr.cancel("search", getattr(self, "_search_seq", 0), "Cancelling search...")
+        else:
+            self.lbl_status.config(text="Cancelling search...")
         self.logger.info("Search", "Search cancelled by user.")
 
     def _run_background_search(
@@ -13568,6 +13909,10 @@ class MisoraApp(tk.Tk):
 
         def on_prog(cur, tot, filename):
             if _is_cancelled():
+                return
+            if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+                frac = (cur / tot) if tot > 0 else -1.0
+                self._progress_mgr.post_progress("search", search_seq, frac, f"Searching ({cur}/{tot}): {filename}")
                 return
             _put_queue_cancellable(
                 self.search_queue,
@@ -13649,10 +13994,8 @@ class MisoraApp(tk.Tk):
 
                 if kind == "progress":
                     _, cur, tot, fname, *_ = msg
-                    if tot > 0:
-                        pct = int((cur / tot) * 100)
-                        self.progress_bar["value"] = pct
-                        self.lbl_status.config(text=f"Searching ({cur}/{tot}): {fname}")
+                    if tot > 0 and hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+                        self._progress_mgr.update("search", seq or getattr(self, "_search_seq", 0), cur / tot, f"Searching ({cur}/{tot}): {fname}")
 
                 elif kind == "batch":
                     batch_results: List[SearchResult] = msg[1]
@@ -13685,22 +14028,30 @@ class MisoraApp(tk.Tk):
                     if is_cancelled:
                         skip_info = f" ({skip_count} skipped)" if skip_count else ""
                         self.lbl_results_title.config(text=f"Search Cancelled ({total} matches{skip_info})")
-                        self.lbl_status.config(text=f"Search cancelled. Found {total} matches{skip_info}.")
+                        status_msg = f"Search cancelled. Found {total} matches{skip_info}."
                     elif total == 0:
                         if skip_count:
                             self.lbl_results_title.config(text=f"Search Results (0 matches, {skip_count} skipped)")
-                            self.lbl_status.config(text=f"Search complete. 0 matches ({skip_count} skipped).")
+                            status_msg = f"Search complete. 0 matches ({skip_count} skipped)."
                         else:
                             self.lbl_results_title.config(text="Search Results (0 matches)")
-                            self.lbl_status.config(text="Search complete. No matches found.")
+                            status_msg = "Search complete. No matches found."
                     else:
                         skip_info = f" ({skip_count} skipped)" if skip_count else ""
                         self.lbl_results_title.config(text=f"Search Results ({total} matches{skip_info})")
-                        self.lbl_status.config(text=f"Search complete. Found {total} matches{skip_info}.")
+                        status_msg = f"Search complete. Found {total} matches{skip_info}."
 
                     self.btn_find.config(state="normal")
                     self.btn_cancel.config(state="disabled")
-                    self.progress_bar.pack_forget()
+                    if hasattr(self, "_progress_mgr") and self._progress_mgr is not None:
+                        msg_seq = seq if seq is not None else getattr(self, "_search_seq", 0)
+                        if is_cancelled:
+                            self._progress_mgr.cancel("search", msg_seq, status_msg)
+                        else:
+                            self._progress_mgr.complete("search", msg_seq, status_msg)
+                    else:
+                        self.progress_bar.pack_forget()
+                        self.lbl_status.config(text=status_msg)
                     if skipped:
                         formatted_skipped = [
                             f"{p.name if isinstance(p, Path) else p} ({reason})"
@@ -18077,8 +18428,12 @@ class MisoraApp(tk.Tk):
             roots.append(self.project_folder)
         return resolve_xuat_text_roots(roots)
 
-    def _refresh_xuat_index_async(self) -> None:
-        """Start background XUAT dictionary indexing and poll on the Tk main thread (Rule 15)."""
+    def _refresh_xuat_index_async(
+        self,
+        on_ready: Optional[Callable[[Optional[XuatIndex], Optional[str]], None]] = None,
+        show_progress: bool = True,
+    ) -> int:
+        """Start background XUAT dictionary indexing and report via unified progress controller (Rule 15 / U-13)."""
         if getattr(self, "_xuat_index_cancel", None) is not None:
             try:
                 self._xuat_index_cancel.set()
@@ -18089,26 +18444,59 @@ class MisoraApp(tk.Tk):
             self.xuat_index = None
             self.xuat_entries = None
             self._xuat_index_cancel = None
-            return
+            if on_ready is not None:
+                try:
+                    on_ready(None, None)
+                except Exception:
+                    pass
+            return self._xuat_index_seq
+
         self._xuat_index_seq += 1
         seq = self._xuat_index_seq
         cancel_ev = threading.Event()
         self._xuat_index_cancel = cancel_ev
-        self._xuat_index_thread = build_xuat_index_async(
-            strict_roots,
-            out_queue=self._xuat_index_queue,
-            metadata=seq,
-            cancel_event=cancel_ev,
-        )
+        if on_ready is not None:
+            self._xuat_index_callbacks.append((seq, on_ready))
+
+        mgr = getattr(self, "_progress_mgr", None) if show_progress else None
+        if mgr is not None:
+            mgr.start("reload_xuat", seq, "Reloading XUAT translations...", cancel_event=cancel_ev)
+
+        # Capture pure-Python locals only (NEVER capture self/Tk widgets in worker closure!)
+        out_q = self._xuat_index_queue
+        progress_lock = mgr._progress_lock if mgr is not None else None
+        latest_progress = mgr._latest_progress if mgr is not None else None
+
+        def _on_idx_progress(cnt: int, fname: str) -> None:
+            if cancel_ev.is_set() or progress_lock is None or latest_progress is None:
+                return
+            with progress_lock:
+                latest_progress["reload_xuat"] = (seq, -1.0, f"Reloading XUAT ({cnt} files): {fname}")
+
+        def _worker() -> None:
+            try:
+                idx = build_xuat_index(strict_roots, cancel_event=cancel_ev, progress_cb=_on_idx_progress)
+                out_q.put(("xuat_index_ready", seq, idx))
+            except Exception as exc:
+                out_q.put(("xuat_index_error", seq, str(exc)))
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        self._xuat_index_thread = t
         if self._xuat_index_poll_id is None and self.winfo_exists():
             self._xuat_index_poll_id = self.after(50, self._poll_xuat_index_queue)
+        return seq
 
     def _poll_xuat_index_queue(self) -> None:
-        """Poll background XUAT index builds strictly while a build is in flight (BUG-27)."""
+        """Poll background XUAT index builds strictly while a build is in flight (BUG-27 / U-13)."""
         self._xuat_index_poll_id = None
         if not self.winfo_exists() or getattr(self, "_destroyed", False):
             return
         latest_applied = False
+        latest_idx: Optional[XuatIndex] = None
+        latest_err: Optional[str] = None
+        mgr = getattr(self, "_progress_mgr", None)
+
         try:
             while True:
                 kind, seq, payload = self._xuat_index_queue.get_nowait()
@@ -18117,14 +18505,30 @@ class MisoraApp(tk.Tk):
                 if kind == "xuat_index_ready":
                     self.xuat_index = payload
                     self.xuat_entries = payload
+                    latest_idx = payload
                     latest_applied = True
+                    if mgr is not None:
+                        n_files = len(getattr(payload, "files_indexed", ())) if payload is not None else 0
+                        mgr.complete("reload_xuat", seq, f"XUAT index reloaded ({n_files} files).")
                 elif kind == "xuat_index_error":
                     self.logger.warning("XUAT Index", f"Background XUAT index failed: {payload}")
+                    latest_err = str(payload)
                     latest_applied = True
+                    if mgr is not None:
+                        mgr.fail("reload_xuat", seq, f"XUAT index reload failed: {payload}")
         except queue.Empty:
             pass
 
-        if not latest_applied and self.winfo_exists() and not getattr(self, "_destroyed", False):
+        if latest_applied:
+            pending_cbs = list(getattr(self, "_xuat_index_callbacks", ()))
+            self._xuat_index_callbacks = []
+            for cb_seq, cb in pending_cbs:
+                if cb_seq == self._xuat_index_seq:
+                    try:
+                        cb(latest_idx, latest_err)
+                    except Exception:
+                        pass
+        elif self.winfo_exists() and not getattr(self, "_destroyed", False):
             self._xuat_index_poll_id = self.after(50, self._poll_xuat_index_queue)
 
     def _get_or_build_xuat_index(self, force_rebuild: bool = False) -> XuatIndex:
@@ -18216,29 +18620,29 @@ class MisoraApp(tk.Tk):
         return dlg
 
     def on_clean_archive_xuat(self, xuat_index: Optional[XuatIndex] = None) -> Optional["XuatCleanupDialog"]:
-        """Open XUAT cleanup/archival audit dialog against the active story (Tools -> Clean / Archive XUAT...)."""
+        """Open XUAT Translation Archiving dialog asynchronously against the active story (Tools -> XUAT Translation Archiving...)."""
         if not self.current_doc or not self.current_doc.boxes:
             messagebox.showwarning("No Story Open", "Open a story bundle or text file first.", parent=self)
             return None
 
-        idx = xuat_index if xuat_index is not None else self._get_or_build_xuat_index(force_rebuild=True)
         existing = getattr(self, "_xuat_cleanup_dialog", None)
         if existing is not None:
             try:
                 if existing.winfo_exists():
-                    existing.destroy()
+                    existing._on_close()
             except Exception:
                 pass
             self._xuat_cleanup_dialog = None
 
-        fps = dict(getattr(idx, "file_fingerprints", {}) or {})
+        fps = dict(getattr(xuat_index, "file_fingerprints", {}) or {}) if xuat_index is not None else {}
         dlg = XuatCleanupDialog(
             self,
-            xuat_index=idx,
+            xuat_index=xuat_index,
             doc=self.current_doc,
             applied_records=(),
             source_fingerprints=fps,
             mode="manual",
+            xuat_roots=self._get_xuat_index_roots() if xuat_index is None else None,
         )
         self._xuat_cleanup_dialog = dlg
         return dlg
@@ -19369,10 +19773,11 @@ class AutoWordWrapDialog(tk.Toplevel):
 # Floating Import from XUAT Resolver Dialog (S22 / FEAT-14 / U-B34)
 # =============================================================================
 class ImportFromXUATDialog(tk.Toplevel):
-    """Separate floating resolver pairing Story boxes (left) with XUAT matches (right).
+    """Separate floating resolver pairing Story metadata/actors/boxes (left) with XUAT matches (right).
 
-    Both sides are strictly read-only (state='disabled') with fixed 3 lines x 50 digit-widths
-    (via S17 _measure_dialogue_metrics) and zero per-box Scrollbar widgets.
+    Both sides are strictly read-only (state='disabled') with uniform pixel-exact 54d widths:
+      - Metadata (Title / Subtitle) & Unique Actors: 1 line x 54d
+      - Ordinary Dialogue (Box 0 excluded): 3 lines x 54d
     """
 
     def __init__(self, parent: "MisoraApp", xuat_index: XuatIndex):
@@ -19380,25 +19785,37 @@ class ImportFromXUATDialog(tk.Toplevel):
         self.app = parent
         self.xuat_index = xuat_index
         self._rows: List[Dict[str, Any]] = []
+        self._metadata_rows: List[Dict[str, Any]] = []
+        self._actor_rows: List[Dict[str, Any]] = []
         self._focused_box_widget: Optional[tk.Text] = None
         self._active_filter: str = "all"
-        self._speaker_matches: Dict[int, str] = {}
         self._filter_buttons: Dict[str, ttk.Button] = {}
         self._canvas_win_id: Optional[int] = None
+        self._reload_in_progress: bool = False
+
+        # U-14 Document Identity Guard snapshot
+        self._target_doc_ref: Any = None
+        self._target_file_path: str = ""
+        self._target_doc_revision: int = 0
+        self._target_box_uids: List[Tuple[Any, str]] = []
+        self._target_meta_snapshot: Dict[str, str] = {}
 
         self.title("Import from XUAT (Read-Only Paired Resolver)")
-        self.geometry("980x680")
-        self.minsize(820, 520)
+        self.geometry("1020x720")
+        self.minsize(840, 540)
         self.transient(parent)
 
         t = self.app.theme
         self.configure(bg=t["bg_panel"])
         apply_window_icon(self)
 
-        self.var_translate_speakers = tk.BooleanVar(master=self, value=False)
+        self.var_archive_xuat = tk.BooleanVar(master=self, value=True)
         self.var_auto_word_wrap = tk.BooleanVar(master=self, value=False)
         self._build_ui()
         self._populate_rows()
+
+        self.var_archive_xuat.trace_add("write", lambda *_a: self._refresh_archive_optout_warning())
+        self._refresh_archive_optout_warning()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Escape>", lambda _e=None: self._on_close())
@@ -19421,12 +19838,13 @@ class ImportFromXUATDialog(tk.Toplevel):
             fg=t["misora_pink"],
         ).pack(side="left")
 
-        ttk.Button(
+        self.btn_reload_xuat = ttk.Button(
             title_row,
             text="↻ Reload XUAT Index",
             style="Small.TButton",
             command=self._on_reload_index,
-        ).pack(side="right")
+        )
+        self.btn_reload_xuat.pack(side="right")
 
         self.lbl_summary = tk.Label(
             top,
@@ -19456,17 +19874,17 @@ class ImportFromXUATDialog(tk.Toplevel):
             btn.pack(side="left", padx=(0, 4))
             self._filter_buttons[f_key] = btn
 
-        cb_spk = tk.Checkbutton(
+        cb_arch = tk.Checkbutton(
             ctrl_row,
-            text="Also translate speaker names",
-            variable=self.var_translate_speakers,
+            text="Archive the XUAT translation",
+            variable=self.var_archive_xuat,
             bg=t["bg_panel"],
             fg=fg_panel,
             selectcolor=t["bg_dark"],
             activebackground=t["bg_panel"],
             activeforeground=fg_panel,
         )
-        cb_spk.pack(side="right")
+        cb_arch.pack(side="right")
 
         opts_row = tk.Frame(top, bg=t["bg_panel"])
         opts_row.pack(fill="x", pady=(4, 0))
@@ -19481,6 +19899,22 @@ class ImportFromXUATDialog(tk.Toplevel):
             activeforeground=fg_panel,
         )
         cb_wrap.pack(side="right")
+
+        self.lbl_archive_optout_warning = tk.Label(
+            top,
+            text=(
+                "⚠ Skipping XUAT archiving leaves imported lines inside your XUAT .txt files. "
+                "XUnity.AutoTranslator may re-apply or conflict with future edits."
+            ),
+            font=("Segoe UI", 8, "bold"),
+            bg="#4a3118",
+            fg="#ffd99a",
+            padx=8,
+            pady=4,
+            anchor="w",
+            justify="left",
+            wraplength=940,
+        )
 
         # Outer scrollable list (single outer vertical scrollbar)
         list_wrap = tk.Frame(self, bg=t["bg_dark"], bd=1, relief="solid")
@@ -19506,9 +19940,20 @@ class ImportFromXUATDialog(tk.Toplevel):
         btn_bar.pack(fill="x", side="bottom")
 
         ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_close).pack(side="right", padx=4)
-        ttk.Button(btn_bar, text="Apply Import", style="Pink.TButton", command=self._on_apply_import).pack(
-            side="right", padx=4
+        self.btn_apply = ttk.Button(
+            btn_bar, text="Apply Import", style="Pink.TButton", command=self._on_apply_import
         )
+        self.btn_apply.pack(side="right", padx=4)
+
+    def _refresh_archive_optout_warning(self) -> None:
+        if not self.winfo_exists() or self.var_archive_xuat is None:
+            return
+        if not bool(self.var_archive_xuat.get()):
+            if not self.lbl_archive_optout_warning.winfo_manager():
+                self.lbl_archive_optout_warning.pack(fill="x", pady=(4, 0))
+        else:
+            if self.lbl_archive_optout_warning.winfo_manager():
+                self.lbl_archive_optout_warning.pack_forget()
 
     def _on_rows_configure(self, _event: Optional[tk.Event] = None) -> None:
         if self.list_canvas.winfo_exists():
@@ -19524,8 +19969,32 @@ class ImportFromXUATDialog(tk.Toplevel):
         return "break"
 
     def _on_reload_index(self) -> None:
-        self.xuat_index = self.app._get_or_build_xuat_index(force_rebuild=True)
-        self._populate_rows()
+        if self._reload_in_progress:
+            return
+        self._reload_in_progress = True
+        if self.btn_reload_xuat.winfo_exists():
+            self.btn_reload_xuat.config(state="disabled")
+        if self.btn_apply.winfo_exists():
+            self.btn_apply.config(state="disabled")
+        if self.lbl_summary.winfo_exists():
+            self.lbl_summary.config(text="Reloading XUAT index in background...")
+
+        def _on_done(new_idx: Optional[XuatIndex], err: Optional[str]) -> None:
+            if not self.winfo_exists():
+                return
+            self._reload_in_progress = False
+            if self.btn_reload_xuat.winfo_exists():
+                self.btn_reload_xuat.config(state="normal")
+            if self.btn_apply.winfo_exists():
+                self.btn_apply.config(state="normal")
+            if err:
+                self.lbl_summary.config(text=f"XUAT reload failed: {err}")
+                return
+            if new_idx is not None:
+                self.xuat_index = new_idx
+            self._populate_rows()
+
+        self.app._refresh_xuat_index_async(on_ready=_on_done)
 
     def _get_immutable_jp_key(self, box_idx: int, box: Box) -> str:
         """Resolve immutable JP source key by box_uid (BUG-25 / DEP-7)."""
@@ -19539,17 +20008,85 @@ class ImportFromXUATDialog(tk.Toplevel):
                 return jp
         return box.clean_text
 
-    def _populate_rows(self) -> None:
-        for child in self.rows_frame.winfo_children():
-            child.destroy()
-        self._rows.clear()
-        self._speaker_matches.clear()
-        self._focused_box_widget = None
+    @staticmethod
+    def _norm_file_str(fp: Optional[Union[str, Path]]) -> str:
+        if not fp:
+            return ""
+        try:
+            return os.path.normcase(os.path.normpath(str(Path(fp).resolve())))
+        except Exception:
+            return os.path.normcase(os.path.normpath(str(fp)))
 
+    def _get_current_doc_revision(self) -> int:
+        try:
+            state = self.app.undo_journal._get_state(self.app.current_file_path)
+            return int(getattr(state, "revision", 0))
+        except Exception:
+            return 0
+
+    def _capture_doc_identity(self, doc: Any) -> None:
+        self._target_doc_ref = doc
+        self._target_file_path = self._norm_file_str(self.app.current_file_path)
+        self._target_doc_revision = self._get_current_doc_revision()
+        self._target_box_uids = [
+            (_get_box_uid(b), self._get_immutable_jp_key(idx, b))
+            for idx, b in enumerate(getattr(doc, "boxes", ()) or ())
+        ]
+        if doc and callable(getattr(doc, "get_metadata", None)):
+            self._target_meta_snapshot = dict(doc.get_metadata() or {})
+        else:
+            self._target_meta_snapshot = {}
+
+    def _validate_document_identity(self) -> bool:
         doc = self.app.current_doc
-        if not doc or not doc.boxes:
-            return
+        if doc is None or doc is not self._target_doc_ref:
+            return False
+        if self._norm_file_str(self.app.current_file_path) != self._target_file_path:
+            return False
+        if self._get_current_doc_revision() != self._target_doc_revision:
+            return False
+        cur_boxes = [
+            (_get_box_uid(b), self._get_immutable_jp_key(idx, b))
+            for idx, b in enumerate(getattr(doc, "boxes", ()) or ())
+        ]
+        if cur_boxes != self._target_box_uids:
+            return False
+        cur_meta = dict(doc.get_metadata() or {}) if callable(getattr(doc, "get_metadata", None)) else {}
+        if cur_meta != self._target_meta_snapshot:
+            return False
+        return True
 
+    def _build_section_header(self, title: str, t: dict) -> None:
+        hdr = tk.Frame(self.rows_frame, bg=t["bg_dark"], padx=8, pady=4)
+        hdr.pack(fill="x", padx=4, pady=(6, 2))
+        hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
+        tk.Label(
+            hdr,
+            text=title,
+            font=("Segoe UI", 9, "bold"),
+            bg=t["bg_dark"],
+            fg=t["misora_pink"],
+            anchor="w",
+        ).pack(side="left")
+
+    def _create_paired_box_row(
+        self,
+        *,
+        row_list: List[Dict[str, Any]],
+        header_text: str,
+        left_label: str,
+        right_label: str,
+        left_text: str,
+        lookup: XuatLookupResult,
+        cand_idx: int,
+        lines: int,
+        is_locked: bool,
+        lock_badge: str = "",
+        show_scope: bool = False,
+        norm_key: str = "",
+        extra_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Shared builder for Metadata (1x54d), Unique Actor (1x54d), and Dialogue (3x54d) rows."""
         t = self.app.theme
         fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
@@ -19559,7 +20096,223 @@ class ImportFromXUATDialog(tk.Toplevel):
         safe_w = self.app._get_54d_reference_safe_w()
         line_h = max(14, int(measure_font.metrics("linespace")))
         box_px_w = safe_w + 10
-        box_px_h = line_h * 3 + 8
+        box_px_h = line_h * lines + 8
+
+        row_bg = t["bg_dark"] if is_locked else t["bg_panel"]
+        card = tk.Frame(
+            self.rows_frame,
+            bg=row_bg,
+            bd=1,
+            relief="solid",
+            highlightbackground=t["border"],
+            highlightthickness=1,
+            padx=8,
+            pady=6,
+        )
+        card.pack(fill="x", padx=6, pady=4)
+        card.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+        hdr = tk.Frame(card, bg=row_bg)
+        hdr.pack(fill="x", pady=(0, 4))
+        hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+        tk.Label(
+            hdr,
+            text=header_text,
+            font=("Segoe UI", 9, "bold"),
+            bg=row_bg,
+            fg=fg_muted if is_locked else t["misora_pink"],
+        ).pack(side="left")
+
+        if lock_badge:
+            tk.Label(
+                hdr,
+                text=lock_badge,
+                font=("Segoe UI", 8, "bold"),
+                bg=row_bg,
+                fg=fg_muted,
+            ).pack(side="left", padx=(8, 4))
+
+        var_skip = tk.BooleanVar(master=self, value=is_locked)
+        cb_skip = tk.Checkbutton(
+            hdr,
+            text="Skip",
+            variable=var_skip,
+            state="disabled" if is_locked else "normal",
+            bg=row_bg,
+            fg=fg_muted if is_locked else fg_panel,
+            disabledforeground=fg_muted,
+            selectcolor=t["bg_dark"],
+            activebackground=row_bg,
+            activeforeground=fg_panel,
+        )
+        cb_skip.pack(side="right")
+
+        prov_text = lookup.candidates[cand_idx].provenance if lookup.candidates else "No XUAT match"
+        lbl_provenance = tk.Label(
+            hdr,
+            text=prov_text,
+            font=("Consolas", 8),
+            bg=row_bg,
+            fg=fg_muted,
+        )
+        lbl_provenance.pack(side="right", padx=(6, 8))
+
+        lbl_dup_counter = tk.Label(hdr, text="", font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_blue"])
+        var_scope = tk.StringVar(master=self, value="This Box")
+        r_idx = len(row_list)
+
+        if len(lookup.candidates) > 1:
+            if show_scope:
+                scope_cmb = ttk.Combobox(
+                    hdr,
+                    textvariable=var_scope,
+                    values=("This Box", "This Story", "Global"),
+                    state="readonly",
+                    width=10,
+                )
+                scope_cmb.pack(side="right", padx=(4, 4))
+                scope_cmb.bind(
+                    "<<ComboboxSelected>>",
+                    lambda _e, idx_ref=r_idx: self._apply_conflict_scope(idx_ref),
+                )
+            btn_next = ttk.Button(
+                hdr,
+                text="▶",
+                width=2,
+                style="Small.TButton",
+                command=lambda rl=row_list, idx_ref=r_idx, sc=show_scope: self._step_section_candidate(rl, idx_ref, 1, apply_scope=sc),
+            )
+            btn_next.pack(side="right", padx=(1, 2))
+            lbl_dup_counter.config(text=f"{cand_idx + 1}/{len(lookup.candidates)}")
+            lbl_dup_counter.pack(side="right", padx=2)
+            btn_prev = ttk.Button(
+                hdr,
+                text="◀",
+                width=2,
+                style="Small.TButton",
+                command=lambda rl=row_list, idx_ref=r_idx, sc=show_scope: self._step_section_candidate(rl, idx_ref, -1, apply_scope=sc),
+            )
+            btn_prev.pack(side="right", padx=(2, 1))
+
+        pair_frame = tk.Frame(card, bg=row_bg)
+        pair_frame.pack(fill="x")
+        pair_frame.bind("<MouseWheel>", self._on_outer_mousewheel)
+
+        left_col = tk.Frame(pair_frame, bg=row_bg)
+        left_col.pack(side="left", padx=(0, 8))
+        left_hdr = tk.Frame(left_col, bg=row_bg)
+        left_hdr.pack(fill="x")
+        tk.Label(left_hdr, text=left_label, font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
+        left_m = self.app._measure_dialogue_metrics(left_text)
+        left_ov_badge = ("▼" if (lines >= 3 and left_m["has_line_overflow"]) else "") + (
+            "▶" if left_m["has_width_overflow"] else ""
+        )
+        lbl_left_overflow = tk.Label(
+            left_hdr, text=left_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"]
+        )
+        lbl_left_overflow.pack(side="right")
+
+        left_wrap = tk.Frame(left_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
+        left_wrap.pack_propagate(False)
+        left_wrap.pack()
+
+        txt_left = tk.Text(
+            left_wrap,
+            font=measure_font,
+            height=lines,
+            width=50,
+            wrap="none",
+            bg=t["bg_dark"] if is_locked else t["bg_editor"],
+            fg=fg_muted if is_locked else fg_editor,
+            bd=0,
+            highlightthickness=0,
+            padx=3,
+            pady=2,
+        )
+        txt_left.insert("1.0", left_text)
+        txt_left.config(state="disabled")
+        txt_left.pack(fill="both", expand=True)
+
+        right_col = tk.Frame(pair_frame, bg=row_bg)
+        right_col.pack(side="left")
+        right_hdr = tk.Frame(right_col, bg=row_bg)
+        right_hdr.pack(fill="x")
+        tk.Label(right_hdr, text=right_label, font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
+
+        right_text = lookup.candidates[cand_idx].value if lookup.candidates else ""
+        right_m = self.app._measure_dialogue_metrics(right_text)
+        right_ov_badge = ("▼" if (lines >= 3 and right_m["has_line_overflow"]) else "") + (
+            "▶" if right_m["has_width_overflow"] else ""
+        )
+        lbl_right_overflow = tk.Label(
+            right_hdr, text=right_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"]
+        )
+        lbl_right_overflow.pack(side="right")
+
+        right_wrap = tk.Frame(right_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
+        right_wrap.pack_propagate(False)
+        right_wrap.pack()
+
+        txt_right = tk.Text(
+            right_wrap,
+            font=measure_font,
+            height=lines,
+            width=50,
+            wrap="none",
+            bg=t["bg_dark"] if is_locked else t["bg_editor"],
+            fg=fg_muted if is_locked else fg_editor,
+            bd=0,
+            highlightthickness=0,
+            padx=3,
+            pady=2,
+        )
+        txt_right.insert("1.0", right_text)
+        txt_right.config(state="disabled")
+        txt_right.pack(fill="both", expand=True)
+
+        self._bind_paired_box_events(txt_left, lines >= 3 and left_m["has_line_overflow"], left_m["has_width_overflow"])
+        self._bind_paired_box_events(txt_right, lines >= 3 and right_m["has_line_overflow"], right_m["has_width_overflow"])
+
+        row_dict: Dict[str, Any] = {
+            "norm_key": norm_key,
+            "status": lookup.status,
+            "candidates": lookup.candidates,
+            "cand_idx": cand_idx,
+            "is_locked": is_locked,
+            "var_skip": var_skip,
+            "cb_skip": cb_skip,
+            "var_scope": var_scope,
+            "lines": lines,
+            "frame": card,
+            "left_wrap": left_wrap,
+            "right_wrap": right_wrap,
+            "txt_left": txt_left,
+            "txt_right": txt_right,
+            "lbl_left_overflow": lbl_left_overflow,
+            "lbl_right_overflow": lbl_right_overflow,
+            "lbl_provenance": lbl_provenance,
+            "lbl_dup_counter": lbl_dup_counter,
+        }
+        if extra_data:
+            row_dict.update(extra_data)
+        row_list.append(row_dict)
+        return row_dict
+
+    def _populate_rows(self) -> None:
+        for child in self.rows_frame.winfo_children():
+            child.destroy()
+        self._rows.clear()
+        self._metadata_rows.clear()
+        self._actor_rows.clear()
+        self._focused_box_widget = None
+
+        doc = self.app.current_doc
+        if not doc or not doc.boxes:
+            return
+
+        self._capture_doc_identity(doc)
+        t = self.app.theme
 
         orig_map = getattr(self.app, "_original_jp_by_uid", {})
         stats = analyze_story_matches(doc, orig_map, self.xuat_index)
@@ -19573,7 +20326,6 @@ class ImportFromXUATDialog(tk.Toplevel):
             )
         )
 
-        # Update filter chip labels
         chip_counts = {
             "all": stats["dialogue_total"],
             "duplicates": stats["dialogue_duplicates"],
@@ -19584,6 +20336,70 @@ class ImportFromXUATDialog(tk.Toplevel):
         for k, btn in self._filter_buttons.items():
             btn.config(text=f"{chip_names[k]} ({chip_counts[k]})")
 
+        # Section 1: Metadata (Title & Subtitle; Box 0 Synopsis is never imported)
+        meta = doc.get_metadata() if callable(getattr(doc, "get_metadata", None)) else {}
+        meta_fields: List[Tuple[str, str, str]] = []
+        if meta.get("title"):
+            meta_fields.append(("title", "Title (Box 0 Metadata)", meta["title"]))
+        if meta.get("subtitle"):
+            meta_fields.append(("subtitle", "Subtitle / Outline (Box 0 Metadata)", meta["subtitle"]))
+        if meta_fields:
+            self._build_section_header("Story Metadata (1-line × 54d — Synopsis preserved untouched)", t)
+            for m_field, m_label, m_val in meta_fields:
+                m_lookup = self.xuat_index.lookup_candidates(m_val)
+                self._create_paired_box_row(
+                    row_list=self._metadata_rows,
+                    header_text=m_label,
+                    left_label="Current Metadata",
+                    right_label="XUAT Match",
+                    left_text=m_val,
+                    lookup=m_lookup,
+                    cand_idx=0,
+                    lines=1,
+                    is_locked=False,
+                    norm_key=normalize_xuat_key(m_val, strip_ngui=True),
+                    extra_data={"field": m_field, "orig_value": m_val},
+                )
+
+        # Section 2: Unique Actors / Speakers (1-line x 54d)
+        speaker_boxes: Dict[str, List[int]] = {}
+        for b_idx, box in enumerate(doc.boxes):
+            if box.speaker:
+                speaker_boxes.setdefault(box.speaker, []).append(b_idx)
+        if speaker_boxes:
+            self._build_section_header("Unique Actors / Speakers (1-line × 54d — Locked boxes skipped automatically)", t)
+            for sp_name, b_indices in speaker_boxes.items():
+                sp_lookup = self.xuat_index.lookup_candidates(sp_name)
+                locked_indices = [i for i in b_indices if self.app.is_box_locked(i)]
+                unlocked_indices = [i for i in b_indices if not self.app.is_box_locked(i)]
+                all_locked = len(unlocked_indices) == 0
+                lock_badge = ""
+                if all_locked:
+                    lock_badge = f"🔒 All {len(b_indices)} box(es) locked"
+                elif locked_indices:
+                    lock_badge = f"🔒 {len(locked_indices)}/{len(b_indices)} locked (will skip)"
+                self._create_paired_box_row(
+                    row_list=self._actor_rows,
+                    header_text=f"Actor: {sp_name} ({len(b_indices)} box{'es' if len(b_indices) != 1 else ''})",
+                    left_label="Story Speaker",
+                    right_label="XUAT Actor Match",
+                    left_text=sp_name,
+                    lookup=sp_lookup,
+                    cand_idx=0,
+                    lines=1,
+                    is_locked=all_locked,
+                    lock_badge=lock_badge,
+                    norm_key=normalize_xuat_key(sp_name, strip_ngui=True),
+                    extra_data={
+                        "orig_speaker": sp_name,
+                        "box_indices": tuple(b_indices),
+                        "unlocked_indices": tuple(unlocked_indices),
+                        "locked_indices": tuple(locked_indices),
+                    },
+                )
+
+        # Section 3: Ordinary Dialogue (3-line x 54d; Box 0 excluded)
+        self._build_section_header("Dialogue Boxes (3-line × 54d)", t)
         global_overrides = getattr(self.app, "_xuat_global_choice_overrides", {})
 
         for idx, box in enumerate(doc.boxes):
@@ -19593,12 +20409,6 @@ class ImportFromXUATDialog(tk.Toplevel):
             lookup = self.xuat_index.lookup_candidates(jp_key)
             is_locked = self.app.is_box_locked(idx)
 
-            if box.speaker:
-                sp_hit = self.xuat_index.lookup_translation(box.speaker)
-                if sp_hit is not None:
-                    self._speaker_matches[idx] = sp_hit
-
-            # Determine default candidate index (respecting in-memory global override if any)
             cand_idx = 0
             if lookup.candidates and norm_k in global_overrides:
                 pref_val = global_overrides[norm_k]
@@ -19607,186 +20417,21 @@ class ImportFromXUATDialog(tk.Toplevel):
                         cand_idx = ci
                         break
 
-            row_bg = t["bg_dark"] if is_locked else t["bg_panel"]
-            card = tk.Frame(
-                self.rows_frame,
-                bg=row_bg,
-                bd=1,
-                relief="solid",
-                highlightbackground=t["border"],
-                highlightthickness=1,
-                padx=8,
-                pady=6,
-            )
-            card.pack(fill="x", padx=6, pady=4)
-            card.bind("<MouseWheel>", self._on_outer_mousewheel)
-
-            # Row Header
-            hdr = tk.Frame(card, bg=row_bg)
-            hdr.pack(fill="x", pady=(0, 4))
-            hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
-
             spk_label = box.speaker if box.speaker else "(Narration)"
-            tk.Label(
-                hdr,
-                text=f"Box #{idx + 1:03d} — {spk_label}",
-                font=("Segoe UI", 9, "bold"),
-                bg=row_bg,
-                fg=fg_muted if is_locked else t["misora_pink"],
-            ).pack(side="left")
-
-            if is_locked:
-                tk.Label(
-                    hdr,
-                    text="🔒 Locked (Auto-Skip)",
-                    font=("Segoe UI", 8, "bold"),
-                    bg=row_bg,
-                    fg=fg_muted,
-                ).pack(side="left", padx=(8, 4))
-
-            var_skip = tk.BooleanVar(master=self, value=is_locked)
-            cb_skip = tk.Checkbutton(
-                hdr,
-                text="Skip",
-                variable=var_skip,
-                state="disabled" if is_locked else "normal",
-                bg=row_bg,
-                fg=fg_muted if is_locked else fg_panel,
-                disabledforeground=fg_muted,
-                selectcolor=t["bg_dark"],
-                activebackground=row_bg,
-                activeforeground=fg_panel,
-            )
-            cb_skip.pack(side="right")
-
-            # Provenance + duplicate controls
-            prov_text = lookup.candidates[cand_idx].provenance if lookup.candidates else "No XUAT match"
-            lbl_provenance = tk.Label(
-                hdr,
-                text=prov_text,
-                font=("Consolas", 8),
-                bg=row_bg,
-                fg=fg_muted,
-            )
-            lbl_provenance.pack(side="right", padx=(6, 8))
-
-            lbl_dup_counter = tk.Label(hdr, text="", font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_blue"])
-            var_scope = tk.StringVar(master=self, value="This Box")
-            if lookup.status == "duplicate":
-                scope_cmb = ttk.Combobox(
-                    hdr,
-                    textvariable=var_scope,
-                    values=("This Box", "This Story", "Global"),
-                    state="readonly",
-                    width=10,
-                )
-                scope_cmb.pack(side="right", padx=(4, 4))
-                scope_cmb.bind(
-                    "<<ComboboxSelected>>",
-                    lambda _e, r_idx=idx: self._apply_conflict_scope(r_idx),
-                )
-
-                btn_next = ttk.Button(hdr, text="▶", width=2, style="Small.TButton", command=lambda r_idx=idx: self._step_candidate(r_idx, 1))
-                btn_next.pack(side="right", padx=(1, 2))
-                lbl_dup_counter.config(text=f"{cand_idx + 1}/{len(lookup.candidates)}")
-                lbl_dup_counter.pack(side="right", padx=2)
-                btn_prev = ttk.Button(hdr, text="◀", width=2, style="Small.TButton", command=lambda r_idx=idx: self._step_candidate(r_idx, -1))
-                btn_prev.pack(side="right", padx=(2, 1))
-
-            # Paired Left (Story) & Right (XUAT) 3x50 read-only boxes
-            pair_frame = tk.Frame(card, bg=row_bg)
-            pair_frame.pack(fill="x")
-            pair_frame.bind("<MouseWheel>", self._on_outer_mousewheel)
-
-            left_col = tk.Frame(pair_frame, bg=row_bg)
-            left_col.pack(side="left", padx=(0, 8))
-            left_hdr = tk.Frame(left_col, bg=row_bg)
-            left_hdr.pack(fill="x")
-            tk.Label(left_hdr, text="Story (JP / Current)", font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
-            left_m = self.app._measure_dialogue_metrics(jp_key)
-            left_ov_badge = ("▼" if left_m["has_line_overflow"] else "") + ("▶" if left_m["has_width_overflow"] else "")
-            lbl_left_overflow = tk.Label(left_hdr, text=left_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"])
-            lbl_left_overflow.pack(side="right")
-
-            left_wrap = tk.Frame(left_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
-            left_wrap.pack_propagate(False)
-            left_wrap.pack()
-
-            txt_left = tk.Text(
-                left_wrap,
-                font=measure_font,
-                height=3,
-                width=50,
-                wrap="none",
-                bg=t["bg_dark"] if is_locked else t["bg_editor"],
-                fg=fg_muted if is_locked else fg_editor,
-                bd=0,
-                highlightthickness=0,
-                padx=3,
-                pady=2,
-            )
-            txt_left.insert("1.0", jp_key)
-            txt_left.config(state="disabled")
-            txt_left.pack(fill="both", expand=True)
-
-            right_col = tk.Frame(pair_frame, bg=row_bg)
-            right_col.pack(side="left")
-            right_hdr = tk.Frame(right_col, bg=row_bg)
-            right_hdr.pack(fill="x")
-            tk.Label(right_hdr, text="XUAT Match", font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
-
-            right_text = lookup.candidates[cand_idx].value if lookup.candidates else ""
-            right_m = self.app._measure_dialogue_metrics(right_text)
-            right_ov_badge = ("▼" if right_m["has_line_overflow"] else "") + ("▶" if right_m["has_width_overflow"] else "")
-            lbl_right_overflow = tk.Label(right_hdr, text=right_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"])
-            lbl_right_overflow.pack(side="right")
-
-            right_wrap = tk.Frame(right_col, width=box_px_w, height=box_px_h, bg=t["bg_editor"], bd=1, relief="solid")
-            right_wrap.pack_propagate(False)
-            right_wrap.pack()
-
-            txt_right = tk.Text(
-                right_wrap,
-                font=measure_font,
-                height=3,
-                width=50,
-                wrap="none",
-                bg=t["bg_dark"] if is_locked else t["bg_editor"],
-                fg=fg_muted if is_locked else fg_editor,
-                bd=0,
-                highlightthickness=0,
-                padx=3,
-                pady=2,
-            )
-            txt_right.insert("1.0", right_text)
-            txt_right.config(state="disabled")
-            txt_right.pack(fill="both", expand=True)
-
-            self._bind_paired_box_events(txt_left, left_m["has_line_overflow"], left_m["has_width_overflow"])
-            self._bind_paired_box_events(txt_right, right_m["has_line_overflow"], right_m["has_width_overflow"])
-
-            self._rows.append(
-                {
-                    "box_idx": idx,
-                    "box_uid": b_uid,
-                    "norm_key": norm_k,
-                    "status": lookup.status,
-                    "candidates": lookup.candidates,
-                    "cand_idx": cand_idx,
-                    "is_locked": is_locked,
-                    "var_skip": var_skip,
-                    "cb_skip": cb_skip,
-                    "var_scope": var_scope,
-                    "frame": card,
-                    "left_wrap": left_wrap,
-                    "right_wrap": right_wrap,
-                    "txt_left": txt_left,
-                    "txt_right": txt_right,
-                    "lbl_left_overflow": lbl_left_overflow,
-                    "lbl_right_overflow": lbl_right_overflow,
-                    "lbl_provenance": lbl_provenance,
-                    "lbl_dup_counter": lbl_dup_counter,
-                }
+            self._create_paired_box_row(
+                row_list=self._rows,
+                header_text=f"Box #{idx + 1:03d} — {spk_label}",
+                left_label="Story (JP / Current)",
+                right_label="XUAT Match",
+                left_text=jp_key,
+                lookup=lookup,
+                cand_idx=cand_idx,
+                lines=3,
+                is_locked=is_locked,
+                lock_badge="🔒 Locked (Auto-Skip)" if is_locked else "",
+                show_scope=True,
+                norm_key=norm_k,
+                extra_data={"box_idx": idx, "box_uid": b_uid},
             )
 
         self._set_filter(self._active_filter)
@@ -19838,18 +20483,37 @@ class ImportFromXUATDialog(tk.Toplevel):
         txt.bind("<Shift-MouseWheel>", _on_shift_wheel)
 
     def _step_candidate(self, row_idx: int, delta: int) -> None:
-        if not (0 <= row_idx < len(self._rows)):
+        """Backward-compatible dialogue row candidate stepper."""
+        self._step_section_candidate(self._rows, row_idx, delta, apply_scope=True)
+
+    def _step_section_candidate(
+        self,
+        row_list: List[Dict[str, Any]],
+        row_idx: int,
+        delta: int,
+        apply_scope: bool = False,
+    ) -> None:
+        if not (0 <= row_idx < len(row_list)):
             return
-        row = self._rows[row_idx]
+        row = row_list[row_idx]
         cands = row["candidates"]
         if len(cands) <= 1:
             return
         new_ci = (row["cand_idx"] + delta) % len(cands)
-        self._select_candidate(row_idx, new_ci)
-        self._apply_conflict_scope(row_idx)
+        self._select_section_candidate(row_list, row_idx, new_ci)
+        if apply_scope and row_list is self._rows:
+            self._apply_conflict_scope(row_idx)
 
     def _select_candidate(self, row_idx: int, cand_idx: int) -> None:
-        row = self._rows[row_idx]
+        self._select_section_candidate(self._rows, row_idx, cand_idx)
+
+    def _select_section_candidate(
+        self,
+        row_list: List[Dict[str, Any]],
+        row_idx: int,
+        cand_idx: int,
+    ) -> None:
+        row = row_list[row_idx]
         cands = row["candidates"]
         if not (0 <= cand_idx < len(cands)):
             return
@@ -19862,7 +20526,10 @@ class ImportFromXUATDialog(tk.Toplevel):
             txt_r.insert("1.0", chosen.value)
             txt_r.config(state="disabled")
         rm = self.app._measure_dialogue_metrics(chosen.value)
-        ov_badge = ("▼" if rm["has_line_overflow"] else "") + ("▶" if rm["has_width_overflow"] else "")
+        lines = int(row.get("lines", 3))
+        ov_badge = ("▼" if (lines >= 3 and rm["has_line_overflow"]) else "") + (
+            "▶" if rm["has_width_overflow"] else ""
+        )
         row["lbl_right_overflow"].config(text=ov_badge)
         row["lbl_provenance"].config(text=chosen.provenance)
         row["lbl_dup_counter"].config(text=f"{cand_idx + 1}/{len(cands)}")
@@ -19882,7 +20549,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                     continue
                 for ci, c in enumerate(other["candidates"]):
                     if c.value == chosen.value:
-                        self._select_candidate(other_idx, ci)
+                        self._select_section_candidate(self._rows, other_idx, ci)
                         break
         if scope == "Global" and norm_k:
             if not hasattr(self.app, "_xuat_global_choice_overrides"):
@@ -19916,17 +20583,58 @@ class ImportFromXUATDialog(tk.Toplevel):
         return ", ".join(f"Box #{n}" for n in nums)
 
     def _on_apply_import(self) -> bool:
-        """Show Pre-Apply summary prompt and apply unlocked, non-skipped boxes in ONE Undo batch."""
+        """Validate doc identity, confirm, apply metadata/actors/dialogue in ONE atomic Undo batch."""
+        if not self._validate_document_identity():
+            messagebox.showwarning(
+                "Document Changed",
+                "The active story changed since Import from XUAT opened.\n"
+                "Please reopen Import from XUAT to refresh before applying.",
+                parent=self,
+            )
+            self.app.show_toast("Import aborted: document changed since dialog opened.")
+            return False
+
         doc = self.app.current_doc
         if not doc or not doc.boxes:
             return False
 
-        translate_speakers = bool(self.var_translate_speakers.get())
+        # 1. Metadata plan (Title / Subtitle only; Synopsis untouched)
+        meta_plan: Dict[str, Tuple[str, str, Any]] = {}
+        for mrow in self._metadata_rows:
+            if mrow["var_skip"].get() or not mrow["candidates"]:
+                continue
+            chosen = mrow["candidates"][mrow["cand_idx"]]
+            if chosen.value != mrow["orig_value"]:
+                meta_plan[mrow["field"]] = (mrow["orig_value"], chosen.value, chosen)
+
+        # 2. Unique Actor plan
+        actor_plan: Dict[str, str] = {}
+        actor_summary_parts: List[str] = []
+        protected_actors: Set[str] = set()
+        for arow in self._actor_rows:
+            orig_sp = arow["orig_speaker"]
+            protected_actors.add(orig_sp)
+            if arow["var_skip"].get() or not arow["candidates"]:
+                continue
+            chosen = arow["candidates"][arow["cand_idx"]]
+            if chosen.value and chosen.value != orig_sp:
+                actor_plan[orig_sp] = chosen.value
+                protected_actors.add(chosen.value)
+                un_n = len(arow["unlocked_indices"])
+                lk_n = len(arow["locked_indices"])
+                if un_n > 0:
+                    msg_part = f"{orig_sp} → {chosen.value} ({un_n} box" + ("es" if un_n != 1 else "")
+                    if lk_n > 0:
+                        msg_part += f", {lk_n} 🔒 skipped"
+                    msg_part += ")"
+                    actor_summary_parts.append(msg_part)
+
+        # 3. Ordinary Dialogue plan
         to_import_nums: List[int] = []
         lock_skipped_nums: List[int] = []
         user_skipped_nums: List[int] = []
         missing_count = 0
-        plan: List[Tuple[int, Any, str, str, Any]] = []
+        dialogue_plan: Dict[int, Tuple[Any, Any]] = {}
 
         for row in self._rows:
             b_idx = row["box_idx"]
@@ -19941,28 +20649,37 @@ class ImportFromXUATDialog(tk.Toplevel):
             if not cands:
                 missing_count += 1
                 continue
-            box = doc.boxes[b_idx]
             chosen_entry = cands[row["cand_idx"]]
-            new_tx = chosen_entry.value
-            new_sp = box.speaker
-            if translate_speakers and b_idx in self._speaker_matches and box.kind == "print":
-                new_sp = self._speaker_matches[b_idx]
             to_import_nums.append(b_num)
-            plan.append((b_idx, row["box_uid"], new_sp, new_tx, chosen_entry))
+            dialogue_plan[b_idx] = (row["box_uid"], chosen_entry)
 
+        meta_lbl = ", ".join(f"{k.capitalize()}" for k in meta_plan) if meta_plan else "None"
+        actor_lbl = "; ".join(actor_summary_parts) if actor_summary_parts else "None"
         prompt = (
             "Confirm XUAT Import Summary:\n\n"
-            f"1. Boxes to import ({len(to_import_nums)}): {self._format_box_list(to_import_nums)}\n"
-            f"2. Skipped — Translation Lock (🔒) ({len(lock_skipped_nums)}): {self._format_box_list(lock_skipped_nums)}\n"
-            f"3. Skipped — User Skip ({len(user_skipped_nums)}): {self._format_box_list(user_skipped_nums)}\n"
-            f"4. Missing / Untranslated: {missing_count} box(es)\n\n"
+            f"1. Metadata (Box 0): {meta_lbl}\n"
+            f"2. Unique Actors: {actor_lbl}\n"
+            f"3. Dialogue boxes to import ({len(to_import_nums)}): {self._format_box_list(to_import_nums)}\n"
+            f"4. Skipped — Translation Lock (🔒) ({len(lock_skipped_nums)}): {self._format_box_list(lock_skipped_nums)}\n"
+            f"5. Skipped — User Skip ({len(user_skipped_nums)}): {self._format_box_list(user_skipped_nums)}\n"
+            f"6. Missing / Untranslated: {missing_count} box(es)\n\n"
             "Proceed with importing these translations?"
         )
         if not messagebox.askyesno("Confirm XUAT Import", prompt, parent=self):
             return False
 
-        if not plan:
-            self.app.show_toast("No eligible boxes to import.")
+        # Re-validate Document Identity right before mutation
+        if not self._validate_document_identity():
+            messagebox.showwarning(
+                "Document Changed",
+                "The active story changed while the confirmation prompt was open.\n"
+                "Import aborted with zero changes.",
+                parent=self,
+            )
+            return False
+
+        if not meta_plan and not actor_plan and not dialogue_plan:
+            self.app.show_toast("No eligible items to import.")
             return False
 
         self.app._commit_widget_edit()
@@ -19973,70 +20690,164 @@ class ImportFromXUATDialog(tk.Toplevel):
         if auto_wrap:
             measure_fn, safe_w = self.app._get_word_wrap_params()
 
+        # Pre-transaction rollback snapshot (Guardrail #4 & Gap #2)
+        pre_records = copy.deepcopy(doc.records)
+        pre_removed = set(doc.removed_records)
+        pre_mod_boxes = set(self.app._modified_boxes)
+        pre_mod_uids = set(getattr(self.app, "_modified_box_uids", set()))
+        pre_orig_jp = dict(getattr(self.app, "_original_jp_by_uid", {}))
+        pre_is_dirty = bool(self.app.is_dirty)
+        cur_p_key = Path(self.app.current_file_path).resolve() if self.app.current_file_path else None
+        pre_entry_dirty = (
+            bool(self.app.open_documents[cur_p_key].get("dirty", False))
+            if (cur_p_key is not None and cur_p_key in getattr(self.app, "open_documents", {}))
+            else pre_is_dirty
+        )
+
         applied_count = 0
         still_over_3 = 0
         applied_records: List[AppliedXuatRecord] = []
+        fp_str = str(self.app.current_file_path) if self.app.current_file_path else ""
+
         self.app.undo_journal.begin_batch("Import from XUAT")
         try:
-            for b_idx, b_uid, new_sp, raw_tx, chosen_entry in plan:
-                if not (0 <= b_idx < len(doc.boxes)):
-                    continue
-                if self.app.is_box_locked(b_idx):
-                    continue
-                new_tx = (
-                    wrap_text(raw_tx, measure_fn, safe_w, reflow_existing_breaks=False).wrapped_text
-                    if (auto_wrap and measure_fn is not None)
-                    else raw_tx
-                )
-                old_box = doc.boxes[b_idx]
-                old_sp = old_box.speaker
-                old_tx = old_box.clean_text
-                if new_sp == old_sp and new_tx == old_tx:
-                    continue
-                if auto_wrap and self.app._measure_dialogue_metrics(new_tx)["has_line_overflow"]:
-                    still_over_3 += 1
-                old_segs = [s.text for s in old_box.segs]
-                # Mutate AST first (BUG-13)
-                doc.inject_box(b_idx, new_sp, new_tx)
-                new_segs = [s.text for s in doc.boxes[b_idx].segs]
+            # A. Box 0 Metadata (Title & Subtitle only; Synopsis untouched)
+            if meta_plan:
+                meta_before = doc.get_metadata()
+                new_title = meta_plan["title"][1] if "title" in meta_plan else None
+                new_sub = meta_plan["subtitle"][1] if "subtitle" in meta_plan else None
+                doc.set_metadata(title=new_title, subtitle=new_sub, summary=None)
                 self.app.undo_journal.record(
-                    BoxEditDelta(
-                        box_index=b_idx,
-                        old_speaker=old_sp,
-                        new_speaker=new_sp,
-                        old_text=old_tx,
-                        new_text=new_tx,
-                        file_path=str(self.app.current_file_path) if self.app.current_file_path else "",
-                        box_uid=b_uid,
-                        source="xuat_import",
-                        old_seg_texts=old_segs,
-                        new_seg_texts=new_segs,
+                    MetadataDelta(
+                        file_path=fp_str,
+                        old_title=meta_before.get("title", ""),
+                        new_title=new_title if new_title is not None else meta_before.get("title", ""),
+                        old_subtitle=meta_before.get("subtitle", ""),
+                        new_subtitle=new_sub if new_sub is not None else meta_before.get("subtitle", ""),
+                        old_summary=meta_before.get("summary", ""),
+                        new_summary=meta_before.get("summary", ""),
                     )
                 )
+                for _mf, (_old_v, _new_v, chosen_m) in meta_plan.items():
+                    applied_records.append(
+                        AppliedXuatRecord(
+                            file_path=chosen_m.file_path,
+                            line_number=chosen_m.line_number,
+                            raw_key=chosen_m.raw_key,
+                            value=chosen_m.value,
+                            box_index=-1,
+                        )
+                    )
+                applied_count += len(meta_plan)
+
+            # B. Merged Unique Actor + Dialogue box updates (respecting locks & multi-seg AST)
+            for b_idx in range(len(doc.boxes)):
+                if self.app.is_box_locked(b_idx):
+                    continue
+                old_box = doc.boxes[b_idx]
+                b_uid = _get_box_uid(old_box)
+                old_sp = old_box.speaker
+                old_tx = old_box.clean_text
+                old_segs = [s.text for s in old_box.segs]
+
+                new_sp = old_sp
+                if old_box.kind == "print" and old_sp in actor_plan:
+                    new_sp = actor_plan[old_sp]
+
+                dlg_item = dialogue_plan.get(b_idx)
+                chosen_dlg_entry = dlg_item[1] if dlg_item is not None else None
+                if chosen_dlg_entry is not None:
+                    raw_tx = chosen_dlg_entry.value
+                    new_tx = (
+                        wrap_text(raw_tx, measure_fn, safe_w, reflow_existing_breaks=False).wrapped_text
+                        if (auto_wrap and measure_fn is not None)
+                        else raw_tx
+                    )
+                    if auto_wrap and self.app._measure_dialogue_metrics(new_tx)["has_line_overflow"]:
+                        still_over_3 += 1
+                    if new_sp == old_sp and new_tx == old_tx:
+                        continue
+                    doc.inject_box(b_idx, new_sp, new_tx)
+                    new_segs = [s.text for s in doc.boxes[b_idx].segs]
+                    self.app.undo_journal.record(
+                        BoxEditDelta(
+                            box_index=b_idx,
+                            old_speaker=old_sp,
+                            new_speaker=new_sp,
+                            old_text=old_tx,
+                            new_text=new_tx,
+                            file_path=fp_str,
+                            box_uid=b_uid,
+                            source="xuat_import",
+                            old_seg_texts=old_segs,
+                            new_seg_texts=new_segs,
+                        )
+                    )
+                    applied_records.append(
+                        AppliedXuatRecord(
+                            file_path=chosen_dlg_entry.file_path,
+                            line_number=chosen_dlg_entry.line_number,
+                            raw_key=chosen_dlg_entry.raw_key,
+                            value=chosen_dlg_entry.value,
+                            box_index=b_idx,
+                        )
+                    )
+                elif new_sp != old_sp:
+                    # Speaker-only rename: pass seg_texts so multi-segment boxes are NEVER flattened!
+                    doc.inject_box(b_idx, new_sp, old_tx, seg_texts=old_segs)
+                    new_segs = [s.text for s in doc.boxes[b_idx].segs]
+                    self.app.undo_journal.record(
+                        BoxEditDelta(
+                            box_index=b_idx,
+                            old_speaker=old_sp,
+                            new_speaker=new_sp,
+                            old_text=old_tx,
+                            new_text=old_tx,
+                            file_path=fp_str,
+                            box_uid=b_uid,
+                            source="xuat_import",
+                            old_seg_texts=old_segs,
+                            new_seg_texts=new_segs,
+                        )
+                    )
+                else:
+                    continue
+
                 self.app._modified_boxes.add(b_idx)
                 if b_uid is not None and hasattr(self.app, "_modified_box_uids"):
                     self.app._modified_box_uids.add(b_uid)
-                applied_records.append(
-                    AppliedXuatRecord(
-                        file_path=chosen_entry.file_path,
-                        line_number=chosen_entry.line_number,
-                        raw_key=chosen_entry.raw_key,
-                        value=chosen_entry.value,
-                        box_index=b_idx,
-                    )
-                )
                 applied_count += 1
+        except Exception as exc:
+            # Atomic transaction rollback: restore AST, dirty state, and discard partial Undo batch
+            doc.records = pre_records
+            doc.removed_records = pre_removed
+            doc._rebuild_boxes()
+            self.app._modified_boxes = pre_mod_boxes
+            if hasattr(self.app, "_modified_box_uids"):
+                self.app._modified_box_uids = pre_mod_uids
+            if hasattr(self.app, "_original_jp_by_uid"):
+                self.app._original_jp_by_uid = pre_orig_jp
+            self.app.is_dirty = pre_is_dirty
+            if cur_p_key is not None and cur_p_key in getattr(self.app, "open_documents", {}):
+                self.app.open_documents[cur_p_key]["dirty"] = pre_entry_dirty
+            with self.app.undo_journal._lock:
+                if self.app.undo_journal._batch is not None:
+                    self.app.undo_journal._batch.deltas.clear()
+            self.app.logger.exception("XUAT import rolled back due to error:", exc)
+            messagebox.showerror("Import Failed (Rolled Back)", f"XUAT import failed and was rolled back:\n{exc}", parent=self)
+            return False
         finally:
             self.app.undo_journal.end_batch()
 
         xuat_idx_snapshot = self.xuat_index
         source_fps = dict(getattr(xuat_idx_snapshot, "file_fingerprints", {}) or {})
+        archive_checked = bool(self.var_archive_xuat.get()) if self.var_archive_xuat is not None else True
 
         if applied_count > 0:
             self.app._mark_document_dirty(self.app.current_file_path)
             self.app._dirty_state_changed()
             self.app._update_views()
-            msg = f"✓ Imported XUAT translations for {applied_count} box(es)"
+            msg = f"✓ Imported XUAT translations ({applied_count} item(s))"
             if auto_wrap:
                 msg += f" ({still_over_3} still >3 lines)"
             self.app.show_toast(msg)
@@ -20044,16 +20855,15 @@ class ImportFromXUATDialog(tk.Toplevel):
             self.app.show_toast("No changes were applied from XUAT.")
 
         self._on_close()
-        if applied_count > 0 and applied_records and xuat_idx_snapshot is not None:
+        if archive_checked and applied_count > 0 and applied_records and xuat_idx_snapshot is not None:
             existing_cleanup = getattr(self.app, "_xuat_cleanup_dialog", None)
             if existing_cleanup is not None:
                 try:
                     if existing_cleanup.winfo_exists():
-                        existing_cleanup.destroy()
+                        existing_cleanup._on_close()
                 except Exception:
                     pass
                 self.app._xuat_cleanup_dialog = None
-            # Guardrail 1: open non-blockingly without wait_window() or grab_set()
             cleanup_dlg = XuatCleanupDialog(
                 self.app,
                 xuat_index=xuat_idx_snapshot,
@@ -20061,6 +20871,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                 applied_records=applied_records,
                 source_fingerprints=source_fps,
                 mode="post_import",
+                protected_actors=sorted(protected_actors),
             )
             self.app._xuat_cleanup_dialog = cleanup_dlg
         return applied_count > 0
@@ -20068,10 +20879,12 @@ class ImportFromXUATDialog(tk.Toplevel):
     def _on_close(self) -> None:
         self._focused_box_widget = None
         self._rows.clear()
+        self._metadata_rows.clear()
+        self._actor_rows.clear()
         self._filter_buttons.clear()
-        self._speaker_matches.clear()
-        self.var_translate_speakers = None
-        self.var_auto_word_wrap = None
+        self._target_doc_ref = None
+        self.var_archive_xuat = None  # type: ignore[assignment]
+        self.var_auto_word_wrap = None  # type: ignore[assignment]
         try:
             for w in (self.list_canvas, self.rows_frame):
                 if w and w.winfo_exists():
@@ -20247,28 +21060,35 @@ class XuatCleanupSettingsDialog(tk.Toplevel):
 
 
 class XuatCleanupDialog(tk.Toplevel):
-    """Post-import and manual XUAT cleanup/archival review dialog (U01)."""
+    """Asynchronous XUAT Translation Archiving & cleanup review dialog (U01 / U-08 / U-10)."""
+
+    _BATCH_SIZE: int = 80
 
     def __init__(
         self,
         parent: "MisoraApp",
-        xuat_index: XuatIndex,
+        xuat_index: Optional[XuatIndex],
         doc: Any,
         applied_records: Sequence[AppliedXuatRecord] = (),
         source_fingerprints: Optional[Dict[Path, str]] = None,
         mode: str = "post_import",
+        protected_actors: Iterable[str] = (),
+        xuat_roots: Optional[Sequence[Path]] = None,
     ) -> None:
         super().__init__(parent)
         self.app = parent
         self.xuat_index = xuat_index
         self.doc = doc
         self.applied_records = list(applied_records)
+        self._explicit_source_fps = dict(source_fingerprints) if source_fingerprints else {}
         self.mode = mode
+        self._protected_actors: Tuple[str, ...] = tuple(str(a) for a in (protected_actors or ()) if a)
+        self._xuat_roots: List[Path] = list(xuat_roots) if xuat_roots is not None else list(self.app._get_xuat_index_roots())
         self.last_report: Optional[CleanupReport] = None
 
-        self.title("Post-Import XUAT Cleanup & Archive" if mode == "post_import" else "Clean / Archive XUAT")
-        self.geometry("860x640")
-        self.minsize(720, 520)
+        self.title("XUAT Translation Archiving")
+        self.geometry("920x660")
+        self.minsize(760, 540)
         self.transient(parent)
 
         t = self.app.theme
@@ -20288,19 +21108,28 @@ class XuatCleanupDialog(tk.Toplevel):
         )
         self.var_allow_unarchived = tk.BooleanVar(master=self, value=False)
         self.var_include_applied = tk.BooleanVar(master=self, value=True)
-        self._cand_vars: List[Tuple[CleanupCandidate, tk.BooleanVar]] = []
 
-        self._analysis = classify_cleanup_candidates(
-            self.xuat_index,
-            self.doc,
-            applied_records=self.applied_records,
-            duplicate_scope=self.var_duplicate_scope.get(),
+        self._analysis: CleanupAnalysis = CleanupAnalysis(
+            candidates=[],
+            source_fingerprints=dict(self._explicit_source_fps),
+            has_duplicates=False,
+            counts_by_tier={"applied": 0, "duplicate": 0, "already_translated_unique": 0, "uncertain": 0},
         )
-        if source_fingerprints:
-            self._analysis.source_fingerprints = dict(source_fingerprints)
+        self._item_to_cand: Dict[str, CleanupCandidate] = {}
+        self._cand_items: List[Tuple[str, CleanupCandidate]] = []
+
+        # Async scan & batched Treeview state
+        self._is_scanning: bool = False
+        self._scan_gen: int = 0
+        self._scan_cancel_event: Optional[threading.Event] = None
+        self._scan_thread: Optional[threading.Thread] = None
+        self._scan_poll_job: Optional[str] = None
+        self._batch_insert_job: Optional[str] = None
+        self._scan_progress_lock = threading.Lock()
+        self._scan_latest_progress: Optional[Tuple[int, int, int]] = None
+        self._scan_terminal_queue: queue.Queue = queue.Queue()
 
         self._build_ui(t)
-        self._populate_candidates()
         self._refresh_safety_banner()
         self._refresh_archive_warning()
 
@@ -20311,6 +21140,8 @@ class XuatCleanupDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Escape>", lambda _e=None: self._on_close())
 
+        self._start_async_scan()
+
     def _build_ui(self, t: dict) -> None:
         fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
@@ -20320,7 +21151,11 @@ class XuatCleanupDialog(tk.Toplevel):
 
         tk.Label(
             top,
-            text="XUAT Cleanup & Mandatory Archival" if self.mode != "post_import" else "Import Complete — Optional XUAT Cleanup & Archive",
+            text=(
+                "Import Complete — XUAT Translation Archiving"
+                if self.mode == "post_import"
+                else "XUAT Translation Archiving"
+            ),
             font=("Segoe UI", 12, "bold"),
             bg=t["bg_panel"],
             fg=t["misora_pink"],
@@ -20340,7 +21175,7 @@ class XuatCleanupDialog(tk.Toplevel):
 
         self.lbl_counts = tk.Label(
             top,
-            text="",
+            text="Scanning XUAT translations in background...",
             font=("Segoe UI", 9),
             bg=t["bg_panel"],
             fg=fg_panel,
@@ -20348,19 +21183,19 @@ class XuatCleanupDialog(tk.Toplevel):
         )
         self.lbl_counts.pack(fill="x", pady=(4, 4))
 
-        applied_n = self._analysis.counts_by_tier.get("applied", 0)
-        if applied_n > 0:
-            tk.Checkbutton(
-                top,
-                text=f"Remove lines successfully applied during this import ({applied_n} entries)",
-                variable=self.var_include_applied,
-                command=self._on_toggle_applied,
-                bg=t["bg_panel"],
-                fg=fg_panel,
-                selectcolor=t["bg_dark"],
-                activebackground=t["bg_panel"],
-                activeforeground=fg_panel,
-            ).pack(anchor="w", pady=(0, 4))
+        self.cb_include_applied = tk.Checkbutton(
+            top,
+            text="Remove lines successfully applied during this import",
+            variable=self.var_include_applied,
+            command=self._on_toggle_applied,
+            bg=t["bg_panel"],
+            fg=fg_panel,
+            selectcolor=t["bg_dark"],
+            activebackground=t["bg_panel"],
+            activeforeground=fg_panel,
+        )
+        if self.applied_records:
+            self.cb_include_applied.pack(anchor="w", pady=(0, 4))
 
         opts_grid = tk.Frame(top, bg=t["bg_panel"])
         opts_grid.pack(fill="x", pady=(2, 4))
@@ -20391,8 +21226,6 @@ class XuatCleanupDialog(tk.Toplevel):
             style="Panel.TRadiobutton",
             command=self._on_duplicate_scope_changed,
         ).pack(anchor="w")
-        if self._analysis.has_duplicates:
-            self._dup_scope_frame.pack(side="left", fill="y", padx=(0, 8))
 
         lb_frame = tk.LabelFrame(
             opts_grid,
@@ -20451,10 +21284,29 @@ class XuatCleanupDialog(tk.Toplevel):
         path_row = tk.Frame(arch_box, bg=t["bg_panel"])
         path_row.pack(fill="x", pady=2)
         tk.Label(path_row, text="Dir:", font=("Segoe UI", 8), bg=t["bg_panel"], fg=fg_panel).pack(side="left")
-        tk.Entry(path_row, textvariable=self.var_archive_dir, font=("Segoe UI", 8), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", fill="x", expand=True, padx=4)
-        ttk.Button(path_row, text="Browse...", style="Small.TButton", command=self._browse_archive_dir).pack(side="left", padx=(0, 6))
+        tk.Entry(
+            path_row,
+            textvariable=self.var_archive_dir,
+            font=("Segoe UI", 8),
+            bg=t["bg_editor"],
+            fg=fg_editor,
+            bd=1,
+            relief="solid",
+        ).pack(side="left", fill="x", expand=True, padx=4)
+        ttk.Button(path_row, text="Browse...", style="Small.TButton", command=self._browse_archive_dir).pack(
+            side="left", padx=(0, 6)
+        )
         tk.Label(path_row, text="Ext:", font=("Segoe UI", 8), bg=t["bg_panel"], fg=fg_panel).pack(side="left")
-        tk.Entry(path_row, textvariable=self.var_archive_ext, width=11, font=("Segoe UI", 8), bg=t["bg_editor"], fg=fg_editor, bd=1, relief="solid").pack(side="left", padx=(4, 0))
+        tk.Entry(
+            path_row,
+            textvariable=self.var_archive_ext,
+            width=11,
+            font=("Segoe UI", 8),
+            bg=t["bg_editor"],
+            fg=fg_editor,
+            bd=1,
+            relief="solid",
+        ).pack(side="left", padx=(4, 0))
 
         self.lbl_archive_warning = tk.Label(
             arch_box,
@@ -20462,7 +21314,7 @@ class XuatCleanupDialog(tk.Toplevel):
             font=("Segoe UI", 8, "bold"),
             bg=t["bg_panel"],
             fg="#e69f00",
-            wraplength=790,
+            wraplength=840,
             justify="left",
             anchor="w",
         )
@@ -20478,25 +21330,359 @@ class XuatCleanupDialog(tk.Toplevel):
             activeforeground=fg_panel,
         ).pack(anchor="w", pady=(4, 0))
 
-        # Scrollable candidate list
+        # Bulk Treeview selection bar
+        bulk_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=2)
+        bulk_bar.pack(fill="x")
+        self.btn_select_all = ttk.Button(
+            bulk_bar, text="Select All", style="Small.TButton", command=lambda: self._bulk_select(True)
+        )
+        self.btn_select_all.pack(side="left", padx=(0, 4))
+        self.btn_deselect_all = ttk.Button(
+            bulk_bar, text="Deselect All", style="Small.TButton", command=lambda: self._bulk_select(False)
+        )
+        self.btn_deselect_all.pack(side="left")
+        tk.Label(
+            bulk_bar,
+            text="Click [✓]/[ ] or press Space on a row to toggle selection",
+            font=("Segoe UI", 8),
+            bg=t["bg_panel"],
+            fg=t["fg_muted"],
+        ).pack(side="right")
+
+        # Lightweight batched ttk.Treeview candidate list (U-08 anti-freeze)
         list_wrap = tk.Frame(self, bg=t["bg_dark"], bd=1, relief="solid")
         list_wrap.pack(fill="both", expand=True, padx=14, pady=6)
 
-        self.cands_canvas = tk.Canvas(list_wrap, bg=t["bg_dark"], highlightthickness=0)
-        vsb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.cands_canvas.yview)
-        self.cands_canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        self.cands_canvas.pack(side="left", fill="both", expand=True)
+        cols = ("check", "tier", "location", "preview", "reason")
+        self.tree = ttk.Treeview(list_wrap, columns=cols, show="headings", selectmode="browse")
+        self.tree.heading("check", text="✓")
+        self.tree.heading("tier", text="Tier")
+        self.tree.heading("location", text="File:Line")
+        self.tree.heading("preview", text="Key = Value")
+        self.tree.heading("reason", text="Classification Reason")
 
-        self.cands_frame = tk.Frame(self.cands_canvas, bg=t["bg_dark"])
-        self._cands_win_id = self.cands_canvas.create_window((0, 0), window=self.cands_frame, anchor="nw")
-        self.cands_frame.bind("<Configure>", lambda _e=None: self.cands_canvas.configure(scrollregion=self.cands_canvas.bbox("all")) if self.cands_canvas.winfo_exists() else None)
-        self.cands_canvas.bind("<Configure>", lambda e: self.cands_canvas.itemconfig(self._cands_win_id, width=e.width) if self.cands_canvas.winfo_exists() else None)
+        self.tree.column("check", width=42, minwidth=38, anchor="center", stretch=False)
+        self.tree.column("tier", width=120, minwidth=90, anchor="w", stretch=False)
+        self.tree.column("location", width=155, minwidth=100, anchor="w", stretch=False)
+        self.tree.column("preview", width=340, minwidth=180, anchor="w", stretch=True)
+        self.tree.column("reason", width=210, minwidth=120, anchor="w", stretch=True)
+
+        vsb = ttk.Scrollbar(list_wrap, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(list_wrap, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        list_wrap.grid_rowconfigure(0, weight=1)
+        list_wrap.grid_columnconfigure(0, weight=1)
+
+        self.tree.bind("<Button-1>", self._on_tree_click)
+        self.tree.bind("<space>", self._on_tree_space)
 
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=8)
         btn_bar.pack(fill="x", side="bottom")
-        ttk.Button(btn_bar, text="Close (Keep XUAT Untouched)", style="TButton", command=self._on_close).pack(side="right", padx=(6, 0))
-        ttk.Button(btn_bar, text="Clean / Archive Selected", style="Pink.TButton", command=self._on_execute_cleanup).pack(side="right")
+        ttk.Button(btn_bar, text="Close (Keep XUAT Untouched)", style="TButton", command=self._on_close).pack(
+            side="right", padx=(6, 0)
+        )
+        self.btn_execute = ttk.Button(
+            btn_bar, text="Archive & Clean Selected", style="Pink.TButton", command=self._on_execute_cleanup
+        )
+        self.btn_execute.pack(side="right")
+
+    def _set_controls_busy(self, busy: bool) -> None:
+        """Disable execution & bulk controls while scanning or inserting Treeview batches (Guardrail #3)."""
+        if not self.winfo_exists():
+            return
+        state = "disabled" if busy else "normal"
+        for btn in (self.btn_execute, self.btn_select_all, self.btn_deselect_all):
+            if btn and btn.winfo_exists():
+                btn.config(state=state)
+        if self.cb_include_applied and self.cb_include_applied.winfo_exists():
+            self.cb_include_applied.config(state=state)
+
+    def _start_async_scan(self) -> None:
+        """Capture immutable snapshot on main thread and classify XUAT candidates in background worker."""
+        if self._scan_cancel_event is not None:
+            try:
+                self._scan_cancel_event.set()
+            except Exception:
+                pass
+        if self._batch_insert_job is not None:
+            try:
+                self.after_cancel(self._batch_insert_job)
+            except Exception:
+                pass
+            self._batch_insert_job = None
+
+        self._scan_gen += 1
+        gen = self._scan_gen
+        cancel_ev = threading.Event()
+        self._scan_cancel_event = cancel_ev
+        self._is_scanning = True
+        self._set_controls_busy(True)
+
+        # Capture immutable snapshot on main thread (Rule 15 / Guardrail #1)
+        doc_snap = _XuatDocSnapshot(self.doc)
+        applied_snap = list(self.applied_records)
+        dup_scope = self.var_duplicate_scope.get()
+        protected_actors = self._protected_actors
+        roots_snap = list(self._xuat_roots)
+        idx_ref = self.xuat_index
+        explicit_fps = dict(self._explicit_source_fps)
+
+        mgr = getattr(self.app, "_progress_mgr", None)
+        if mgr is not None:
+            mgr.start("archiving_scan", gen, "Scanning XUAT entries for archiving...", cancel_event=cancel_ev)
+
+        # Capture pure-Python locals ONLY — worker must NEVER hold references to Tk widgets/app!
+        scan_prog_lock = self._scan_progress_lock
+        scan_prog_box = [self._scan_latest_progress]
+        term_q = self._scan_terminal_queue
+        mgr_prog_lock = mgr._progress_lock if mgr is not None else None
+        mgr_latest_prog = mgr._latest_progress if mgr is not None else None
+        mgr_life_q = mgr._lifecycle_queue if mgr is not None else None
+
+        def _mgr_post_prog(frac: float, msg: str) -> None:
+            if mgr_prog_lock is not None and mgr_latest_prog is not None:
+                with mgr_prog_lock:
+                    mgr_latest_prog["archiving_scan"] = (gen, frac, msg)
+
+        def _on_prog(processed: int, total: int) -> None:
+            if cancel_ev.is_set():
+                return
+            with scan_prog_lock:
+                self_prog = (gen, processed, total)
+                scan_prog_box[0] = self_prog
+            frac = (processed / total) if total > 0 else -1.0
+            _mgr_post_prog(frac, f"Scanning XUAT entries ({processed}/{total})...")
+
+        def _worker() -> None:
+            try:
+                local_idx = idx_ref
+                built_new_idx = False
+                if local_idx is None:
+                    local_idx = build_xuat_index(
+                        roots_snap,
+                        cancel_event=cancel_ev,
+                        progress_cb=lambda cnt, fn: _mgr_post_prog(
+                            -1.0, f"Indexing XUAT ({cnt} files): {fn}"
+                        ) if not cancel_ev.is_set() else None,
+                    )
+                    built_new_idx = True
+                if cancel_ev.is_set():
+                    term_q.put(("scan_cancelled", gen, None))
+                    if mgr_life_q is not None:
+                        mgr_life_q.put(("cancel", "archiving_scan", gen, "XUAT scan cancelled."))
+                    return
+
+                analysis = classify_cleanup_candidates(
+                    local_idx,
+                    doc_snap,
+                    applied_records=applied_snap,
+                    duplicate_scope=dup_scope,
+                    protected_actors=protected_actors,
+                    cancel_event=cancel_ev,
+                    progress_cb=_on_prog,
+                )
+                if explicit_fps:
+                    analysis.source_fingerprints = explicit_fps
+                if cancel_ev.is_set():
+                    term_q.put(("scan_cancelled", gen, None))
+                    if mgr_life_q is not None:
+                        mgr_life_q.put(("cancel", "archiving_scan", gen, "XUAT scan cancelled."))
+                    return
+
+                term_q.put(("scan_done", gen, (local_idx, built_new_idx, analysis)))
+                if mgr_life_q is not None:
+                    mgr_life_q.put((
+                        "complete",
+                        "archiving_scan",
+                        gen,
+                        f"XUAT Translation Archiving ready ({len(analysis.candidates)} candidate(s)).",
+                    ))
+            except Exception as exc:
+                term_q.put(("scan_error", gen, str(exc)))
+                if mgr_life_q is not None:
+                    mgr_life_q.put(("fail", "archiving_scan", gen, f"XUAT scan failed: {exc}"))
+            finally:
+                with scan_prog_lock:
+                    if scan_prog_box[0] is not None:
+                        pass  # latest progress consumed by main-thread poll
+
+        self._scan_prog_box = scan_prog_box
+
+        t = threading.Thread(target=_worker, daemon=True)
+        self._scan_thread = t
+        t.start()
+        if self._scan_poll_job is None and self.winfo_exists():
+            self._scan_poll_job = self.after(30, self._poll_scan_queue)
+
+    def _poll_scan_queue(self) -> None:
+        self._scan_poll_job = None
+        if not self.winfo_exists() or getattr(self.app, "_destroyed", False):
+            return
+
+        with self._scan_progress_lock:
+            box = getattr(self, "_scan_prog_box", None)
+            prog = box[0] if box else self._scan_latest_progress
+        if prog is not None and prog[0] == self._scan_gen and self._is_scanning:
+            _, proc, tot = prog
+            if self.lbl_counts.winfo_exists():
+                self.lbl_counts.config(text=f"Scanning XUAT entries... ({proc}/{tot})")
+
+        terminal_handled = False
+        while True:
+            try:
+                kind, gen, payload = self._scan_terminal_queue.get_nowait()
+            except queue.Empty:
+                break
+            if gen != self._scan_gen:
+                continue
+            terminal_handled = True
+            self._is_scanning = False
+            if kind == "scan_done":
+                local_idx, built_new_idx, analysis = payload
+                self.xuat_index = local_idx
+                if built_new_idx and local_idx is not None:
+                    self.app.xuat_index = local_idx
+                    self.app.xuat_entries = local_idx
+                self._analysis = analysis
+                self._apply_analysis_to_ui()
+            elif kind == "scan_error":
+                if self.lbl_counts.winfo_exists():
+                    self.lbl_counts.config(text=f"XUAT scan failed: {payload}")
+                self._set_controls_busy(False)
+            elif kind == "scan_cancelled":
+                if self.lbl_counts.winfo_exists():
+                    self.lbl_counts.config(text="XUAT scan cancelled.")
+                self._set_controls_busy(False)
+
+        if not terminal_handled and self._is_scanning and self.winfo_exists():
+            self._scan_poll_job = self.after(30, self._poll_scan_queue)
+
+    def _apply_analysis_to_ui(self) -> None:
+        if not self.winfo_exists():
+            return
+        counts = self._analysis.counts_by_tier
+        self.lbl_counts.config(
+            text=(
+                f"Preview — Applied: {counts.get('applied', 0)}  |  "
+                f"Duplicates: {counts.get('duplicate', 0)}  |  "
+                f"Already Translated (Unique): {counts.get('already_translated_unique', 0)}  |  "
+                f"Uncertain (Unchecked by Default): {counts.get('uncertain', 0)}"
+            )
+        )
+        applied_n = counts.get("applied", 0)
+        if applied_n > 0:
+            self.cb_include_applied.config(text=f"Remove lines successfully applied during this import ({applied_n} entries)")
+            if not self.cb_include_applied.winfo_manager():
+                self.cb_include_applied.pack(anchor="w", pady=(0, 4), after=self.lbl_counts)
+        else:
+            if self.cb_include_applied.winfo_manager():
+                self.cb_include_applied.pack_forget()
+
+        if self._analysis.has_duplicates:
+            if not self._dup_scope_frame.winfo_manager():
+                self._dup_scope_frame.pack(side="left", fill="y", padx=(0, 8))
+        else:
+            if self._dup_scope_frame.winfo_manager():
+                self._dup_scope_frame.pack_forget()
+
+        self._refresh_archive_warning()
+        self._populate_candidates()
+
+    def _populate_candidates(self) -> None:
+        if self._batch_insert_job is not None:
+            try:
+                self.after_cancel(self._batch_insert_job)
+            except Exception:
+                pass
+            self._batch_insert_job = None
+
+        for iid in self.tree.get_children():
+            self.tree.delete(iid)
+        self._item_to_cand.clear()
+        self._cand_items.clear()
+
+        if not self._analysis.candidates:
+            self._set_controls_busy(False)
+            return
+
+        self._set_controls_busy(True)
+        self._insert_treeview_batch(0, self._scan_gen)
+
+    def _insert_treeview_batch(self, start_idx: int, expected_gen: int) -> None:
+        self._batch_insert_job = None
+        if not self.winfo_exists() or getattr(self.app, "_destroyed", False):
+            return
+        if expected_gen != self._scan_gen:
+            return
+
+        cands = self._analysis.candidates
+        end_idx = min(len(cands), start_idx + self._BATCH_SIZE)
+        tier_labels = {
+            "applied": "Applied",
+            "duplicate": "Duplicate",
+            "already_translated_unique": "Translated (Unique)",
+            "uncertain": "Uncertain",
+        }
+        for idx in range(start_idx, end_idx):
+            cand = cands[idx]
+            chk = "✓" if cand.selected else " "
+            tier_txt = tier_labels.get(cand.tier, cand.tier)
+            loc_txt = f"{cand.rel_path}:{cand.line_number}"
+            prev_txt = f"{cand.raw_key}={cand.raw_value}"
+            if len(prev_txt) > 120:
+                prev_txt = prev_txt[:117] + "..."
+            iid = self.tree.insert("", "end", values=(chk, tier_txt, loc_txt, prev_txt, cand.reason))
+            self._item_to_cand[iid] = cand
+            self._cand_items.append((iid, cand))
+
+        if end_idx < len(cands):
+            self._batch_insert_job = self.after(1, lambda: self._insert_treeview_batch(end_idx, expected_gen))
+        else:
+            self._batch_insert_job = None
+            self._set_controls_busy(False)
+
+    def _toggle_tree_item(self, iid: str) -> None:
+        cand = self._item_to_cand.get(iid)
+        if cand is None or not self.tree.exists(iid):
+            return
+        cand.selected = not bool(cand.selected)
+        vals = list(self.tree.item(iid, "values"))
+        if vals:
+            vals[0] = "✓" if cand.selected else " "
+            self.tree.item(iid, values=vals)
+
+    def _on_tree_click(self, event: tk.Event) -> Optional[str]:
+        if self._is_scanning or self._batch_insert_job is not None:
+            return "break"
+        iid = self.tree.identify_row(event.y)
+        col = self.tree.identify_column(event.x)
+        if iid and col == "#1":
+            self._toggle_tree_item(iid)
+            return "break"
+        return None
+
+    def _on_tree_space(self, _event: tk.Event) -> str:
+        if self._is_scanning or self._batch_insert_job is not None:
+            return "break"
+        for iid in self.tree.selection():
+            self._toggle_tree_item(iid)
+        return "break"
+
+    def _bulk_select(self, selected: bool) -> None:
+        if self._is_scanning or self._batch_insert_job is not None:
+            return
+        mark = "✓" if selected else " "
+        for iid, cand in self._cand_items:
+            cand.selected = selected
+            if self.tree.exists(iid):
+                vals = list(self.tree.item(iid, "values"))
+                if vals:
+                    vals[0] = mark
+                    self.tree.item(iid, values=vals)
 
     def _refresh_safety_banner(self) -> None:
         if not self.winfo_exists():
@@ -20544,96 +21730,34 @@ class XuatCleanupDialog(tk.Toplevel):
 
     def _on_toggle_applied(self) -> None:
         val = bool(self.var_include_applied.get())
-        for cand, var in self._cand_vars:
+        mark = "✓" if val else " "
+        for iid, cand in self._cand_items:
             if cand.tier == "applied":
                 cand.selected = val
-                var.set(val)
+                if self.tree.exists(iid):
+                    vals = list(self.tree.item(iid, "values"))
+                    if vals:
+                        vals[0] = mark
+                        self.tree.item(iid, values=vals)
 
     def _on_duplicate_scope_changed(self) -> None:
         scope = self.var_duplicate_scope.get()
         apply_duplicate_scope(self._analysis.candidates, scope)
-        for cand, var in self._cand_vars:
-            if cand.tier == "duplicate":
-                var.set(cand.selected)
-
-    def _populate_candidates(self) -> None:
-        for child in self.cands_frame.winfo_children():
-            child.destroy()
-        self._cand_vars.clear()
-
-        counts = self._analysis.counts_by_tier
-        self.lbl_counts.config(
-            text=(
-                f"Preview — Applied: {counts.get('applied', 0)}  |  "
-                f"Duplicates: {counts.get('duplicate', 0)}  |  "
-                f"Already Translated (Unique): {counts.get('already_translated_unique', 0)}  |  "
-                f"Uncertain (Unchecked by Default): {counts.get('uncertain', 0)}"
-            )
-        )
-
-        t = self.app.theme
-        fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
-        tier_labels = {
-            "applied": ("[Applied]", t["misora_pink"]),
-            "duplicate": ("[Duplicate]", t["accent_blue"]),
-            "already_translated_unique": ("[Already Translated (Unique)]", "#4caf50"),
-            "uncertain": ("[Uncertain — Unchecked by Default]", "#e69f00"),
-        }
-
-        if not self._analysis.candidates:
-            tk.Label(
-                self.cands_frame,
-                text="No cleanup candidates found for this story.",
-                font=("Segoe UI", 9),
-                bg=t["bg_dark"],
-                fg=t["fg_muted"],
-                pady=20,
-            ).pack()
-            return
-
-        for cand in self._analysis.candidates:
-            row_f = tk.Frame(self.cands_frame, bg=t["bg_panel"], bd=1, relief="solid", padx=8, pady=4)
-            row_f.pack(fill="x", padx=6, pady=3)
-
-            var = tk.BooleanVar(master=self, value=bool(cand.selected))
-            self._cand_vars.append((cand, var))
-
-            tag_txt, tag_fg = tier_labels.get(cand.tier, (f"[{cand.tier}]", fg_panel))
-            hdr = tk.Frame(row_f, bg=t["bg_panel"])
-            hdr.pack(fill="x")
-            tk.Checkbutton(
-                hdr,
-                text=f"{cand.rel_path}:{cand.line_number}",
-                variable=var,
-                font=("Consolas", 8, "bold"),
-                bg=t["bg_panel"],
-                fg=fg_panel,
-                selectcolor=t["bg_dark"],
-                activebackground=t["bg_panel"],
-                activeforeground=fg_panel,
-            ).pack(side="left")
-            tk.Label(hdr, text=tag_txt, font=("Segoe UI", 8, "bold"), bg=t["bg_panel"], fg=tag_fg).pack(side="left", padx=(6, 6))
-            tk.Label(hdr, text=cand.reason, font=("Segoe UI", 8), bg=t["bg_panel"], fg=t["fg_muted"]).pack(side="right")
-
-            preview_line = f"{cand.raw_key}={cand.raw_value}"
-            if len(preview_line) > 140:
-                preview_line = preview_line[:137] + "..."
-            tk.Label(
-                row_f,
-                text=preview_line,
-                font=("Consolas", 8),
-                bg=t["bg_panel"],
-                fg=fg_panel,
-                anchor="w",
-            ).pack(fill="x", padx=(20, 0))
+        for iid, cand in self._cand_items:
+            if cand.tier == "duplicate" and self.tree.exists(iid):
+                vals = list(self.tree.item(iid, "values"))
+                if vals:
+                    vals[0] = "✓" if cand.selected else " "
+                    self.tree.item(iid, values=vals)
 
     def _on_execute_cleanup(self) -> bool:
-        for cand, var in self._cand_vars:
-            cand.selected = bool(var.get())
+        if self._is_scanning or self._batch_insert_job is not None:
+            self.app.show_toast("Please wait for XUAT scan and list population to finish.")
+            return False
 
         selected = [c for c in self._analysis.candidates if c.selected]
         if not selected:
-            self.app.show_toast("No XUAT entries selected for cleanup.")
+            self.app.show_toast("No XUAT entries selected for archiving.")
             return False
 
         allow_unarchived = bool(self.var_allow_unarchived.get())
@@ -20683,22 +21807,21 @@ class XuatCleanupDialog(tk.Toplevel):
             messagebox.showerror("Invalid Archive Destination", str(exc), parent=self)
             return False
         except Exception as exc:
-            self.app.logger.exception("XUAT cleanup failed:", exc)
-            messagebox.showerror("XUAT Cleanup Failed", str(exc), parent=self)
+            self.app.logger.exception("XUAT Translation Archiving failed:", exc)
+            messagebox.showerror("XUAT Translation Archiving Failed", str(exc), parent=self)
             return False
 
         self.last_report = report
         if report.errors:
             err_lines = "\n".join(f"- {p.name}: {msg}" for p, msg in report.errors)
             messagebox.showwarning(
-                "Partial Cleanup Completed with Errors",
+                "Partial Archiving Completed with Errors",
                 f"Modified: {len(report.modified_files)} | "
                 f"Rolled back/Untouched: {len(report.rolled_back_files) + len(report.untouched_files)}\n\n"
                 f"Errors:\n{err_lines}",
                 parent=self,
             )
 
-        # Second explicit confirmation for meaningfully empty XUAT files
         if report.empty_files:
             detail_lines = []
             for ef in report.empty_files:
@@ -20723,7 +21846,7 @@ class XuatCleanupDialog(tk.Toplevel):
                 delete_empty_xuat_files([ef.file_path for ef in report.empty_files])
 
         summary = (
-            f"✓ XUAT cleanup: removed {report.removed_count} line(s) across "
+            f"✓ XUAT Translation Archiving: archived & removed {report.removed_count} line(s) across "
             f"{len(report.modified_files)} file(s)"
         )
         self.app.show_toast(summary)
@@ -20733,8 +21856,34 @@ class XuatCleanupDialog(tk.Toplevel):
         self._on_close()
         return True
 
+    def _cancel_async_work(self) -> None:
+        self._scan_gen += 1
+        self._is_scanning = False
+        if self._scan_cancel_event is not None:
+            try:
+                self._scan_cancel_event.set()
+            except Exception:
+                pass
+        if self._scan_poll_job is not None:
+            try:
+                self.after_cancel(self._scan_poll_job)
+            except Exception:
+                pass
+            self._scan_poll_job = None
+        if self._batch_insert_job is not None:
+            try:
+                self.after_cancel(self._batch_insert_job)
+            except Exception:
+                pass
+            self._batch_insert_job = None
+        mgr = getattr(self.app, "_progress_mgr", None)
+        if mgr is not None:
+            mgr.cancel("archiving_scan", self._scan_gen - 1, "")
+
     def _on_close(self) -> None:
-        self._cand_vars.clear()
+        self._cancel_async_work()
+        self._item_to_cand.clear()
+        self._cand_items.clear()
         self.var_duplicate_scope = None  # type: ignore[assignment]
         self.var_linebreak_policy = None  # type: ignore[assignment]
         self.var_archive_strategy = None  # type: ignore[assignment]

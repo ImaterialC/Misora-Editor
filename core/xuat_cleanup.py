@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -391,33 +392,102 @@ def apply_duplicate_scope(candidates: Sequence[CleanupCandidate], duplicate_scop
             cand.selected = select_dups
 
 
+def _build_protected_actor_sets(
+    xuat_index: XuatIndex,
+    doc: Any,
+    protected_actors: Iterable[str] = (),
+) -> Tuple[Set[str], Set[str]]:
+    """Build deterministic protected Actor normalized key & value sets BEFORE Pass 1 (U-11).
+
+    Sources:
+      1. Document box speakers (box.speaker & game_to_xuat(box.speaker)).
+      2. Caller-provided actor names / immutable JP speaker keys (protected_actors).
+      3. Forward XUAT index matches for known actor keys + conservative reverse fallback
+         (xuat_index.lookup_by_value) so JP actor keys remain protected even after
+         box.speaker was already translated in-session.
+    """
+    raw_actor_strings: Set[str] = set()
+    if doc and getattr(doc, "boxes", None):
+        for box in doc.boxes:
+            sp = getattr(box, "speaker", "") or ""
+            if sp:
+                raw_actor_strings.add(sp)
+                gx = game_to_xuat(sp)
+                if gx:
+                    raw_actor_strings.add(gx)
+    for extra_sp in protected_actors or ():
+        if extra_sp:
+            s = str(extra_sp)
+            raw_actor_strings.add(s)
+            gx = game_to_xuat(s)
+            if gx:
+                raw_actor_strings.add(gx)
+
+    protected_keys: Set[str] = set()
+    protected_values: Set[str] = set()
+    for s in raw_actor_strings:
+        protected_values.add(s)
+        nk = normalize_xuat_key(s, strip_ngui=True)
+        if nk:
+            protected_keys.add(nk)
+        for cand in xuat_index.lookup_all_by_norm_key(s):
+            if cand.value:
+                protected_values.add(cand.value)
+        for rev_entry in xuat_index.lookup_by_value(s):
+            rev_nk = normalize_xuat_key(rev_entry.raw_key, strip_ngui=True)
+            if rev_nk:
+                protected_keys.add(rev_nk)
+
+    return protected_keys, protected_values
+
+
 def classify_cleanup_candidates(
     xuat_index: XuatIndex,
     doc: Any,
     applied_records: Sequence[AppliedXuatRecord] = (),
     duplicate_scope: str = "selected_only",
+    protected_actors: Iterable[str] = (),
+    cancel_event: Optional[threading.Event] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> CleanupAnalysis:
     """Classify XUAT dictionary entries conservatively into 3+1 auditable tiers.
+
+    U-11: Global Actor/Speaker dictionary entries are COMPLETELY EXCLUDED (0 rows)
+    across Pass 1 (Applied), Pass 2 (Duplicate), and Pass 3 (Right-Side Matching).
 
     Tiers:
       - applied: exact (file_path, line_number) confirmed applied in Import from XUAT.
       - duplicate: extra occurrences sharing exact normalize_xuat_key() (never substring).
-      - already_translated_unique: asset dialogue text matches unescaped right-side value
-        that maps to strictly 1 unique key across xuat_index AND >= 6 non-space chars.
-      - uncertain: short (<6 non-space chars), multi-key ambiguous, or shared speaker match;
-        always default selected=False.
+      - already_translated_unique: asset dialogue / title / subtitle text matches unescaped
+        right-side value mapping to strictly 1 unique key across xuat_index AND >= 6 non-space chars.
+      - uncertain: short (<6 non-space chars) or multi-key ambiguous; always default selected=False.
     """
+    protected_actor_keys, protected_actor_values = _build_protected_actor_sets(
+        xuat_index,
+        doc,
+        protected_actors=protected_actors,
+    )
+
+    def _is_protected_actor_entry(entry: XuatEntry, norm_key: str) -> bool:
+        if norm_key and norm_key in protected_actor_keys:
+            return True
+        if entry.value in protected_actor_values:
+            return True
+        return False
+
     applied_loc_map: Dict[Tuple[str, int], AppliedXuatRecord] = {}
     applied_norm_keys: Set[str] = set()
     for rec in applied_records or ():
+        rec_nk = normalize_xuat_key(rec.raw_key, strip_ngui=True)
+        if (rec_nk and rec_nk in protected_actor_keys) or (rec.value in protected_actor_values):
+            continue
         loc = (_norm_path_key(rec.file_path), int(rec.line_number))
         applied_loc_map[loc] = rec
-        nk = normalize_xuat_key(rec.raw_key, strip_ngui=True)
-        if nk:
-            applied_norm_keys.add(nk)
+        if rec_nk:
+            applied_norm_keys.add(rec_nk)
 
     dialogue_val_to_boxes: Dict[str, List[int]] = {}
-    speaker_val_to_boxes: Dict[str, List[int]] = {}
+    meta_val_to_labels: Dict[str, List[str]] = {}
     if doc and getattr(doc, "boxes", None):
         for b_idx, box in enumerate(doc.boxes):
             for val in (getattr(box, "clean_text", ""), getattr(box, "text", "")):
@@ -425,24 +495,48 @@ def classify_cleanup_candidates(
                     lst = dialogue_val_to_boxes.setdefault(val, [])
                     if b_idx not in lst:
                         lst.append(b_idx)
-            sp = getattr(box, "speaker", "") or ""
-            if sp:
-                for sp_val in (sp, game_to_xuat(sp)):
-                    if sp_val:
-                        lst = speaker_val_to_boxes.setdefault(sp_val, [])
-                        if b_idx not in lst:
-                            lst.append(b_idx)
+    if doc and callable(getattr(doc, "get_metadata", None)):
+        try:
+            meta = doc.get_metadata() or {}
+        except Exception:
+            meta = {}
+        for field_key, field_lbl in (("title", "Box #0 (Title)"), ("subtitle", "Box #0 (Subtitle)")):
+            mval = meta.get(field_key, "") or ""
+            if mval:
+                lbls = meta_val_to_labels.setdefault(mval, [])
+                if field_lbl not in lbls:
+                    lbls.append(field_lbl)
+
+    entries = getattr(xuat_index, "entries", ())
+    total_steps = max(1, len(entries) * 3)
+    processed_steps = 0
+
+    def _tick(step_idx: int) -> bool:
+        nonlocal processed_steps
+        processed_steps += 1
+        if cancel_event is not None and cancel_event.is_set():
+            return True
+        if progress_cb is not None and (step_idx == 0 or (processed_steps % 100 == 0)):
+            try:
+                progress_cb(processed_steps, total_steps)
+            except Exception:
+                pass
+        return False
 
     candidates: List[CleanupCandidate] = []
     classified_locs: Set[Tuple[str, int]] = set()
     unique_primary_keys: Set[str] = set()
 
     # Pass 1: Applied entries (exact file_path + line_number)
-    for entry in getattr(xuat_index, "entries", ()):
+    for i, entry in enumerate(entries):
+        if _tick(i):
+            break
+        nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
+        if _is_protected_actor_entry(entry, nk):
+            continue
         loc = (_norm_path_key(entry.file_path), int(entry.line_number))
         if loc in applied_loc_map:
             rec = applied_loc_map[loc]
-            nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
             box_tup = (rec.box_index,) if rec.box_index >= 0 else ()
             reason = f"Applied to Box #{rec.box_index + 1}" if rec.box_index >= 0 else "Confirmed applied in import"
             candidates.append(
@@ -464,67 +558,17 @@ def classify_cleanup_candidates(
 
     # Pass 2: Duplicate key occurrences of applied keys (exact normalized key, no substring)
     dup_selected = (duplicate_scope == "all_duplicates")
-    for entry in getattr(xuat_index, "entries", ()):
-        loc = (_norm_path_key(entry.file_path), int(entry.line_number))
-        if loc in classified_locs:
-            continue
-        nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
-        if nk and nk in applied_norm_keys:
-            candidates.append(
-                CleanupCandidate(
-                    file_path=entry.file_path,
-                    rel_path=entry.rel_path,
-                    line_number=entry.line_number,
-                    raw_key=entry.raw_key,
-                    raw_value=entry.raw_value,
-                    value=entry.value,
-                    tier="duplicate",
-                    selected=dup_selected,
-                    reason="Duplicate key occurrence of applied entry",
-                    norm_key=nk,
-                )
-            )
-            classified_locs.add(loc)
-
-    # Pass 3: Conservative right-side matches (dialogue unique vs uncertain / shared speaker)
-    for entry in getattr(xuat_index, "entries", ()):
-        loc = (_norm_path_key(entry.file_path), int(entry.line_number))
-        if loc in classified_locs:
-            continue
-        nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
-        if nk and nk in unique_primary_keys:
-            candidates.append(
-                CleanupCandidate(
-                    file_path=entry.file_path,
-                    rel_path=entry.rel_path,
-                    line_number=entry.line_number,
-                    raw_key=entry.raw_key,
-                    raw_value=entry.raw_value,
-                    value=entry.value,
-                    tier="duplicate",
-                    selected=dup_selected,
-                    reason="Duplicate key occurrence of already-translated entry",
-                    norm_key=nk,
-                )
-            )
-            classified_locs.add(loc)
-            continue
-
-        if entry.value in dialogue_val_to_boxes:
-            matched_boxes = tuple(dialogue_val_to_boxes[entry.value])
-            all_for_val = xuat_index.lookup_by_value(entry.value)
-            unique_keys = {
-                normalize_xuat_key(e.raw_key, strip_ngui=True)
-                for e in all_for_val
-                if normalize_xuat_key(e.raw_key, strip_ngui=True)
-            }
-            ns_len = _non_space_len(entry.value)
-            if len(unique_keys) == 1 and ns_len >= MIN_UNIQUE_RIGHT_SIDE_CHARS:
-                if nk:
-                    unique_primary_keys.add(nk)
-                box_label = ", ".join(f"#{b + 1}" for b in matched_boxes[:3])
-                if len(matched_boxes) > 3:
-                    box_label += f" (+{len(matched_boxes) - 3})"
+    if cancel_event is None or not cancel_event.is_set():
+        for i, entry in enumerate(entries):
+            if _tick(i):
+                break
+            loc = (_norm_path_key(entry.file_path), int(entry.line_number))
+            if loc in classified_locs:
+                continue
+            nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
+            if _is_protected_actor_entry(entry, nk):
+                continue
+            if nk and nk in applied_norm_keys:
                 candidates.append(
                     CleanupCandidate(
                         file_path=entry.file_path,
@@ -533,19 +577,26 @@ def classify_cleanup_candidates(
                         raw_key=entry.raw_key,
                         raw_value=entry.raw_value,
                         value=entry.value,
-                        tier="already_translated_unique",
-                        selected=True,
-                        reason=f"Unique right-side match in Box {box_label}",
+                        tier="duplicate",
+                        selected=dup_selected,
+                        reason="Duplicate key occurrence of applied entry",
                         norm_key=nk,
-                        matched_box_indices=matched_boxes,
                     )
                 )
-            else:
-                reasons = []
-                if len(unique_keys) > 1:
-                    reasons.append(f"mapped by {len(unique_keys)} keys")
-                if ns_len < MIN_UNIQUE_RIGHT_SIDE_CHARS:
-                    reasons.append(f"short ({ns_len} < {MIN_UNIQUE_RIGHT_SIDE_CHARS} chars)")
+                classified_locs.add(loc)
+
+    # Pass 3: Conservative right-side matches (dialogue / title / subtitle; zero speaker rows)
+    if cancel_event is None or not cancel_event.is_set():
+        for i, entry in enumerate(entries):
+            if _tick(i):
+                break
+            loc = (_norm_path_key(entry.file_path), int(entry.line_number))
+            if loc in classified_locs:
+                continue
+            nk = normalize_xuat_key(entry.raw_key, strip_ngui=True)
+            if _is_protected_actor_entry(entry, nk):
+                continue
+            if nk and nk in unique_primary_keys:
                 candidates.append(
                     CleanupCandidate(
                         file_path=entry.file_path,
@@ -554,33 +605,80 @@ def classify_cleanup_candidates(
                         raw_key=entry.raw_key,
                         raw_value=entry.raw_value,
                         value=entry.value,
-                        tier="uncertain",
-                        selected=False,
-                        reason=f"Uncertain ({'; '.join(reasons) or 'ambiguous'})",
+                        tier="duplicate",
+                        selected=dup_selected,
+                        reason="Duplicate key occurrence of already-translated entry",
                         norm_key=nk,
-                        matched_box_indices=matched_boxes,
                     )
                 )
-            classified_locs.add(loc)
-        elif entry.value in speaker_val_to_boxes:
-            # Guardrail 2: NEVER auto-select shared speaker translations for deletion
-            matched_boxes = tuple(speaker_val_to_boxes[entry.value])
-            candidates.append(
-                CleanupCandidate(
-                    file_path=entry.file_path,
-                    rel_path=entry.rel_path,
-                    line_number=entry.line_number,
-                    raw_key=entry.raw_key,
-                    raw_value=entry.raw_value,
-                    value=entry.value,
-                    tier="uncertain",
-                    selected=False,
-                    reason="Shared speaker dictionary match (unchecked by default)",
-                    norm_key=nk,
-                    matched_box_indices=matched_boxes,
-                )
-            )
-            classified_locs.add(loc)
+                classified_locs.add(loc)
+                continue
+
+            has_dlg = entry.value in dialogue_val_to_boxes
+            has_meta = entry.value in meta_val_to_labels
+            if has_dlg or has_meta:
+                matched_boxes = tuple(dialogue_val_to_boxes.get(entry.value, ()))
+                all_for_val = xuat_index.lookup_by_value(entry.value)
+                unique_keys = {
+                    normalize_xuat_key(e.raw_key, strip_ngui=True)
+                    for e in all_for_val
+                    if normalize_xuat_key(e.raw_key, strip_ngui=True)
+                }
+                ns_len = _non_space_len(entry.value)
+                if len(unique_keys) == 1 and ns_len >= MIN_UNIQUE_RIGHT_SIDE_CHARS:
+                    if nk:
+                        unique_primary_keys.add(nk)
+                    if matched_boxes:
+                        box_label = ", ".join(f"#{b + 1}" for b in matched_boxes[:3])
+                        if len(matched_boxes) > 3:
+                            box_label += f" (+{len(matched_boxes) - 3})"
+                        reason_txt = f"Unique right-side match in Box {box_label}"
+                    else:
+                        meta_lbls = meta_val_to_labels.get(entry.value, [])
+                        reason_txt = f"Unique right-side match in {', '.join(meta_lbls)}"
+                    candidates.append(
+                        CleanupCandidate(
+                            file_path=entry.file_path,
+                            rel_path=entry.rel_path,
+                            line_number=entry.line_number,
+                            raw_key=entry.raw_key,
+                            raw_value=entry.raw_value,
+                            value=entry.value,
+                            tier="already_translated_unique",
+                            selected=True,
+                            reason=reason_txt,
+                            norm_key=nk,
+                            matched_box_indices=matched_boxes,
+                        )
+                    )
+                else:
+                    reasons = []
+                    if len(unique_keys) > 1:
+                        reasons.append(f"mapped by {len(unique_keys)} keys")
+                    if ns_len < MIN_UNIQUE_RIGHT_SIDE_CHARS:
+                        reasons.append(f"short ({ns_len} < {MIN_UNIQUE_RIGHT_SIDE_CHARS} chars)")
+                    candidates.append(
+                        CleanupCandidate(
+                            file_path=entry.file_path,
+                            rel_path=entry.rel_path,
+                            line_number=entry.line_number,
+                            raw_key=entry.raw_key,
+                            raw_value=entry.raw_value,
+                            value=entry.value,
+                            tier="uncertain",
+                            selected=False,
+                            reason=f"Uncertain ({'; '.join(reasons) or 'ambiguous'})",
+                            norm_key=nk,
+                            matched_box_indices=matched_boxes,
+                        )
+                    )
+                classified_locs.add(loc)
+
+    if progress_cb is not None and (cancel_event is None or not cancel_event.is_set()):
+        try:
+            progress_cb(total_steps, total_steps)
+        except Exception:
+            pass
 
     counts = {
         "applied": sum(1 for c in candidates if c.tier == "applied"),

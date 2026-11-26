@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.5.0)
 
-> **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.9`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
+> **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.10`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
+
+### S11 (v1.4.10) — Async XUAT Translation Archiving (`ttk.Treeview`), Pre-Import Archive Checkbox, Complete Speaker Exclusion, 1-Line `54d` Metadata/Actor Import, & Unified Progress Controller
+- **`U-11` Pre-Pass Complete Global Speaker Dictionary Exclusion (`core/xuat_cleanup.py`):**
+  - Added `_build_protected_actor_sets()` building deterministic `protected_actor_keys` and `protected_actor_values` BEFORE Pass 1 from document box speakers (`box.speaker`, `game_to_xuat`), caller-supplied `protected_actors`, forward index matches, and conservative reverse `lookup_by_value()` fallback.
+  - Enforced `_is_protected_actor_entry()` BEFORE inserting any candidate across Pass 1 (Applied), Pass 2 (Duplicate, including multi-file actor duplicates), and Pass 3 (Right-Side Matching, excluding dialogue values ambiguous with speaker entries), and deleted the legacy `uncertain` speaker-match branch (`0` speaker rows in `CleanupAnalysis.candidates`).
+  - Added `doc.get_metadata()` (`title` & `subtitle`, never `summary`) matching to Pass 3 and cooperative `cancel_event` + `progress_cb` support.
+- **`U-09` & `U-14` Redesigned `ImportFromXUATDialog` (`misora.py`):**
+  - Removed `Include Actor` (`var_translate_speakers`) checkbox and excluded Box 0 from the ordinary dialogue list.
+  - Added `var_archive_xuat` (`"Archive the XUAT translation"`, default `True`) with inline opt-out risk warning (`lbl_archive_optout_warning`): unchecking performs Import ONLY (0 XUAT files modified, no archiving dialog opened); checking launches `XUAT Translation Archiving` non-blockingly using non-speaker `applied_records` only.
+  - Added dedicated `1-line × 54d` paired read-only sections at top for **Title**, **Subtitle / Outline**, and **Unique Actors / Speakers** (each with `◀ 1/N ▶` duplicate switcher, provenance, and `Skip` checkbox; Dialogue rows remain `3 lines × 54d` below) sized uniformly via `_get_54d_reference_safe_w()` across `Global — Nunito Bold` and `Japanese` presets.
+  - Added Document Identity Guard (`_capture_doc_identity` / `_validate_document_identity`), Box 0 `MetadataDelta` (Title/Subtitle only, Synopsis strictly untouched), segment-preserving Unique Actor renames (`inject_box(..., seg_texts=old_segs)`), and pre-transaction AST + dirty-state rollback on mid-batch exceptions.
+- **`U-08` & `U-10` Asynchronous `XUAT Translation Archiving` with Batched `ttk.Treeview` (`misora.py`):**
+  - Renamed dialog title, `Tools -> XUAT Translation Archiving...` menu item, and status notifications to `"XUAT Translation Archiving"`.
+  - Added pure-Python `_XuatDocSnapshot` (capturing boxes + `get_metadata()` on main thread) so `XuatCleanupDialog` runs `build_xuat_index` (if needed) + `classify_cleanup_candidates` strictly off the main thread with cooperative `cancel_event`, stale generation rejection, and separated O(1) progress + reliable `_scan_terminal_queue`.
+  - Replaced per-candidate `tk.Frame`/`tk.Checkbutton`/`tk.Label` explosion with a single lightweight `ttk.Treeview` populated in bounded `80`-row `after()` batches while keeping execute/bulk controls disabled until batch insertion completes.
+- **`U-12` & `U-13` Unified Status-Bar Progress Controller & Cancellable Discovery (`misora.py`, `core/xuat_index.py`):**
+  - Added `_ProgressTaskManager` on `MisoraApp` driving unified `self.status_progress_bar` (`self.progress_bar`) across **Project Search**, **Reload XUAT Translations**, and **XUAT Translation Archiving Scan**, with O(1) lock-protected `_latest_progress` coalescing, non-droppable `_lifecycle_queue`, priority-based concurrent task isolation, stale token rejection, and clean `shutdown()`.
+  - Replaced `rglob("*.txt")` in `core/xuat_index.py::build_xuat_index()` with iterative `os.walk()` checking `cancel_event` at every directory and file while stripping Windows `\\?\` prefixes from stored `Path` keys.
+- **Tests & Versioning (`__init__.py`, `tests/`):**
+  - Bumped `__version__` to `"1.4.10"`. Added `tests/test_v15_s11_xuat_archiving_progress.py` (5 failing-first probes + 2 guards: `7/7` pass post-patch) and updated `tests/test_v15_s07_xuat_cleanup_archive.py` (`_wait_for_cleanup_scan`, `U-11`), `tests/test_p3_s22_import_xuat.py`, and `tests/test_v15_s06_tools_word_wrap.py` (`38/38` pass across S11, S07, S22, S06, and S8b1).
 
 ### S10 (v1.4.9) — Virtualized Read-Only All Script Card Pool (`54d x 3`), `raw_breaks`-Safe Segment-Aware `Quick Edit` Tab, View-Aware Live Sync, & All Script Preview Removal
 - **`U-05` Remove All Script Preview Mode Only (`misora.py`):**

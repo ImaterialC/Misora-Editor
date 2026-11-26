@@ -57,6 +57,17 @@ class S07TestBase(unittest.TestCase):
         self.app.backup_folder = str(self.tmp_dir / "backups")
         self.app.xuat_archive_dir = self.tmp_dir / "backups" / "xuat_archive"
 
+    def _wait_for_cleanup_scan(self, dlg, timeout: float = 5.0) -> None:
+        """Pump Tk mainloop until async XuatCleanupDialog scan & batched Treeview insert finish."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.app.update()
+            if (not getattr(dlg, "_is_scanning", False)) and (getattr(dlg, "_batch_insert_job", None) is None):
+                return
+            time.sleep(0.01)
+        self.fail("Timed out waiting for async XuatCleanupDialog scan/batch insert")
+
     def tearDown(self) -> None:
         try:
             if self.app is not None:
@@ -325,6 +336,7 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
             source_fingerprints=idx3.file_fingerprints,
         )
         try:
+            self._wait_for_cleanup_scan(dlg)
             dlg.var_allow_unarchived.set(True)
             # Declining irreversible confirmation leaves source intact
             with patch.object(misora.messagebox, "askyesno", return_value=False) as mock_yn:
@@ -459,9 +471,8 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
         self.assertEqual(by_line[("B_Alt.txt", 2)].tier, "uncertain")
         self.assertFalse(by_line[("B_Alt.txt", 2)].selected)
 
-        # Shared speaker match ("Pecorine") -> uncertain (selected=False), NEVER already_translated_unique
-        self.assertEqual(by_line[("A_Main.txt", 6)].tier, "uncertain")
-        self.assertFalse(by_line[("A_Main.txt", 6)].selected)
+        # U-11: Global speaker dictionary entries are COMPLETELY EXCLUDED from candidates
+        self.assertNotIn(("A_Main.txt", 6), by_line)
 
         # Switch duplicate scope to all_duplicates
         apply_duplicate_scope(a_sel.candidates, "all_duplicates")
@@ -482,12 +493,13 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
             source_fingerprints=idx_nd.file_fingerprints,
         )
         try:
+            self._wait_for_cleanup_scan(dlg)
             self.assertFalse(bool(dlg._dup_scope_frame.winfo_manager()), "Duplicate scope toggle must be hidden when 0 duplicates exist")
         finally:
             if dlg.winfo_exists():
                 dlg._on_close()
 
-        # Verify manual Tools -> Clean / Archive XUAT... entry point works cleanly
+        # Verify manual Tools -> XUAT Translation Archiving... entry point works cleanly
         self.app._set_project_folder(f_nodup.parent.parent.parent.parent)
         self.app.open_documents[self.tmp_dir / "nd.v2.txt"] = {"doc": doc_nd, "plain_text": "", "dirty": False}
         self.app.current_doc = doc_nd
@@ -495,6 +507,7 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
         manual_dlg = self.app.on_clean_archive_xuat(xuat_index=idx_nd)
         self.assertIsNotNone(manual_dlg)
         try:
+            self._wait_for_cleanup_scan(manual_dlg)
             self.assertIs(self.app._xuat_cleanup_dialog, manual_dlg)
             self.assertEqual(manual_dlg._analysis.counts_by_tier["applied"], 0)
         finally:
@@ -562,6 +575,7 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
             source_fingerprints=idx2.file_fingerprints,
         )
         try:
+            self._wait_for_cleanup_scan(dlg)
             prompts = []
             def _capture_yesno(title, msg, **kwargs):
                 prompts.append((title, msg))
@@ -589,6 +603,7 @@ class TestV15S07XuatCleanupArchive(S07TestBase):
             source_fingerprints=idx3.file_fingerprints,
         )
         try:
+            self._wait_for_cleanup_scan(dlg2)
             prompts2 = []
             def _confirm_del(title, msg, **kwargs):
                 prompts2.append((title, msg))
