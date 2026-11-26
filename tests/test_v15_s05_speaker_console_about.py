@@ -260,47 +260,15 @@ class TestV15S05SpeakerConsoleAbout(unittest.TestCase):
         self.assertEqual(self.app.speaker_var.get(), "Kokkoro")
         self.assertFalse(popup.winfo_exists())
 
-    def test_probe_4_win32_console_uses_iswindowvisible_and_handles_pythonw(self) -> None:
-        """Probe 4 (U02): Win32 toggle queries IsWindowVisible before ShowWindow and handles hwnd=0 safely."""
-        fake_kernel32 = MagicMock()
-        fake_user32 = MagicMock()
-        fake_kernel32.GetConsoleWindow.return_value = 12345
-        fake_user32.IsWindowVisible.side_effect = [1, 0]
-        fake_user32.ShowWindow.return_value = 1
-
-        fake_windll = types.SimpleNamespace(kernel32=fake_kernel32, user32=fake_user32)
-
-        with patch.object(misora.ctypes, "windll", fake_windll, create=True):
-            self.app._toggle_console_shortcut()
-            fake_user32.ShowWindow.assert_called_with(12345, 0)
-            self.assertFalse(self.app.var_console_visible.get())
-
-            self.app._toggle_console_shortcut()
-            fake_user32.ShowWindow.assert_called_with(12345, 5)
-            self.assertTrue(self.app.var_console_visible.get())
-
-            # F12 inside an editor widget must toggle once and return "break"
-            fake_user32.IsWindowVisible.side_effect = [1]
-            fake_user32.ShowWindow.reset_mock()
-            ev = types.SimpleNamespace(keysym="F12", state=0, widget=self.app.txt_dialogue)
-            ret = self.app._on_misora_shortcut(ev)
-            self.assertEqual(ret, "break")
-            fake_user32.ShowWindow.assert_called_once_with(12345, 0)
-
-        # pythonw.exe (hwnd == 0): must not crash or spawn process; emits informative toast
-        fake_kernel32_zero = MagicMock()
-        fake_user32_zero = MagicMock()
-        fake_kernel32_zero.GetConsoleWindow.return_value = 0
-        fake_windll_zero = types.SimpleNamespace(kernel32=fake_kernel32_zero, user32=fake_user32_zero)
-        with patch.object(misora.ctypes, "windll", fake_windll_zero, create=True), \
-             patch.object(self.app, "show_toast", wraps=self.app.show_toast) as mock_toast:
-            self.app._toggle_console_shortcut()
-            fake_user32_zero.ShowWindow.assert_not_called()
-            self.assertFalse(self.app.var_console_visible.get())
-            self.assertTrue(
-                any("no windows terminal console" in str(c.args[0]).lower() for c in mock_toast.call_args_list),
-                "Missing console must notify user cleanly",
-            )
+    def test_probe_4_console_toggle_removed_and_f12_unbound(self) -> None:
+        """Guard (RM-01): Windows console toggle is completely removed and F12 is unbound."""
+        self.assertFalse(hasattr(self.app, "_toggle_windows_console"))
+        self.assertFalse(hasattr(self.app, "_toggle_console_visibility"))
+        self.assertFalse(hasattr(self.app, "_toggle_console_shortcut"))
+        self.assertFalse(hasattr(self.app, "var_console_visible"))
+        self.assertFalse(self.app.bind("<F12>"))
+        ev = types.SimpleNamespace(keysym="F12", state=0, widget=self.app.txt_dialogue)
+        self.assertIsNone(self.app._on_misora_shortcut(ev))
 
     def test_probe_5_support_me_sequential_gif_cleanup_missing_fallback_and_paypal(self) -> None:
         """Probe 5 (U05): Modal About -> SupportMeDialog sequential GIF streaming, cleanup, missing fallback, caption & PayPal toggle."""

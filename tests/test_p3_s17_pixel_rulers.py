@@ -88,7 +88,7 @@ class TestS17PixelRulers(unittest.TestCase):
         self.app.update_idletasks()
 
     def test_01_probe_pixel_measure_rulers_and_overflow(self):
-        """Probe 1 (BUG-40 & FEAT-09): 50 digit-widths safe_w, Kanji overflow, line 4+ red gutter, Canvas rulers, no char counter."""
+        """Probe 1 (BUG-40 & FEAT-09): 54 digit-widths safe_w, Kanji overflow, line 4+ red gutter, Canvas rulers, no char counter."""
         # 1. Legacy char counter removed; S02 U06 pixel-calibrated overflow indicator restored without '(max)'
         self.assertFalse(hasattr(self.app, "lbl_char_count"))
         self.assertFalse(hasattr(self.app, "_update_rendered_char_count"))
@@ -101,31 +101,31 @@ class TestS17PixelRulers(unittest.TestCase):
 
         # 3. Shared pixel-measure helper
         self.assertTrue(hasattr(self.app, "_measure_dialogue_metrics"))
-        fifty_digits = "1234567890" * 5
-        m_50 = self.app._measure_dialogue_metrics(fifty_digits)
-        self.assertFalse(m_50["has_width_overflow"])
-        self.assertIsNone(m_50["lines"][0]["overflow_raw_start"])
+        fifty_four_digits = "1234567890" * 5 + "1234"
+        m_54 = self.app._measure_dialogue_metrics(fifty_four_digits)
+        self.assertFalse(m_54["has_width_overflow"])
+        self.assertIsNone(m_54["lines"][0]["overflow_raw_start"])
 
-        fifty_one_digits = fifty_digits + "1"
-        m_51 = self.app._measure_dialogue_metrics(fifty_one_digits)
-        self.assertTrue(m_51["has_width_overflow"])
-        self.assertEqual(m_51["lines"][0]["overflow_raw_start"], 50)
+        fifty_five_digits = fifty_four_digits + "5"
+        m_55 = self.app._measure_dialogue_metrics(fifty_five_digits)
+        self.assertTrue(m_55["has_width_overflow"])
+        self.assertEqual(m_55["lines"][0]["overflow_raw_start"], 54)
 
         # NGUI tags contribute 0px width, {playername} contributes >0px width, raw index maps accurately
-        tagged_50 = f"[b][FF0000]{fifty_digits}[/][/b]"
-        m_tagged_50 = self.app._measure_dialogue_metrics(tagged_50)
-        self.assertFalse(m_tagged_50["has_width_overflow"])
+        tagged_54 = f"[b][FF0000]{fifty_four_digits}[/][/b]"
+        m_tagged_54 = self.app._measure_dialogue_metrics(tagged_54)
+        self.assertFalse(m_tagged_54["has_width_overflow"])
 
-        tagged_51 = f"[b][FF0000]{fifty_digits}[/][/b]1"
-        m_tagged_51 = self.app._measure_dialogue_metrics(tagged_51)
-        self.assertTrue(m_tagged_51["has_width_overflow"])
-        ov_idx = m_tagged_51["lines"][0]["overflow_raw_start"]
-        self.assertEqual(tagged_51[ov_idx:], "1")
+        tagged_55 = f"[b][FF0000]{fifty_four_digits}[/][/b]5"
+        m_tagged_55 = self.app._measure_dialogue_metrics(tagged_55)
+        self.assertTrue(m_tagged_55["has_width_overflow"])
+        ov_idx = m_tagged_55["lines"][0]["overflow_raw_start"]
+        self.assertEqual(tagged_55[ov_idx:], "5")
 
         m_player = self.app._measure_dialogue_metrics("{playername}")
         self.assertGreater(m_player["lines"][0]["pixel_width"], 0)
 
-        # Wide Japanese Kanji (< 50 chars) still exceeds 50 digit-widths
+        # Wide Japanese Kanji (< 54 chars) still exceeds 54 digit-widths
         kanji_line = "漢" * 40
         m_kanji = self.app._measure_dialogue_metrics(kanji_line)
         self.assertTrue(m_kanji["has_width_overflow"])
@@ -133,7 +133,7 @@ class TestS17PixelRulers(unittest.TestCase):
 
         # 4. Inline overflow highlight & line 4+ red gutter in Dialogue view
         self.app.var_continuous_view.set(False)
-        self._load_doc(fifty_digits + "\nLine 2\nLine 3")
+        self._load_doc(fifty_four_digits + "\nLine 2\nLine 3")
         self.assertEqual(self.app.txt_dialogue.tag_ranges("line_overflow"), ())
         self.assertEqual(self.app.gutter_clean.tag_ranges("gutter_overflow"), ())
 
@@ -143,7 +143,7 @@ class TestS17PixelRulers(unittest.TestCase):
 
         # 5. All Script view (Technique A): no (N chars) label, line_overflow + gutter_overflow active
         self.app.var_continuous_view.set(True)
-        self._load_doc(fifty_one_digits + "\nL2\nL3\nL4")
+        self._load_doc(fifty_five_digits + "\nL2\nL3\nL4")
         all_txt = self.app.txt_all_script.get("1.0", "end-1c")
         self.assertIsNone(re.search(r"\(\d+\s+chars\)", all_txt))
         self.assertTrue(len(self.app.txt_all_script.tag_ranges("line_overflow")) >= 2)

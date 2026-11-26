@@ -3,9 +3,9 @@
 Last updated: 2026-11-26
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.7 — S08 Release Gate Hold)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.7"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `8935d0a7f4a765e6aacdb2cd50021861efc37ec5` (clean working tree after S07).
+Target release: v1.5.0 (Current session build: v1.4.8 — S09 + S09b Post-S09 Bounded Correction)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.8"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,14 +41,18 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S08 Release Gate Verification Baseline — 2026-11-26):
-py -3.12 -m unittest tests.test_v15_s08_release_gate_stress -v
-Result: Ran 8 tests in 38.073s (8 pass, 0 failures, 0 errors, exit code 0)
+Unit Test Suite (v1.5 S09b Verification Baseline — 2026-11-26):
+py -3.12 -m unittest tests.test_v15_s09_core_fixes_54d tests.test_p3_s18_game_preview tests.test_v15_s03_all_script_preview_paste tests.test_v15_s08_release_gate_stress tests.test_p3_s17_pixel_rulers tests.test_v15_s02_fonts_ruler_metrics tests.test_v15_s05_speaker_console_about tests.test_v15_s06_tools_word_wrap -v
+Result: Ran 58 tests (58 pass, 0 failures, 0 errors, exit code 0)
 
 py -3.12 -m unittest discover -s tests -v
-Result: Ran 413 tests in 457.257s across 53 modules (370 pass, 35 skipped, 6 failures, 2 errors; 3 failures + 2 errors in test_s8b2_memory_guards due to missing storydata_1001005.unity3d, 1 failure in test_phase3_performance_config::test_05 due to local misora_config.json, 1 failure in test_s9c_workspace_safety::test_04 due to pre-existing deleted misora_config.default.json, 1 failure in test_v15_s01_stability_remediation::test_probe_8 due to S01 pinned "1.4.1" assertion after v1.4.7 bump; 0 S08 regressions)
+Result: Ran 425 tests in 453.360s across 54 modules (382 pass, 35 skipped, 6 failures, 2 errors):
+  - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards + 35 skips across test_misora_core / test_misora_ui_integration;
+  - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8);
+  - S09 / S09b Regressions: 0 (all 4 post-S09 contract migrations pass).
 
-Test suites included in the 413 tests (exact disk discovery):
+Test suites included in the 422 tests (exact disk discovery):
+  tests/test_v15_s09_core_fixes_54d.py     — 9 S09 core bug fixes, 54d reference, Box 0 immunity, preview arrow, MTL apply left, console removal tests (all pass)
   tests/test_v15_s08_release_gate_stress.py — 8 S08 stress & release-gate tests (20-cycle weakref/tracemalloc +34.40 KiB & 0 cache, 5-cycle search cancel thread/queue cleanup, 500-box wrap+CSIF+binary, MTL cancel/stale rejection, 150-box All Script widget budget & 1436.37 ms benchmark, AST version parity at 1.4.7, .misora v1 schema, cmd_id 35/32/empty sentinel + BoxSnapshot + MTL 2-widget) (all pass)
   tests/test_v15_s07_xuat_cleanup_archive.py — 9 S07 pure-core transactional XUAT cleanup, SHA-256 stale guard, mandatory combined/per-file archival, conservative 3-tier classification, empty-file 2-step delete & Debug > Safety tests (all pass)
   tests/test_v15_s06_tools_word_wrap.py   — 8 S06 Tools menu, pure-Python NGUI/grapheme/kinsoku word wrap, locks/JP-keys/multi-segment single-batch Undo, and XUAT/Script opt-in wrap tests (all pass)
@@ -115,6 +119,42 @@ Test suites included in the 413 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S09b (HOLD at `v1.4.8`) — Post-S09 Bounded Correction & Granular Translation Lock Matrix (2026-11-26)
+- **U-02 Lock-Before-Unpin Actor Switching (`misora.py`):** `_commit_speaker_edit()` verifies `is_box_locked(idx)` before releasing `_is_speaker_pinned` (blocked renames on locked boxes preserve Speaker Pin); valid actor changes release Pin, clear `_pinned_speaker_name`, and notify `"Speaker Pin released — speaker changed to <Actor>. Click 📌 to pin <Actor>."`. `_sync_header_controls_for_card()` always displays the active box's real speaker; `▼` Jump-to-Speaker remains strictly navigation-only.
+- **U-06 Full-List Speaker Autocomplete (`misora.py`):** Added `_speaker_ac_user_typed` and `_speaker_ac_initial_text` so opening the autocomplete popup lists all unique document actors + `{playername}` + `(Narration — Clear Speaker)` before typing; navigation/modifier keys do not trigger filtering; actual text edits filter live and clearing restores all candidates; `entry_speaker` stays editable after unpinning without bypassing Translation Lock.
+- **U-19 Pink Actor Nameplate (`misora.py`, `assets/preview_frames.py`):** Changed Dialogue Preview nameplate background from `#3B2C4E` to rose-pink `#C24270` (`best_contrast_fg` selects `#FFFFFF` bold text at >=4.5:1 WCAG contrast) while preserving the gold nameplate border, cream/gold capsule, and unclipped pink `▼`.
+- **Granular Translation Lock Operation Matrix (Live-Verified S10 Prerequisite):**
+
+| # | Sub-Operation | Behavior | Code Site(s) | Test Evidence |
+|---|---|---|---|---|
+| 1 | Manual Dialogue typing | **ALLOWED** — `txt_dialogue` remains `state="normal"` and `_on_dialogue_edited()` has no `is_box_locked` guard | `misora.py:9091` (`_update_views`), `misora.py:11448` (`_on_dialogue_edited`) | `test_v15_s09_core_fixes_54d::test_guard_1` |
+| 2 | Speaker rename commit | **BLOCKED** — `entry_speaker` remains `state="normal"`, commit reverts `speaker_var` & shows toast | `misora.py:11261` (`_commit_speaker_edit`) | `test_v15_s09_core_fixes_54d::test_probe_2`, `test_probe_3b` |
+| 3 | Quick Edit (target S10) | **MUST follow Row 1** (ALLOWED, unless separate universal read-only RFC approved) | S10 target | Design invariant |
+| 4 | Paste Box — Insert | **ALLOWED** — `on_box_paste(mode="insert")` inserts new boxes after active box (or before #1 on Box 0) without mutating locked boxes; `_resync_box_indices_from_uids()` preserves existing locks | `misora.py:10345-10375` (`on_box_paste`) | `test_v15_s09_core_fixes_54d::test_probe_1`, `test_v15_s03_all_script_preview_paste::test_probe_6` |
+| 5 | Paste Box — Replace | **BLOCKED** — atomic abort if any box in `sorted(_selected_boxes)` is locked | `misora.py:10181, 10397` (`on_box_paste`) | `test_v15_s09_core_fixes_54d::test_probe_1`, `test_v15_s03_all_script_preview_paste::test_probe_4` |
+| 6a | MTL Apply — Dialogue card | **BLOCKED** — per-card `is_box_locked` check aborts apply | `misora.py:13263` (`_apply_mtl_card_text`) | `test_p3_s20_mtl_drawer_dialogue::test_probe_2` |
+| 6b | MTL Apply — All Script Apply Selected | **SKIPPED** — locked boxes skipped per `b_idx` | `misora.py:16553` (`_on_mtl_all_apply_selected`) | `test_p3_s21_mtl_drawer_all_script::test_probe_2` |
+| 6c | MTL Apply — All Script Apply All | **SKIPPED** — locked boxes skipped per `b_idx` | `misora.py:16600` (`_on_mtl_all_apply_all`) | `test_p3_s21_mtl_drawer_all_script::test_probe_2` |
+| 7 | XUAT Import | **SKIPPED** — locked boxes marked `🔒`, auto-skipped, reported in prompt | `misora.py:18592, 18932, 18982` (`ImportFromXUATDialog`) | `test_p3_s22_import_xuat::test_probe_1` |
+| 8 | Auto Word Wrap | **SKIPPED** — locked boxes skipped & counted in `skipped_locked` | `misora.py:17333` (`apply_auto_word_wrap`) | `test_v15_s06_tools_word_wrap::test_probe_3` |
+| 9 | Batch — Search & Replace | **BLOCKED / SKIPPED** — locked boxes skipped in replace-all | `misora.py:16222, 16268, 16323, 16342` | `test_p3_s09_replace_all_backups::test_probe_3` |
+| 10 | Batch — Apply Script (Paste Script / CSIF) | **SKIPPED** — locked targets skipped per box | `misora.py:10520, 10532` (`apply_to_document`) | `test_p3_s07_undo_locks_raw::test_probe_1` |
+| 11a | Batch — Clear Dialogue Skeleton | **SKIPPED** — locked boxes skipped & preserved (`preserved_count += 1`) | `misora.py:17461` (`on_clear_dialogue_skeleton`) | `test_v15_s09_core_fixes_54d::test_guard_3` |
+| 11b | Batch — Cut Box | **SKIPPED / BLOCKED** — locked targets skipped (`on_box_cut`); aborts if all targets locked | `misora.py:10097` (`on_box_cut`) | `test_v15_s09_core_fixes_54d::test_guard_3` |
+| 12 | Select Box and navigation | **ALLOWED** — no lock check on `on_prev_box`, `on_next_box`, `_jump_to_speaker`, or Pin | `misora.py:11620, 11644, 6160` | `test_v15_s09_core_fixes_54d::test_probe_2` |
+
+- **Manual Windows QA Checklist (Updated S09b — `MANUAL-PENDING`):**
+  1. Ribbon Cut persistence after navigation (Dialogue & All Script) (`AGENTS.md` §29).
+  2. Native Paste Box lossless `Insert` vs `Replace` (including empty/locked/Box 0 selection guards) + Undo & Redo (`AGENTS.md` §29).
+  3. Pin Speaker: pin Actor A -> `Next`/`Prev` boundary toasts -> rename to Actor B -> verify Pin auto-releases -> re-pin Actor B -> verify Actor A no longer affects navigation; verify locked box blocks rename without releasing Pin.
+  4. Speaker Autocomplete: click `entry_speaker` -> verify ALL document actors + `(Narration — Clear Speaker)` appear before typing -> type to filter -> clear to restore; verify `▼` Jump-to-Speaker never mutates speakers.
+  5. Dialogue Preview: verify rose-pink Actor nameplate with crisp white text, gold border, cream capsule, and unclipped pink `▼` (`54d x 3` calibration, Box 0 unmeasured).
+  6. All Script & All Script Preview speed and visual match (zero 3rd window).
+  7. Font switching (`Global — Nunito Bold` vs `Japanese`) + constant `54d` ruler + aligned line numbers + red overflow indicator.
+  8. Layout at 100%, 125%, 150% DPI with repeated Left/Right Drawer minimize/reopen & window resize.
+  9. Opt-in Auto Word Wrap on Import + manual `Tools -> Auto Word Wrap...`.
+  10. XUAT Post-Import Cleanup, mandatory `.xuat.old` archive, SHA-256 stale check, `Debug > Safety` toggle, and 2-step empty file deletion.
 
 ### v1.5 S08 (Release Gate Hold at `v1.4.7`) — End-to-End Stress QA, 100% Traceability Audit, & Release Gate Verification (2026-11-26)
 - **Release Gate Hold (`__version__ = "1.4.7"`):** Version bump to `1.5.0` is intentionally **HELD** until the Project Lead completes manual Windows QA across S01–S07 and explicitly waives/resolves the missing `storydata_1001005.unity3d` fixture blocker (`U00`, `misora-safety.md` §7). Zero new defects were discovered in `misora.py` or `core/*.py` during S08 read-only audit.

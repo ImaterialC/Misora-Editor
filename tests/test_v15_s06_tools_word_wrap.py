@@ -8,7 +8,7 @@ S06 (v1.4.6) Verification Suite — Top-Level Tools Menu & Lossless Auto Word Wr
 - Probe 4 (U07): Multi-segment box wrapping preserves segment count and old_seg_texts/new_seg_texts across Undo/Redo.
 - Probe 5 (4.5): ImportFromXUATDialog & ScriptPastePreviewDialog opt-in wrap defaults OFF; wraps inside single Undo batch when ON.
 - Probe 6 (U07): 200-box document wrapping lossless character parity and < 2.0s runtime.
-- Guard 1: Short lines within 50d x 3 and speaker fields remain untouched.
+- Guard 1: Short lines within 54d x 3 and speaker fields remain untouched.
 - Guard 2: Wrapped documents emit no CSIF headers or empty binary args and round-trip cleanly via to_binary()/from_binary().
 """
 from __future__ import annotations
@@ -357,7 +357,7 @@ class TestV15S06ToolsWordWrap(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_guard_1_short_lines_and_speakers_untouched(self) -> None:
-        """Guard 1: Short lines within 50d x 3 and speaker names remain untouched."""
+        """Guard 1: Short lines within 54d x 3 and speaker names remain untouched."""
         short_text = "Short line for {playername}."
         doc = StoryDocument([
             Record(cmd_id=6, cmd_name="print", args=["Pecorine", short_text]),

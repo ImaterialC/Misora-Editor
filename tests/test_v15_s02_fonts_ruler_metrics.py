@@ -142,7 +142,7 @@ class TestV15S02FontsRulerMetrics(unittest.TestCase):
             shutil.rmtree(fonts_dir, ignore_errors=True)
 
     def test_probe_3_measure_font_uses_prefs_and_ruler_stays_constant(self):
-        """Probe 3: _get_dialogue_measure_font follows prefs; ruler safe_w stays constant; 50d vs >50d non-overlapping."""
+        """Probe 3: _get_dialogue_measure_font follows prefs; ruler safe_w stays constant; 54d vs >54d non-overlapping."""
         self.app.var_dlg_font_sz.set(14)
         self.app.var_font_family.set("Global — Nunito Bold")
         self.app._on_font_pref_changed()
@@ -158,28 +158,28 @@ class TestV15S02FontsRulerMetrics(unittest.TestCase):
         self.assertEqual(f_jp.cget("family"), self.app.dialogue_font_family)
         safe_w_jp = self.app._measure_dialogue_metrics("")["safe_w"]
 
-        # Horizontal ruler 50d limit stays constant across Global & JP font switches
+        # Horizontal ruler 54d limit stays constant across Global & JP font switches
         self.assertEqual(safe_w_global, safe_w_jp)
 
-        # Ruler labels 50d and >50d must not overlap
+        # Ruler labels 54d and >54d must not overlap
         self.app.ruler_clean.configure(width=800, height=22)
         self.app.update_idletasks()
         self.app._draw_single_pixel_ruler(self.app.ruler_clean, 40)
-        items_50d = [
+        items_54d = [
             item for item in self.app.ruler_clean.find_all()
-            if self.app.ruler_clean.type(item) == "text" and self.app.ruler_clean.itemcget(item, "text") == "50d"
+            if self.app.ruler_clean.type(item) == "text" and self.app.ruler_clean.itemcget(item, "text") == "54d"
         ]
         items_gt = [
             item for item in self.app.ruler_clean.find_all()
-            if self.app.ruler_clean.type(item) == "text" and ">50d" in self.app.ruler_clean.itemcget(item, "text")
+            if self.app.ruler_clean.type(item) == "text" and ">54d" in self.app.ruler_clean.itemcget(item, "text")
         ]
-        self.assertEqual(len(items_50d), 1)
+        self.assertEqual(len(items_54d), 1)
         self.assertEqual(len(items_gt), 1)
-        bbox_50d = self.app.ruler_clean.bbox(items_50d[0])
+        bbox_54d = self.app.ruler_clean.bbox(items_54d[0])
         bbox_gt = self.app.ruler_clean.bbox(items_gt[0])
-        self.assertIsNotNone(bbox_50d)
+        self.assertIsNotNone(bbox_54d)
         self.assertIsNotNone(bbox_gt)
-        self.assertLessEqual(bbox_50d[2], bbox_gt[0])
+        self.assertLessEqual(bbox_54d[2], bbox_gt[0])
 
     def test_probe_4_gutter_updates_font_size_on_pref_change(self):
         """Probe 4: gutter_clean updates font size and spacing in lockstep when dialogue_font_size changes."""
@@ -197,7 +197,7 @@ class TestV15S02FontsRulerMetrics(unittest.TestCase):
         self.assertEqual(int(self.app.gutter_clean.cget("spacing3")), int(self.app.txt_dialogue.cget("spacing3")))
 
     def test_probe_5_char_overflow_indicator_turns_red_and_no_max_label(self):
-        """Probe 5: lbl_char_overflow has no '(max)', stays normal on 50d/tags, turns red on >50d or 4+ lines."""
+        """Probe 5: lbl_char_overflow has no '(max)', stays normal on 54d/tags, turns red on >54d or 4+ lines."""
         self.assertTrue(hasattr(self.app, "lbl_char_overflow"))
         self.app.var_font_family.set("Global — Nunito Bold")
         self.app.var_dlg_font_sz.set(11)
@@ -209,11 +209,11 @@ class TestV15S02FontsRulerMetrics(unittest.TestCase):
         self.assertNotIn(str(self.app.lbl_char_overflow.cget("fg")).lower(), ("#c9184a", "#ff5c7c"))
 
         # NGUI tags do not inflate rendered width
-        fifty_digits = "1234567890" * 5
-        self._load_doc(f"[b][FF0000]{fifty_digits}[-][/b]")
+        fifty_four_digits = "1234567890" * 5 + "1234"
+        self._load_doc(f"[b][FF0000]{fifty_four_digits}[-][/b]")
         self.assertNotIn(str(self.app.lbl_char_overflow.cget("fg")).lower(), ("#c9184a", "#ff5c7c"))
 
-        # >50d without linebreak turns red
+        # >54d without linebreak turns red
         self._load_doc("W" * 60)
         self.assertIn(str(self.app.lbl_char_overflow.cget("fg")).lower(), ("#c9184a", "#ff5c7c"))
 

@@ -248,7 +248,18 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.app._box_clipboard = [src_snap, narr_snap, third_snap]
         self.app._box_clipboard_text = "MOCK_CLIP_REPLACE"
         self.app.current_box_idx = 1
+        self.app._selected_boxes = {1, 2, 3}
 
+        # S09 U-01: selecting a locked target ({1, 2, 3} with box 2 locked) aborts Replace atomically
+        with patch.object(self.app, "safe_clipboard_get", return_value="MOCK_CLIP_REPLACE"):
+            self.app.on_box_paste(confirm=False, mode="replace")
+        self.assertEqual(BoxSnapshot.from_box(doc.boxes[1]), orig_box1_snap)
+        self.assertEqual(BoxSnapshot.from_box(doc.boxes[2]), orig_box2_snap)
+        self.assertEqual(BoxSnapshot.from_box(doc.boxes[3]), orig_box3_snap)
+
+        # Selecting unlocked targets {1, 3} with 2-item clipboard replaces all 6 fields losslessly
+        self.app._box_clipboard = [src_snap, narr_snap]
+        self.app._selected_boxes = {1, 3}
         with patch.object(self.app, "safe_clipboard_get", return_value="MOCK_CLIP_REPLACE"):
             self.app.on_box_paste(confirm=False, mode="replace")
 
@@ -256,8 +267,8 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.assertEqual(BoxSnapshot.from_box(doc.boxes[1]), src_snap)
         # Box 2 locked -> untouched
         self.assertEqual(BoxSnapshot.from_box(doc.boxes[2]), orig_box2_snap)
-        # Box 3 replaced with third_snap (all 6 fields)
-        self.assertEqual(BoxSnapshot.from_box(doc.boxes[3]), third_snap)
+        # Box 3 replaced with narr_snap (all 6 fields)
+        self.assertEqual(BoxSnapshot.from_box(doc.boxes[3]), narr_snap)
 
         # Undo restores original snapshots on all 6 fields
         self.app.on_undo()
@@ -269,7 +280,7 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.app.on_redo()
         self.assertEqual(BoxSnapshot.from_box(doc.boxes[1]), src_snap)
         self.assertEqual(BoxSnapshot.from_box(doc.boxes[2]), orig_box2_snap)
-        self.assertEqual(BoxSnapshot.from_box(doc.boxes[3]), third_snap)
+        self.assertEqual(BoxSnapshot.from_box(doc.boxes[3]), narr_snap)
 
     def test_probe_5_failed_replace_paste_leaves_document_uncorrupted(self) -> None:
         """Probe 5: Mid-operation failure in Replace paste rolls back records, boxes, and Undo journal 100%."""

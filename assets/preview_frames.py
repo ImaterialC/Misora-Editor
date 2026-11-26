@@ -117,7 +117,7 @@ def get_dialogue_capsule_image(
 def get_dialogue_nameplate_image(
     width: int,
     height: int,
-    fill_hex: str = "#3B2C4E",
+    fill_hex: str = "#C24270",
     border_hex: str = "#C8A86B",
     radius: int = 10,
     master: Optional[tk.Widget] = None,

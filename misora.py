@@ -351,6 +351,9 @@ THEME_PRESETS: Dict[str, Dict[str, str]] = {
     },
 }
 
+DIALOGUE_MAX_DIGITS: int = 54
+DIALOGUE_MAX_LINES: int = 3
+
 DEFAULT_PREFS: Dict[str, Any] = {
     "dialogue_font_family": PRESET_GLOBAL,
     "dialogue_font_size": 11,
@@ -358,7 +361,6 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "ui_font_size": 9,
     "theme": dict(THEME_PRESETS["Misora Purple & White"]),
     "debug": {
-        "console_visible": False,
         "log_to_file": False,
         "level": "Info",
         "categories": {cat: True for cat in LOG_CATEGORIES},
@@ -1662,6 +1664,7 @@ class MisoraApp(tk.Tk):
         self._original_jp_by_uid: Dict[int, str] = {}
         self._box_clipboard: List[Any] = []
         self._is_speaker_pinned: bool = False
+        self._pinned_speaker_name: Optional[str] = None
         self._icon_cache: dict = {}
         self._cont_resize_job: Optional[str] = None
 
@@ -1716,9 +1719,7 @@ class MisoraApp(tk.Tk):
         self._drop_hwnd: Any = None
         self._dnd_in_progress: bool = False
 
-        # Debug Console state
-        self._console_visible: bool = bool(dbg_cfg.get("console_visible", False))
-        self.var_console_visible = tk.BooleanVar(master=self, value=self._console_visible)
+        # Debug logging & safety state
         self.var_log_to_file = tk.BooleanVar(master=self, value=bool(dbg_cfg.get("log_to_file", False)))
         self.var_xuat_safety_backup = tk.BooleanVar(master=self, value=bool(self.xuat_safety_backup_enabled))
 
@@ -1729,6 +1730,8 @@ class MisoraApp(tk.Tk):
         self._speaker_focus_out_after_id: Optional[str] = None
         self._suppress_speaker_popup: bool = False
         self._speaker_popup_navigated: bool = False
+        self._speaker_ac_user_typed: bool = False
+        self._speaker_ac_initial_text: str = ""
         self._about_dialog: Optional[tk.Toplevel] = None
         self._support_me_dialog: Optional[tk.Toplevel] = None
         self.var_log_level = tk.StringVar(master=self, value=str(dbg_cfg.get("level", "Info")))
@@ -2193,7 +2196,6 @@ class MisoraApp(tk.Tk):
         """Load saved font, theme & debug settings from misora_config.json."""
         merged_theme = dict(DEFAULT_PREFS["theme"])
         merged_debug: Dict[str, Any] = {
-            "console_visible": False,
             "log_to_file": False,
             "level": "Info",
             "categories": {cat: True for cat in LOG_CATEGORIES},
@@ -2238,8 +2240,7 @@ class MisoraApp(tk.Tk):
                                 merged_theme[tk_key] = hv.strip().lower()
                     saved_dbg = raw.get("debug")
                     if isinstance(saved_dbg, dict):
-                        if isinstance(saved_dbg.get("console_visible"), bool):
-                            merged_debug["console_visible"] = saved_dbg["console_visible"]
+                        # Legacy console_visible key is tolerated and silently ignored (RM-01)
                         if isinstance(saved_dbg.get("log_to_file"), bool):
                             merged_debug["log_to_file"] = saved_dbg["log_to_file"]
                         if saved_dbg.get("level") in LOG_LEVELS:
@@ -2341,11 +2342,6 @@ class MisoraApp(tk.Tk):
         """Atomically persist current font, theme, path & MTL preferences to misora_config.json."""
         try:
             dbg_snapshot = self.logger.get_config_snapshot()
-            dbg_snapshot["console_visible"] = (
-                bool(self.var_console_visible.get())
-                if hasattr(self, "var_console_visible")
-                else self._console_visible
-            )
             self.prefs["debug"] = dbg_snapshot
 
             payload = {
@@ -4388,13 +4384,6 @@ class MisoraApp(tk.Tk):
 
         self.debug_menu.add_separator()
         self.debug_menu.add_checkbutton(
-            label="Show / Hide Windows Console",
-            variable=self.var_console_visible,
-            command=self._toggle_console_visibility,
-            accelerator="F12",
-            selectcolor=t["misora_pink"],
-        )
-        self.debug_menu.add_checkbutton(
             label="Log to File",
             variable=self.var_log_to_file,
             command=self._on_debug_settings_changed,
@@ -4940,7 +4929,7 @@ class MisoraApp(tk.Tk):
 
         self.lbl_char_overflow = tk.Label(
             gd_header,
-            text="0/50d · 1/3L",
+            text=f"0/{DIALOGUE_MAX_DIGITS}d · 1/{DIALOGUE_MAX_LINES}L",
             font=("Segoe UI", max(8, u_sz - 1)),
             bg=t["bg_panel"],
             fg=t["fg_muted"],
@@ -5129,7 +5118,7 @@ class MisoraApp(tk.Tk):
             command=self._on_toggle_pin_speaker,
         )
         self.btn_pin_speaker.pack(side="left", padx=(1, 4))
-        create_tooltip(self.btn_pin_speaker, "Pin Speaker (locks current speaker across box navigation)")
+        create_tooltip(self.btn_pin_speaker, "Pin Speaker — Next/Prev jumps to same speaker; New Box prefills pinned speaker")
 
         dark_p = self._is_dark_color(t["bg_panel"])
         btn_bg = self._shift_hex(t["bg_panel"], 10 if dark_p else -8)
@@ -6099,18 +6088,6 @@ class MisoraApp(tk.Tk):
             self.debug_menu.entryconfig(self._idx_clear_log, state=exists_state)
         except Exception:
             pass
-        if sys.platform == "win32" and hasattr(ctypes, "windll") and hasattr(self, "var_console_visible"):
-            try:
-                hwnd = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
-                if hwnd:
-                    vis = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
-                    self._console_visible = vis
-                    self.var_console_visible.set(vis)
-                else:
-                    self._console_visible = False
-                    self.var_console_visible.set(False)
-            except Exception:
-                pass
 
     def _on_open_debug_log_file(self) -> None:
         if not DEBUG_LOG_PATH.is_file():
@@ -6289,6 +6266,7 @@ class MisoraApp(tk.Tk):
             hl_fg = best_contrast_fg(t["highlight_bg"], t["misora_pink"], "#ffffff")
 
             popup = tk.Toplevel(self)
+            popup.withdraw()
             popup.overrideredirect(True)
             popup.transient(self)
             popup.configure(bg=t["border"], bd=1, relief="solid")
@@ -6316,8 +6294,47 @@ class MisoraApp(tk.Tk):
             self._speaker_popup = popup
             self._speaker_listbox = lb
             self._speaker_popup_navigated = False
+            self._speaker_ac_user_typed = False
+            self._speaker_ac_initial_text = self.speaker_var.get()
 
         self._refresh_speaker_autocomplete()
+
+    def _get_monitor_work_area(self, x: int, y: int) -> Tuple[int, int, int, int]:
+        """Return (work_left, work_top, work_right, work_bottom) for the monitor containing (x, y)."""
+        if sys.platform == "win32" and hasattr(ctypes, "windll"):
+            try:
+                class _RECT(ctypes.Structure):
+                    _fields_ = [
+                        ("left", ctypes.c_long),
+                        ("top", ctypes.c_long),
+                        ("right", ctypes.c_long),
+                        ("bottom", ctypes.c_long),
+                    ]
+
+                class _MONITORINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", ctypes.c_ulong),
+                        ("rcMonitor", _RECT),
+                        ("rcWork", _RECT),
+                        ("dwFlags", ctypes.c_ulong),
+                    ]
+
+                pt = wintypes.POINT(int(x), int(y))
+                hmon = ctypes.windll.user32.MonitorFromPoint(pt, 2)  # MONITOR_DEFAULTTONEAREST = 2
+                if hmon:
+                    mi = _MONITORINFO()
+                    mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                    if ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                        r = mi.rcWork
+                        return (int(r.left), int(r.top), int(r.right), int(r.bottom))
+            except Exception:
+                pass
+        try:
+            sw = int(self.winfo_screenwidth() or 1920)
+            sh = int(self.winfo_screenheight() or 1080)
+        except Exception:
+            sw, sh = 1920, 1080
+        return (0, 0, sw, sh)
 
     def _refresh_speaker_autocomplete(self) -> None:
         """Populate and position the speaker autocomplete listbox for current filter text."""
@@ -6328,7 +6345,7 @@ class MisoraApp(tk.Tk):
         if popup is None or lb is None or not lb.winfo_exists():
             return
 
-        cur_txt = self.speaker_var.get()
+        cur_txt = self.speaker_var.get() if getattr(self, "_speaker_ac_user_typed", False) else ""
         candidates = self._get_speaker_autocomplete_candidates(cur_txt)
         if not candidates:
             self._close_speaker_autocomplete()
@@ -6343,12 +6360,16 @@ class MisoraApp(tk.Tk):
 
         try:
             self.entry_speaker.update_idletasks()
-            x = self.entry_speaker.winfo_rootx()
-            y = self.entry_speaker.winfo_rooty() + self.entry_speaker.winfo_height() + 1
-            w = max(220, self.entry_speaker.winfo_width())
+            raw_x = int(self.entry_speaker.winfo_rootx())
+            raw_y = int(self.entry_speaker.winfo_rooty() + self.entry_speaker.winfo_height() + 1)
+            w = max(220, int(self.entry_speaker.winfo_width()))
             row_h = 20
             h = min(8, len(candidates)) * row_h + 6
+            work_left, work_top, work_right, work_bottom = self._get_monitor_work_area(raw_x, raw_y)
+            x = max(work_left, min(raw_x, work_right - w))
+            y = max(work_top, min(raw_y, work_bottom - h))
             popup.geometry(f"{w}x{h}+{x}+{y}")
+            popup.deiconify()
             popup.lift()
         except Exception:
             pass
@@ -6395,10 +6416,14 @@ class MisoraApp(tk.Tk):
         """Filter autocomplete live without committing to AST on KeyRelease (U-3, U-4)."""
         keysym = getattr(event, "keysym", "") if event is not None else ""
         if keysym in (
-            "Up", "Down", "Return", "KP_Enter", "Escape", "Tab",
+            "Up", "Down", "Left", "Right", "Home", "End",
+            "Return", "KP_Enter", "Escape", "Tab",
             "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
         ):
             return
+        if not getattr(self, "_speaker_ac_user_typed", False):
+            if self.speaker_var.get() != getattr(self, "_speaker_ac_initial_text", ""):
+                self._speaker_ac_user_typed = True
         if not self._is_speaker_popup_open():
             self._open_speaker_autocomplete()
         else:
@@ -6845,16 +6870,17 @@ class MisoraApp(tk.Tk):
 
         pad_x = 18
         pad_y = 12
+        arrow_safe_zone = 28
         frame_x = 12
         frame_y = 26
-        frame_w = safe_w + pad_x * 2
+        frame_w = safe_w + pad_x * 2 + arrow_safe_zone
         frame_h = safe_h + pad_y * 2
 
         cream_bg = "#F8F6F0"
         outer_gold = "#C8A86B"
         inner_rim = "#FFFFFF"
-        plate_bg = "#3B2C4E"
-        plate_fg = best_contrast_fg(plate_bg, "#FFFFFF", "#F8F6F0")
+        plate_bg = "#C24270"
+        plate_fg = best_contrast_fg(plate_bg, "#FFFFFF", "#1A1A1A")
         text_fg = best_contrast_fg(cream_bg, "#333333", "#1A1A1A")
         arrow_fg = "#FF6B9E"
 
@@ -6866,11 +6892,11 @@ class MisoraApp(tk.Tk):
         )
         if cap_img is not None:
             self._dialogue_preview_images.append(cap_img)
-            canvas.create_image(frame_x, frame_y, image=cap_img, anchor="nw", tags="preview_frame")
+            canvas.create_image(frame_x, frame_y, image=cap_img, anchor="nw", tags=("preview_frame", "preview_capsule"))
         else:
             canvas.create_rectangle(
                 frame_x, frame_y, frame_x + frame_w, frame_y + frame_h,
-                fill=cream_bg, outline=outer_gold, width=2, tags="preview_frame",
+                fill=cream_bg, outline=outer_gold, width=2, tags=("preview_frame", "preview_capsule"),
             )
 
         # Subtle safe-area bottom guide inside capsule (ensures >=3 preview_frame items even for narration)
@@ -6914,26 +6940,28 @@ class MisoraApp(tk.Tk):
             self._dialogue_preview_images.append(tri_img)
             canvas.create_image(
                 frame_x + frame_w - 18, frame_y + frame_h - 14,
-                image=tri_img, anchor="center", tags="preview_frame",
+                image=tri_img, anchor="center", tags=("preview_frame", "preview_arrow"),
             )
         else:
             canvas.create_text(
                 frame_x + frame_w - 16, frame_y + frame_h - 12,
                 text="▼", fill=arrow_fg, font=(d_fam, max(8, d_sz - 2), "bold"),
-                tags="preview_frame",
+                tags=("preview_frame", "preview_arrow"),
             )
 
-        # Size embedded Text so >50d lines and 4+ lines visibly bleed past the calibrated frame
+        # Keep embedded Text strictly inside inner safe zone so it never overlaps ▼ or right/bottom gold border (U-19)
         max_px = max(safe_w, max((ln["pixel_width"] for ln in metrics["lines"]), default=0))
         line_cnt = max(3, metrics["line_count"])
-        win_w = max_px + 24
+        max_inner_w = max(40, frame_w - pad_x - arrow_safe_zone - 6)
+        win_w = min(max_px + 24, max_inner_w)
+        max_inner_h = max(24, frame_h - pad_y * 2 - 2)
         txt_x = frame_x + pad_x
         txt_y = frame_y + pad_y
 
         txt_w.config(state="normal")
         txt_w.configure(
             wrap="none",
-            height=line_cnt,
+            height=min(line_cnt, max(3, max_inner_h // max(1, line_h))),
             font=(d_fam, d_sz),
             bg=cream_bg,
             fg=text_fg,
@@ -6943,16 +6971,16 @@ class MisoraApp(tk.Tk):
         txt_w.delete("1.0", tk.END)
         self._configure_editor_rich_tags(txt_w, d_fam, d_sz)
         self._insert_compiled_ngui_text(txt_w, "1.0", raw_text)
-        self._apply_overflow_highlights(txt_w)
+        if not getattr(self, "is_box0_active", False):
+            self._apply_overflow_highlights(txt_w)
         txt_w.config(state="disabled")
 
         canvas.coords(self._dialogue_preview_win, txt_x, txt_y)
-        canvas.itemconfigure(self._dialogue_preview_win, width=win_w)
+        canvas.itemconfigure(self._dialogue_preview_win, width=win_w, height=max_inner_h)
         canvas.tag_raise(self._dialogue_preview_win)
-        canvas.tag_raise("preview_frame")
 
-        total_w = max(frame_x + frame_w + 16, txt_x + win_w + 12)
-        total_h = max(frame_y + frame_h + 16, txt_y + line_cnt * line_h + 16)
+        total_w = frame_x + frame_w + 16
+        total_h = frame_y + frame_h + 16
         canvas.configure(width=total_w, height=total_h, scrollregion=(0, 0, total_w, total_h))
 
     def _on_toggle_preview_compiled(self) -> None:
@@ -8193,55 +8221,6 @@ class MisoraApp(tk.Tk):
         self.btn_save = ttk.Button(action_bar, text=" Save & Patch Bundle (Ctrl+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
         self.btn_save.pack(side="right", padx=4)
 
-    def _toggle_windows_console(self) -> bool:
-        """Toggle Win32 terminal console visibility using IsWindowVisible(hwnd) before ShowWindow (U02)."""
-        if sys.platform != "win32" or not hasattr(ctypes, "windll"):
-            self._console_visible = False
-            if hasattr(self, "var_console_visible"):
-                self.var_console_visible.set(False)
-            self.show_toast("Windows Terminal console toggle is only supported on Windows.")
-            return False
-
-        try:
-            hwnd = int(ctypes.windll.kernel32.GetConsoleWindow() or 0)
-        except Exception:
-            hwnd = 0
-
-        if hwnd == 0:
-            self._console_visible = False
-            if hasattr(self, "var_console_visible"):
-                self.var_console_visible.set(False)
-            self.show_toast("No Windows Terminal console is attached to this process.")
-            return False
-
-        try:
-            was_visible = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
-            target_show = not was_visible
-            SW_HIDE = 0
-            SW_SHOW = 5
-            ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW if target_show else SW_HIDE)
-            self._console_visible = target_show
-            if hasattr(self, "var_console_visible"):
-                self.var_console_visible.set(target_show)
-            self.show_toast(
-                "Windows console shown (F12 to hide)"
-                if target_show
-                else "Windows console hidden (F12 to restore)"
-            )
-            return True
-        except Exception as exc:
-            self.logger.warning("UI / Theme / Config", f"Console visibility toggle failed: {exc}")
-            self.show_toast("Could not toggle Windows console visibility.", is_error=True)
-            return False
-
-    def _toggle_console_visibility(self) -> None:
-        """Menu callback for Debug > Show / Hide Windows Console (U02)."""
-        self._toggle_windows_console()
-
-    def _toggle_console_shortcut(self) -> None:
-        """F12 shortcut handler for Win32 terminal console visibility toggle (U02)."""
-        self._toggle_windows_console()
-
     def _get_active_text_widget(self) -> Optional[tk.Text]:
         """Resolve the currently active or focused Text widget safely without aliasing (Rule 3)."""
         focused = self.focus_get()
@@ -8346,10 +8325,6 @@ class MisoraApp(tk.Tk):
             return None  # Let standard paste proceed
 
         # 6. Whitelisted Application Shortcuts (return "break" on match)
-        if not is_ctrl and not is_alt and not is_shift and key_lower == "f12":
-            self._toggle_console_shortcut()
-            return "break"
-
         if is_ctrl and not is_alt:
             if not is_shift:
                 if key_lower == "h":
@@ -8607,7 +8582,6 @@ class MisoraApp(tk.Tk):
         self.bind("<F1>", lambda e: self._toggle_side_drawer("glossary"))
         self.bind("<F5>", lambda e: self.on_reload())
         self.bind("<F9>", lambda e: self.on_launch_datamine())
-        self.bind("<F12>", lambda e: self._toggle_console_shortcut())
         self.bind("<Alt-Left>", lambda e: self.on_prev_box())
         self.bind("<Alt-Right>", lambda e: self.on_next_box())
         self.bind("<Alt-Up>", lambda e: self.on_prev_box())
@@ -8830,6 +8804,8 @@ class MisoraApp(tk.Tk):
         plain_text = staged["plain_text"]
 
         self.current_file_path = file_path
+        if hasattr(self, "_reset_speaker_pin"):
+            self._reset_speaker_pin(notify=False)
         if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
             self.undo_journal.set_active_file(str(file_path))
         self.current_doc = doc
@@ -9086,6 +9062,7 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "btn_speaker_dropdown"):
             self.btn_speaker_dropdown.config(state="normal")
         self.speaker_var.set(box.speaker)
+        self._speaker_ac_user_typed = False
         self.lbl_box_counter.config(text=f"Box: {self.current_box_idx + 1} / {total_boxes}")
         if hasattr(self, "lbl_voice_cue"):
             self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
@@ -9635,8 +9612,8 @@ class MisoraApp(tk.Tk):
             return
         total = len(self.current_doc.boxes) if self.current_doc.boxes else 0
         if box_idx == -1:
-            if not (self._is_speaker_pinned and self.speaker_var.get()):
-                self.speaker_var.set("")
+            self.speaker_var.set("")
+            self._speaker_ac_user_typed = False
             if hasattr(self, "entry_speaker"):
                 self.entry_speaker.config(state="disabled")
             if hasattr(self, "btn_speaker_dropdown"):
@@ -9653,8 +9630,8 @@ class MisoraApp(tk.Tk):
                 self.entry_speaker.config(state="normal")
             if hasattr(self, "btn_speaker_dropdown"):
                 self.btn_speaker_dropdown.config(state="normal")
-            if not (self._is_speaker_pinned and self.speaker_var.get()):
-                self.speaker_var.set(box.speaker)
+            self.speaker_var.set(box.speaker)
+            self._speaker_ac_user_typed = False
             self.lbl_box_counter.config(text=f"Box: {box_idx + 1} / {total}")
             if hasattr(self, "lbl_voice_cue"):
                 self.lbl_voice_cue.config(text=f"Voice Cue: {box.voice_cue}" if box.voice_cue else "")
@@ -9791,20 +9768,39 @@ class MisoraApp(tk.Tk):
             self._selected_boxes.discard(b_idx)
         self._update_dialogue_select_box_ui()
 
-    def _on_toggle_pin_speaker(self) -> None:
-        """Toggle persistent speaker pinning across box navigation."""
-        self._is_speaker_pinned = not self._is_speaker_pinned
-        t = self.theme
-        if self._is_speaker_pinned:
-            if hasattr(self, "btn_pin_speaker"):
-                self.btn_pin_speaker.config(bg=t["highlight_bg"], relief="sunken")
-            sp = self.speaker_var.get()
-            self.show_toast(f"📌 Speaker Pinned: '{sp}' locked across navigation")
-        else:
-            if hasattr(self, "btn_pin_speaker"):
-                btn_bg = t.get("bg_editor", "#faf8fe")
-                self.btn_pin_speaker.config(bg=btn_bg, relief="raised")
+    def _reset_speaker_pin(self, notify: bool = False) -> None:
+        """Clear pinned speaker state and restore button visual styling."""
+        was_pinned = bool(getattr(self, "_is_speaker_pinned", False))
+        self._is_speaker_pinned = False
+        self._pinned_speaker_name = None
+        if hasattr(self, "btn_pin_speaker") and self.btn_pin_speaker.winfo_exists():
+            t = self.theme
+            btn_bg = t.get("bg_panel", "#faf8fe")
+            self.btn_pin_speaker.config(bg=btn_bg, relief="flat")
+        if notify and was_pinned:
             self.show_toast("Speaker Unpinned")
+
+    def _on_toggle_pin_speaker(self) -> None:
+        """Toggle persistent speaker pinning (captures canonical speaker identity; U-02)."""
+        if self._is_speaker_pinned:
+            self._reset_speaker_pin(notify=True)
+            return
+        if not self.current_doc or not self.current_doc.boxes:
+            self.show_toast("No story document loaded")
+            return
+        if getattr(self, "is_box0_active", False):
+            captured = ""
+        elif 0 <= self.current_box_idx < len(self.current_doc.boxes):
+            captured = self.current_doc.boxes[self.current_box_idx].speaker
+        else:
+            captured = ""
+        self._is_speaker_pinned = True
+        self._pinned_speaker_name = captured
+        t = self.theme
+        if hasattr(self, "btn_pin_speaker") and self.btn_pin_speaker.winfo_exists():
+            self.btn_pin_speaker.config(bg=t["highlight_bg"], relief="sunken")
+        disp = captured if captured else "(Narration)"
+        self.show_toast(f"📌 Speaker Pinned: '{disp}' locked for Next/Prev & New Box")
 
     def on_select_whole_story(self) -> None:
         """Select whole story / all text across document."""
@@ -10004,6 +10000,7 @@ class MisoraApp(tk.Tk):
 
         if hasattr(self, "speaker_var"):
             self.speaker_var.set(box.speaker)
+        self._speaker_ac_user_typed = False
         if hasattr(self, "lbl_box_counter"):
             self.lbl_box_counter.config(text=f"Box: {self.current_box_idx + 1} / {total}")
         if hasattr(self, "lbl_voice_cue"):
@@ -10039,7 +10036,10 @@ class MisoraApp(tk.Tk):
             self.show_toast("No story document loaded")
             return
 
-        cur_sp = self.speaker_var.get() if (self._is_speaker_pinned and self.speaker_var.get()) else ""
+        if getattr(self, "_is_speaker_pinned", False) and self._pinned_speaker_name is not None:
+            cur_sp = self._pinned_speaker_name
+        else:
+            cur_sp = ""
         ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
         new_snap = BoxSnapshot(
             speaker=cur_sp,
@@ -10150,12 +10150,11 @@ class MisoraApp(tk.Tk):
         self,
         block_count: int,
         sp_desc: str,
-        start_idx: int,
+        selected_targets: List[int],
         total_boxes: int,
-        locked_targets: List[int],
-        excess_count: int,
+        is_box0: bool = False,
     ) -> Optional[str]:
-        """Modal 3-way Paste Box chooser: Insert after Box #N, Replace Box #N..#M, or Cancel."""
+        """Modal 3-way Paste Box chooser: Insert after Box #N (or before #1 on Box 0), Replace selected, or Cancel."""
         t = self.theme
         dlg = tk.Toplevel(self)
         dlg.title("Paste Box(es)")
@@ -10182,15 +10181,38 @@ class MisoraApp(tk.Tk):
             bg=t["bg_panel"],
         ).pack(anchor="w", pady=(0, 6))
 
-        ins_desc = f"after Box #{self.current_box_idx + 1}" if total_boxes > 0 else "at beginning"
-        end_idx = min(total_boxes - 1, start_idx + block_count - 1) if total_boxes > 0 else 0
-        rep_range = f"Box #{start_idx + 1}" if end_idx == start_idx else f"Box #{start_idx + 1}..#{end_idx + 1}"
+        if is_box0 or total_boxes == 0:
+            ins_desc = "before Box #1" if total_boxes > 0 else "at beginning"
+        else:
+            ins_desc = f"after Box #{self.current_box_idx + 1}"
+
+        sel_count = len(selected_targets)
+        has_box0_sel = any(i < 0 for i in selected_targets)
+        locked_targets = [i for i in selected_targets if 0 <= i < total_boxes and self.is_box_locked(i)]
+        can_replace = (
+            total_boxes > 0
+            and sel_count > 0
+            and not has_box0_sel
+            and sel_count == block_count
+            and not locked_targets
+        )
 
         notes = [f"Speakers: {sp_desc}"]
-        if locked_targets:
-            notes.append(f"Locked targets skipped in Replace: {len(locked_targets)}")
-        if excess_count > 0:
-            notes.append(f"Excess blocks beyond story end clamped in Replace: {excess_count}")
+        if sel_count == 0:
+            notes.append("Select target box(es) first to Replace")
+        elif has_box0_sel:
+            notes.append("Box 0 (metadata) cannot be replaced.")
+        elif sel_count != block_count:
+            notes.append(f"Selected {sel_count} boxes, but clipboard contains {block_count} boxes.")
+        elif locked_targets:
+            locked_str = ", ".join(f"#{i + 1}" for i in locked_targets)
+            notes.append(f"Locked target(s) {locked_str} block Replace.")
+        else:
+            sel_str = ", ".join(f"#{i + 1}" for i in selected_targets[:5])
+            if sel_count > 5:
+                sel_str += f", ... (+{sel_count - 5})"
+            notes.append(f"Replace targets: {sel_str}")
+
         tk.Label(
             frame,
             text="\n".join(notes),
@@ -10202,7 +10224,7 @@ class MisoraApp(tk.Tk):
 
         btn_ins = tk.Button(
             frame,
-            text=f"Insert after Box #{self.current_box_idx + 1}" if total_boxes > 0 else f"Insert {ins_desc}",
+            text=f"Insert {ins_desc}",
             font=("Segoe UI", 9, "bold"),
             bg=t["highlight_bg"],
             fg=best_contrast_fg(t["highlight_bg"]),
@@ -10215,13 +10237,17 @@ class MisoraApp(tk.Tk):
         )
         btn_ins.pack(fill="x", pady=2)
 
-        can_replace = total_boxes > 0
+        rep_label = (
+            f"Replace {sel_count} Selected Box(es)"
+            if sel_count > 0
+            else "Replace (Select target box(es) first to Replace)"
+        )
         btn_rep = tk.Button(
             frame,
-            text=f"Replace {rep_range}",
+            text=rep_label,
             font=("Segoe UI", 9),
             bg=t["bg_editor"],
-            fg=t["fg_text"],
+            fg=t["fg_text"] if can_replace else t["fg_muted"],
             relief="raised",
             bd=1,
             padx=10,
@@ -10265,7 +10291,7 @@ class MisoraApp(tk.Tk):
         return choice[0]
 
     def on_box_paste(self, confirm: bool = True, mode: Optional[str] = None) -> None:
-        """Paste box(es) from clipboard: Insert after cursor or Replace in-place with full BoxSnapshot."""
+        """Paste box(es) from clipboard: Insert after cursor (or before Box #1 on Box 0) or Replace _selected_boxes (U-01)."""
         if not self.current_doc:
             self.show_toast("No story document loaded")
             return
@@ -10308,23 +10334,17 @@ class MisoraApp(tk.Tk):
             sp_desc += f", ... (+{block_count - 3} more)"
 
         total_boxes = len(self.current_doc.boxes)
-        start_idx = 0 if getattr(self, "is_box0_active", False) else max(0, self.current_box_idx)
-        locked_targets = [
-            start_idx + offset
-            for offset in range(block_count)
-            if (start_idx + offset) < total_boxes and self.is_box_locked(start_idx + offset)
-        ]
-        excess_count = max(0, (start_idx + block_count) - total_boxes)
+        selected_targets = sorted(getattr(self, "_selected_boxes", set()))
+        is_box0 = bool(getattr(self, "is_box0_active", False))
 
         if mode is None:
             if confirm:
                 chosen = self._show_box_paste_mode_dialog(
                     block_count=block_count,
                     sp_desc=sp_desc,
-                    start_idx=start_idx,
+                    selected_targets=selected_targets,
                     total_boxes=total_boxes,
-                    locked_targets=locked_targets,
-                    excess_count=excess_count,
+                    is_box0=is_box0,
                 )
                 if not chosen:
                     return
@@ -10333,7 +10353,10 @@ class MisoraApp(tk.Tk):
                 mode = "insert"
 
         if mode == "insert":
-            ins_idx = self.current_box_idx + 1 if self.current_doc.boxes else 0
+            if is_box0 or not self.current_doc.boxes:
+                ins_idx = 0
+            else:
+                ins_idx = self.current_box_idx + 1
             self.undo_journal.begin_batch(f"Paste {block_count} Box(es)")
             try:
                 for offset, snap in enumerate(snaps_to_apply):
@@ -10364,20 +10387,36 @@ class MisoraApp(tk.Tk):
         if mode != "replace":
             return
 
+        # Strict Replace Mode Contract (U-01):
+        if not selected_targets:
+            self.show_toast("No boxes selected to replace.")
+            self.set_status("Paste Replace aborted: no boxes selected.", is_error=True)
+            return
+
+        if any(i < 0 or i >= total_boxes for i in selected_targets):
+            self.show_toast("Box 0 (metadata) cannot be replaced.")
+            self.set_status("Paste Replace aborted: Box 0 (metadata) cannot be replaced.", is_error=True)
+            return
+
+        if len(selected_targets) != block_count:
+            msg = f"Selected {len(selected_targets)} boxes, but clipboard contains {block_count} boxes."
+            self.show_toast(msg)
+            self.set_status(f"Paste Replace aborted: {msg}", is_error=True)
+            return
+
+        locked_list = [i for i in selected_targets if self.is_box_locked(i)]
+        if locked_list:
+            locked_str = ", ".join(f"#{i + 1}" for i in locked_list)
+            msg = f"Box(es) {locked_str} are locked. No boxes replaced."
+            self.show_toast(f"🔒 {msg}")
+            self.set_status(f"Paste Replace aborted: {msg}", is_error=True)
+            return
+
         # Stage & validate all replacement targets BEFORE mutating any record
         staged_ops: List[Tuple[int, BoxSnapshot]] = []
-        skipped_locked = 0
-        clamped_excess = 0
         doc_rec_uids = {r.uid for r in self.current_doc.records}
 
-        for offset, snap in enumerate(snaps_to_apply):
-            t_idx = start_idx + offset
-            if t_idx >= total_boxes:
-                clamped_excess += 1
-                continue
-            if self.is_box_locked(t_idx):
-                skipped_locked += 1
-                continue
+        for t_idx, snap in zip(selected_targets, snaps_to_apply):
             if not isinstance(snap, BoxSnapshot) or snap.kind not in ("print", "tag") or not snap.seg_texts:
                 self.set_status("Paste Replace aborted: invalid BoxSnapshot.", is_error=True)
                 self.show_toast("Paste Replace aborted: invalid snapshot")
@@ -10387,13 +10426,6 @@ class MisoraApp(tk.Tk):
                 self.set_status("Paste Replace aborted: unowned record in target box.", is_error=True)
                 return
             staged_ops.append((t_idx, self._clone_box_snapshot(snap)))
-
-        if not staged_ops:
-            if skipped_locked > 0:
-                self.show_toast(f"🔒 All {skipped_locked} target box(es) are locked; no edits applied.")
-            else:
-                self.show_toast("No target boxes available to replace.")
-            return
 
         # Transactional rollback checkpoint in case replace_box raises mid-batch
         backup_records = copy.deepcopy(self.current_doc.records)
@@ -10452,12 +10484,7 @@ class MisoraApp(tk.Tk):
         self._dirty_state_changed()
         self._update_views()
 
-        parts = [f"Replaced {len(recorded_deltas)} box(es)"]
-        if skipped_locked:
-            parts.append(f"skipped {skipped_locked} locked")
-        if clamped_excess:
-            parts.append(f"clamped {clamped_excess} excess")
-        msg = " · ".join(parts)
+        msg = f"Replaced {len(recorded_deltas)} box(es)"
         self.show_toast(f"🔄📦 {msg}")
         self.lbl_status.config(text=msg)
 
@@ -11246,6 +11273,12 @@ class MisoraApp(tk.Tk):
             self.show_toast(f"Box #{idx + 1} is locked; speaker rename blocked.")
             return False
 
+        # Lock-Before-Unpin (U-02): only release Speaker Pin after lock check passes
+        pin_released = False
+        if getattr(self, "_is_speaker_pinned", False):
+            self._reset_speaker_pin(notify=False)
+            pin_released = True
+
         self.undo_journal.record(
             BoxEditDelta(
                 box_index=idx,
@@ -11288,7 +11321,11 @@ class MisoraApp(tk.Tk):
 
         self._update_raw_view()
         self._dirty_state_changed()
-        self.show_toast(f"Renamed Box #{idx + 1} speaker to {updated_sp or '(Narration)'}")
+        if pin_released:
+            disp_sp = updated_sp or "(Narration)"
+            self.show_toast(f"Speaker Pin released — speaker changed to {disp_sp}. Click 📌 to pin {disp_sp}.")
+        else:
+            self.show_toast(f"Renamed Box #{idx + 1} speaker to {updated_sp or '(Narration)'}")
         return True
 
     def _on_speaker_edited(self) -> None:
@@ -11563,8 +11600,48 @@ class MisoraApp(tk.Tk):
             return True
         return False
 
+    def _navigate_pinned_speaker(self, direction: str) -> None:
+        """Navigate Prev/Next strictly within current StoryDocument matching _pinned_speaker_name (no wrap-around; U-02)."""
+        doc = self.current_doc
+        if not doc or not doc.boxes:
+            return
+        target_sp = self._pinned_speaker_name
+        matches = [i for i, b in enumerate(doc.boxes) if b.speaker == target_sp]
+        disp = target_sp if target_sp else "(Narration)"
+        total_m = len(matches)
+
+        if direction == "next":
+            start = 0 if getattr(self, "is_box0_active", False) else (self.current_box_idx + 1)
+            nxt = next((i for i in matches if i >= start), None)
+            if nxt is None:
+                self.show_toast(f"Speaker {disp} — this is the last time speaking in this chapter")
+                return
+            self.is_box0_active = False
+            self.current_box_idx = nxt
+            k = matches.index(nxt) + 1
+        else:
+            if getattr(self, "is_box0_active", False):
+                self.show_toast(f"Speaker {disp} — this is the first time speaking in this chapter")
+                return
+            prv = next((i for i in reversed(matches) if i < self.current_box_idx), None)
+            if prv is None:
+                self.show_toast(f"Speaker {disp} — this is the first time speaking in this chapter")
+                return
+            self.is_box0_active = False
+            self.current_box_idx = prv
+            k = matches.index(prv) + 1
+
+        if self.var_continuous_view.get():
+            self._focus_continuous_box(self.current_box_idx, move_cursor=True)
+        else:
+            self._update_views()
+        self.show_toast(f"Speaker {disp} — Box #{self.current_box_idx + 1} ({k} of {total_m})")
+
     def on_prev_box(self) -> None:
         self._close_speaker_autocomplete()
+        if getattr(self, "_is_speaker_pinned", False) and self._pinned_speaker_name is not None:
+            self._navigate_pinned_speaker("prev")
+            return
         if self.is_box0_active:
             return
 
@@ -11586,6 +11663,9 @@ class MisoraApp(tk.Tk):
 
     def on_next_box(self) -> None:
         self._close_speaker_autocomplete()
+        if getattr(self, "_is_speaker_pinned", False) and self._pinned_speaker_name is not None:
+            self._navigate_pinned_speaker("next")
+            return
         if self.is_box0_active:
             self.is_box0_active = False
             self.current_box_idx = 0
@@ -11723,17 +11803,22 @@ class MisoraApp(tk.Tk):
                 self._ruler_measure_font = cached
         return cached
 
-    def _measure_dialogue_metrics(self, text: str) -> Dict[str, Any]:
-        """Shared pixel-calibrated dialogue measurement helper (S17 / S02 U15, U19).
+    def _get_54d_reference_safe_w(self) -> int:
+        """Return canonical 54 digit-width pixel boundary using Nunito Bold reference font (U-07)."""
+        rf = self._get_ruler_measure_font()
+        sample = "1234567890" * (DIALOGUE_MAX_DIGITS // 10) + "1234567890"[: (DIALOGUE_MAX_DIGITS % 10)]
+        return max(1, int(rf.measure(sample)))
 
-        Uses constant Nunito Bold ruler font for `safe_w = ruler_font.measure('1234567890' * 5)`
-        (50 digit-widths) and active editor font for rendered line widths, with O(1) fast-path
+    def _measure_dialogue_metrics(self, text: str) -> Dict[str, Any]:
+        """Shared pixel-calibrated dialogue measurement helper (S17 / S02 / S09 U-07).
+
+        Uses constant Nunito Bold ruler font for `safe_w` (54 digit-widths)
+        and active editor font for rendered line widths, with O(1) fast-path
         for non-overflowing lines and O(log L) binary search when overflowing.
         """
         f = self._get_dialogue_measure_font()
-        rf = self._get_ruler_measure_font()
-        safe_w = max(1, int(rf.measure("1234567890" * 5)))
-        digit_w = safe_w / 50.0
+        safe_w = self._get_54d_reference_safe_w()
+        digit_w = safe_w / float(DIALOGUE_MAX_DIGITS)
         placeholder_sample = "PlayerName"
 
         raw_lines = text.split("\n") if text else [""]
@@ -11815,13 +11900,22 @@ class MisoraApp(tk.Tk):
         is_ov = bool(metrics["has_width_overflow"] or metrics["has_line_overflow"])
         ov_fg = "#c9184a" if self._is_light_theme() else "#ff5c7c"
         lbl.config(
-            text=f"{d_equiv}/50d · {line_count}/3L",
+            text=f"{d_equiv}/{DIALOGUE_MAX_DIGITS}d · {line_count}/{DIALOGUE_MAX_LINES}L",
             fg=ov_fg if is_ov else t["fg_muted"],
         )
 
     def _apply_overflow_highlights(self, widget: Optional[tk.Text]) -> None:
-        """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget."""
+        """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget (Box 0 immune)."""
         if not widget or not widget.winfo_exists():
+            return
+        if getattr(self, "is_box0_active", False) and widget in (
+            getattr(self, "txt_dialogue", None),
+            getattr(self, "txt_dialogue_preview", None),
+        ):
+            try:
+                widget.tag_remove("line_overflow", "1.0", tk.END)
+            except Exception:
+                pass
             return
         try:
             widget.tag_remove("line_overflow", "1.0", tk.END)
@@ -11838,6 +11932,12 @@ class MisoraApp(tk.Tk):
     def _apply_gutter_overflow_tag(self, gutter_widget: Optional[tk.Text]) -> None:
         """Color vertical line-number gutter red from line 4+ (3 or more linebreaks)."""
         if not gutter_widget or not gutter_widget.winfo_exists():
+            return
+        if getattr(self, "is_box0_active", False) and gutter_widget == getattr(self, "gutter_clean", None):
+            try:
+                gutter_widget.tag_remove("gutter_overflow", "1.0", tk.END)
+            except Exception:
+                pass
             return
         try:
             ov_fg = "#ff5c7c" if not self._is_light_theme() else "#c9184a"
@@ -11869,13 +11969,12 @@ class MisoraApp(tk.Tk):
         canvas.configure(bg=gutter_bg)
         canvas.delete("all")
 
-        rf = self._get_ruler_measure_font()
-        safe_w = max(1, int(rf.measure("1234567890" * 5)))
-        digit_w = safe_w / 50.0
+        safe_w = self._get_54d_reference_safe_w()
+        digit_w = safe_w / float(DIALOGUE_MAX_DIGITS)
         ch = max(20, int(canvas.winfo_height() or 20))
         cw = max(int(canvas.winfo_width() or 0), int(x0 + safe_w + 180))
 
-        # Red overflow zone past 50 digit-widths
+        # Red overflow zone past 54 digit-widths
         ov_x = x0 + safe_w
         canvas.create_rectangle(ov_x, 0, cw, ch, fill=red_zone_bg, outline="")
         canvas.create_line(x0, ch - 1, cw, ch - 1, fill=gutter_fg)
@@ -11885,23 +11984,28 @@ class MisoraApp(tk.Tk):
             tx = x0 + int(round(col * digit_w))
             if tx > cw - 8:
                 break
-            is_major = (col % 10 == 0)
+            is_major = (col % 10 == 0) or (col == DIALOGUE_MAX_DIGITS)
             tick_h = 8 if is_major else 4
-            tick_col = red_fg if col > 50 else (marker_fg if col == 50 else gutter_fg)
-            canvas.create_line(tx, ch - tick_h - 1, tx, ch - 1, fill=tick_col, width=2 if col == 50 else 1)
+            tick_col = red_fg if col > DIALOGUE_MAX_DIGITS else (marker_fg if col == DIALOGUE_MAX_DIGITS else gutter_fg)
+            canvas.create_line(tx, ch - tick_h - 1, tx, ch - 1, fill=tick_col, width=2 if col == DIALOGUE_MAX_DIGITS else 1)
             if is_major:
-                if col == 50:
+                if col == DIALOGUE_MAX_DIGITS:
                     canvas.create_text(
-                        ov_x - 3, 2, text="50d", anchor="ne", fill=tick_col, font=("Segoe UI", 7, "bold")
+                        ov_x - 3, 2, text=f"{DIALOGUE_MAX_DIGITS}d", anchor="ne", fill=tick_col, font=("Segoe UI", 7, "bold")
                     )
-                else:
+                elif col != 50:
                     canvas.create_text(
                         tx + 2, 2, text=str(col), anchor="nw", fill=tick_col, font=("Segoe UI", 7, "normal")
                     )
-            col += 5
+            if col == 50:
+                col = DIALOGUE_MAX_DIGITS
+            elif col == DIALOGUE_MAX_DIGITS:
+                col = 55
+            else:
+                col += 5
 
         canvas.create_line(ov_x, 0, ov_x, ch, fill=marker_fg, width=2)
-        canvas.create_text(ov_x + 5, 2, text=">50d", anchor="nw", fill=red_fg, font=("Segoe UI", 7, "bold"))
+        canvas.create_text(ov_x + 5, 2, text=f">{DIALOGUE_MAX_DIGITS}d", anchor="nw", fill=red_fg, font=("Segoe UI", 7, "bold"))
 
     def _redraw_pixel_rulers(self) -> None:
         """Redraw both Clean and All Script Canvas rulers aligned to editor text origins."""
@@ -14328,6 +14432,8 @@ class MisoraApp(tk.Tk):
                 self.is_bundle_file = False
                 self.is_dirty = False
                 self._plain_text_content = ""
+                if hasattr(self, "_reset_speaker_pin"):
+                    self._reset_speaker_pin(notify=False)
                 self._clear_card_registry()  # S4: prune stale card refs before view reset
                 if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
                     self.undo_journal.set_active_file("")
@@ -15544,17 +15650,6 @@ class MisoraApp(tk.Tk):
             card_hdr = self._tag_role(tk.Frame(card, bg=t["bg_panel"]), "panel")
             card_hdr.pack(fill="x", padx=6, pady=(4, 2))
 
-            self._tag_role(
-                tk.Label(card_hdr, text=eng, bg=t["bg_panel"], fg=t["misora_pink"], anchor="w"),
-                "label_accent",
-            ).pack(side="left")
-
-            lbl_status = self._tag_role(
-                tk.Label(card_hdr, text="Ready", bg=t["bg_panel"], fg=t["fg_muted"], anchor="w"),
-                "label_muted",
-            )
-            lbl_status.pack(side="left", padx=(6, 4), fill="x", expand=True)
-
             btn_apply = ttk.Button(
                 card_hdr,
                 text="←",
@@ -15562,8 +15657,20 @@ class MisoraApp(tk.Tk):
                 width=3,
                 command=lambda e=eng: self._on_mtl_drawer_apply_engine(e),
             )
-            btn_apply.pack(side="right", padx=(2, 0))
+            btn_apply.pack(side="left", padx=(0, 6))
             create_tooltip(btn_apply, f"Apply {eng} translation to active box (preserves whitespace)")
+
+            lbl_engine = self._tag_role(
+                tk.Label(card_hdr, text=eng, bg=t["bg_panel"], fg=t["misora_pink"], anchor="w"),
+                "label_accent",
+            )
+            lbl_engine.pack(side="left")
+
+            lbl_status = self._tag_role(
+                tk.Label(card_hdr, text="Ready", bg=t["bg_panel"], fg=t["fg_muted"], anchor="w"),
+                "label_muted",
+            )
+            lbl_status.pack(side="left", padx=(6, 4), fill="x", expand=True)
 
             ico_ref = getattr(self, "ico_refresh", None)
             btn_refresh = ttk.Button(
@@ -15621,6 +15728,7 @@ class MisoraApp(tk.Tk):
 
             self._mtl_drawer_cards[eng] = {
                 "frame": card,
+                "lbl_engine": lbl_engine,
                 "lbl_status": lbl_status,
                 "btn_refresh": btn_refresh,
                 "btn_apply": btn_apply,
@@ -17198,10 +17306,9 @@ class MisoraApp(tk.Tk):
     on_apply_translation_clipboard = on_paste_cross_box
 
     def _get_word_wrap_params(self) -> Tuple[Callable[[str], int], int]:
-        """Return (measure_fn, constant_50d_safe_width) calibrated to Nunito Bold 50d."""
+        """Return (measure_fn, constant_54d_safe_width) calibrated to Nunito Bold 54d."""
         f = self._get_dialogue_measure_font()
-        rf = self._get_ruler_measure_font()
-        safe_w = max(1, int(rf.measure("1234567890" * 5)))
+        safe_w = self._get_54d_reference_safe_w()
         return f.measure, safe_w
 
     def apply_auto_word_wrap(
@@ -17980,7 +18087,7 @@ class ScriptPastePreviewDialog(tk.Toplevel):
 
         cb_wrap = ttk.Checkbutton(
             opts_frame,
-            text="Auto Word Wrap imported lines to 50d x 3",
+            text=f"Auto Word Wrap imported lines to {DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES}",
             variable=self.var_auto_word_wrap,
             command=self._populate_tree,
         )
@@ -18132,7 +18239,7 @@ class AutoWordWrapDialog(tk.Toplevel):
         self.app = parent
         self.applied_stats: Optional[Dict[str, int]] = None
 
-        self.title("Auto Word Wrap (50d x 3)")
+        self.title(f"Auto Word Wrap ({DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES})")
         self.geometry("460x290")
         self.resizable(False, False)
         self.transient(parent)
@@ -18171,7 +18278,7 @@ class AutoWordWrapDialog(tk.Toplevel):
 
         tk.Label(
             container,
-            text="Auto Word Wrap to 50d x 3",
+            text=f"Auto Word Wrap to {DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES}",
             font=("Segoe UI", 11, "bold"),
             bg=t["bg_panel"],
             fg=t["misora_pink"],
@@ -18383,7 +18490,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         opts_row.pack(fill="x", pady=(4, 0))
         cb_wrap = tk.Checkbutton(
             opts_row,
-            text="Auto Word Wrap imported lines to 50d x 3",
+            text=f"Auto Word Wrap imported lines to {DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES}",
             variable=self.var_auto_word_wrap,
             bg=t["bg_panel"],
             fg=fg_panel,
@@ -18467,7 +18574,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         fg_muted = t["fg_muted"]
 
         measure_font = self.app._get_dialogue_measure_font()
-        safe_w = self.app._measure_dialogue_metrics("1234567890" * 5)["safe_w"]
+        safe_w = self.app._get_54d_reference_safe_w()
         line_h = max(14, int(measure_font.metrics("linespace")))
         box_px_w = safe_w + 10
         box_px_h = line_h * 3 + 8

@@ -125,8 +125,8 @@ class TestP3S18GamePreview(unittest.TestCase):
         # Ensure normal text tag uses full d_sz (not shrunk)
         self.assertTrue(any(t.endswith(f"_{d_sz}") for t in cstyle_tags))
 
-        # 4. Visible bleed: embedded text widget is NOT clipped to 3 lines
-        self.assertGreaterEqual(int(self.app.txt_dialogue_preview.cget("height")), 4)
+        # 4. Visible bleed: embedded text widget is calibrated to 3-line safe height with wrap='none'
+        self.assertGreaterEqual(int(self.app.txt_dialogue_preview.cget("height")), 3)
 
         # 5. Pure presentation: zero dirty / undo mutation
         self.assertFalse(self.app.is_dirty)
@@ -180,10 +180,10 @@ class TestP3S18GamePreview(unittest.TestCase):
 
     def test_03_guard_plain_text_preview_save_and_pixel_measure_intact(self):
         """[Guard 1] Lightweight regression guard for BUG-11 plain-text preview save & S17 pixel-measure helper."""
-        # S17 shared pixel-measure helper intact
-        m = self.app._measure_dialogue_metrics("1234567890" * 5 + "1")
+        # S17 shared pixel-measure helper intact (54d reference calibrated in S09)
+        m = self.app._measure_dialogue_metrics("1234567890" * 5 + "12345")
         self.assertTrue(m["has_width_overflow"])
-        self.assertEqual(m["lines"][0]["overflow_raw_start"], 50)
+        self.assertEqual(m["lines"][0]["overflow_raw_start"], 54)
 
         # BUG-11 plain-text save preserves NGUI tags while Preview ON
         raw_content = "[FF0000]Red Text[-] and [00FF00]Green[-]"

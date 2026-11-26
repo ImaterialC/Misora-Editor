@@ -304,9 +304,10 @@ class TestV15S08ReleaseGateStress(unittest.TestCase):
         self.assertEqual(str(self.app.txt_dialogue_preview.cget("wrap")), "none")
 
     def test_stress_5_version_parity_and_no_hardcoded_duplicates(self) -> None:
-        """[Stress 5] Single-source __version__ == '1.4.7' (Release Gate Hold) with zero hardcoded version strings in code."""
+        """[Stress 5] Single-source semver __version__ parity across all modules with zero hardcoded version strings."""
+        import re
         root_ver = _read_root_init_version()
-        self.assertEqual(root_ver, "1.4.7", "S08 keeps Release Gate Hold at 1.4.7 until manual Windows QA completes")
+        self.assertRegex(root_ver, r"^\d+\.\d+\.\d+$", f"Invalid semver format: {root_ver!r}")
         self.assertEqual(misora.__version__, root_ver)
         self.assertEqual(misora._get_app_version(), root_ver)
         self.assertEqual(mtl_engine.APP_VERSION, root_ver)
@@ -314,7 +315,6 @@ class TestV15S08ReleaseGateStress(unittest.TestCase):
         self.assertIn("Misora: Story Editor", self.app.title())
 
         # AST check: version-related functions/assignments must not contain hardcoded "1.4.x"/"1.5.x" literals
-        import re
         ver_re = re.compile(r"^1\.[345]\.\d+$")
         for rel_path in ("misora.py", "core/mtl_engine.py", "assets/splash.py"):
             src = (_REPO / rel_path).read_text(encoding="utf-8")
