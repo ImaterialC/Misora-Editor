@@ -139,23 +139,23 @@ class TestP3S13RibbonShortcuts(unittest.TestCase):
         self.assertEqual(doc.boxes[0].clean_text, "[b]Yabai desu ne![/b]")
         self.assertTrue(self.app.undo_journal.can_undo(), "Undo journal must record delta on first click")
 
-        # --- Subtest 2: All Script (Technique A) selection + jump & ribbon/size commit ---
+        # --- Subtest 2: All Script (Virtualized Pool) selection + jump & ribbon/size commit ---
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
         self.app.update_idletasks()
 
-        # Technique A renders inside single read-only txt_all_script with block map
-        self.assertEqual(self.app._card_widgets, {}, "Technique A must not create per-box card widgets")
-        self.assertIn(1, self.app._all_script_block_ranges, "Box 1 must exist in All Script block map")
-        s_ln, _ = self.app._all_script_block_ranges[1]
-        self.app._on_all_script_click_at_index(f"{s_ln}.0")
+        # Virtualized Pool renders read-only cards without legacy _card_widgets explosion
+        self.assertEqual(self.app._card_widgets, {}, "Virtualized pool must keep legacy _card_widgets empty")
+        card1 = self.app._as_visible_cards.get(1)
+        self.assertIsNotNone(card1, "Box 1 must be visible in Virtualized Card Pool")
+        self.app._on_as_card_click(card1)
         self.assertEqual(self.app.current_box_idx, 1)
 
         # Clear hidden txt_continuous to verify it is NOT polluted
         self.app.txt_continuous.delete("1.0", tk.END)
 
         # Jump to Dialogue View for editing Box 1 and apply bold + font size
-        self.app._on_all_script_activate_at_index(f"{s_ln}.0")
+        self.app._on_as_card_double_click(card1)
         self.app.update_idletasks()
         self.assertFalse(self.app.var_continuous_view.get())
         self.app.txt_dialogue.focus_set()

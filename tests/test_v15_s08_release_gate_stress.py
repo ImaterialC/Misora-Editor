@@ -260,40 +260,111 @@ class TestV15S08ReleaseGateStress(unittest.TestCase):
         reloaded = StoryDocument.from_binary(bin_bytes)
         self.assertEqual(len(reloaded.boxes), 500)
 
-    def test_stress_4_all_script_technique_a_widget_budget_and_preview_bleed(self) -> None:
-        """[Stress 4] 150-box All Script keeps exactly 1 mapped tk.Text, <=3 total tk.Text, 0 Treeviews, and wrap='none' Preview."""
-        records_150 = []
-        for i in range(150):
-            records_150.append(Record(cmd_id=6, cmd_name="print", args=["ユイ", ("1234567890" * 6) + f" box {i}"]))
-            records_150.append(Record(cmd_id=10, cmd_name="touch", args=[]))
-        doc = StoryDocument(records_150)
-        fp = self.tmp_dir / "stress_150.v2.txt"
-        fp.write_text(doc.to_v2_text(), encoding="utf-8")
-        self.app.open_file(fp)
-
+    def test_stress_4_all_script_virtualized_pool_and_preview_bleed(self) -> None:
+        """[Stress 4] Virtualized All Script pool stays bounded across 150/300/1000 boxes, recycles locks/selection, and Dialogue Preview keeps wrap='none'."""
         import platform
         import time
 
-        self.app.var_continuous_view.set(True)
-        t0 = time.perf_counter()
-        self.app._on_toggle_continuous_view()
+        self.app.geometry("1220x780+40+40")
         self.app.update_idletasks()
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        pool_counts = {}
+        render_150_ms = 0.0
+        for count in (150, 300, 1000):
+            recs = []
+            for i in range(count):
+                recs.append(Record(cmd_id=6, cmd_name="print", args=["ユイ", ("1234567890" * 6) + f" box {i}"]))
+                recs.append(Record(cmd_id=10, cmd_name="touch", args=[]))
+            doc = StoryDocument(recs)
+            fp = self.tmp_dir / f"stress_{count}.v2.txt"
+            fp.write_text(doc.to_v2_text(), encoding="utf-8")
+            self.app.open_file(fp)
+
+            self.app.var_continuous_view.set(True)
+            t0 = time.perf_counter()
+            self.app._on_toggle_continuous_view()
+            self.app.update_idletasks()
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            if count == 150:
+                render_150_ms = elapsed_ms
+            pool_counts[count] = len(self.app._as_card_pool)
+
+            desc = _collect_descendants(self.app.continuous_wrap)
+            treeviews = [w for w in desc if isinstance(w, ttk.Treeview)]
+            self.assertEqual(len(treeviews), 0, "All Script must contain 0 ttk.Treeview widgets")
+            self.assertEqual(self.app.txt_all_script.winfo_manager(), "", "Retired txt_all_script must stay unmapped")
+            self.assertNotEqual(self.app.cont_canvas.winfo_manager(), "", "cont_canvas must be mapped")
+            self.assertEqual(len(self.app._all_script_render_images), 0, "Zero Pillow per-box images allowed")
+            self.assertGreaterEqual(pool_counts[count], 4)
+            self.assertLessEqual(pool_counts[count], 30, f"Pool exploded to {pool_counts[count]} for {count} boxes")
+
+        self.assertEqual(len(set(pool_counts.values())), 1, f"Pool must scale with viewport, not box count: {pool_counts}")
+
+        # Scroll-to-end & scroll-back on 1000-box doc with Selection & Lock survival
+        self.app.var_select_box_mode.set(True)
+        self.app._selected_boxes = {0, 999}
+        self.app.current_box_idx = 1
+        self.app.on_toggle_lock_current_box()
+        self.app.current_box_idx = 998
+        self.app.on_toggle_lock_current_box()
+        self.app._render_continuous_view()
+        self.app.update_idletasks()
+
+        t_scr0 = time.perf_counter()
+        self.app._on_as_scrollbar("moveto", "1.0")
+        self.app.update_idletasks()
+        c998 = self.app._as_visible_cards.get(998)
+        c999 = self.app._as_visible_cards.get(999)
+        self.assertIsNotNone(c998)
+        self.assertIsNotNone(c999)
+        self.assertIn("box 999", c999.txt_body.get("1.0", "end-1c"))
+        self.assertIn("[x]", c999.lbl_sel.cget("text"))
+        self.assertIn("🔒", c998.lbl_lock.cget("text"))
+
+        self.app._on_as_scrollbar("moveto", "0.0")
+        self.app.update_idletasks()
+        scroll_cycle_ms = (time.perf_counter() - t_scr0) * 1000.0
+        c0 = self.app._as_visible_cards.get(0)
+        c1 = self.app._as_visible_cards.get(1)
+        self.assertIsNotNone(c0)
+        self.assertIsNotNone(c1)
+        self.assertIn("box 0", c0.txt_body.get("1.0", "end-1c"))
+        self.assertIn("[x]", c0.lbl_sel.cget("text"))
+        self.assertIn("🔒", c1.lbl_lock.cget("text"))
+
+        # Quick Edit single-card update timing
+        self.app._on_as_card_click(c0)
+        self.app.update_idletasks()
+        t_qe0 = time.perf_counter()
+        self.app._qe_seg_widgets[0].delete("1.0", "end")
+        self.app._qe_seg_widgets[0].insert("1.0", "Quick Edit Benchmark Line")
+        self.app._on_quick_edit_changed()
+        self.app.update_idletasks()
+        qe_update_ms = (time.perf_counter() - t_qe0) * 1000.0
+        self.assertIn("Quick Edit Benchmark Line", c0.txt_body.get("1.0", "end-1c"))
+        self.app._flush_quick_edit_session()
+
+        # 142+ box Paste Box informational timing
+        from core.story_ast import BoxSnapshot
+        paste_snaps = [
+            BoxSnapshot(speaker="ユイ", voice_cue="", kind="print", seg_texts=[f"Paste {i}"])
+            for i in range(145)
+        ]
+        self.app._box_clipboard = paste_snaps
+        self.app._box_clipboard_text = "MOCK_145_CLIP"
+        t_p0 = time.perf_counter()
+        with patch.object(self.app, "safe_clipboard_get", return_value="MOCK_145_CLIP"):
+            self.app.on_box_paste(confirm=False, mode="insert")
+        self.app.update_idletasks()
+        paste_145_ms = (time.perf_counter() - t_p0) * 1000.0
+        self.assertEqual(len(self.app.current_doc.boxes), 1145)
+
         print(
-            f"\n[S08 Stress 4] 150-box All Script informational benchmark: {elapsed_ms:.2f} ms "
-            f"(OS={platform.platform()}, Python={sys.version.split()[0]}, Tk={tk.TkVersion})"
+            f"\n[S10 Stress 4] 150-box render={render_150_ms:.2f} ms | "
+            f"1000-box scroll_cycle={scroll_cycle_ms:.2f} ms | "
+            f"QuickEdit_1card={qe_update_ms:.2f} ms | Paste145={paste_145_ms:.2f} ms | "
+            f"pool={pool_counts} (OS={platform.platform()}, Python={sys.version.split()[0]}, Tk={tk.TkVersion})"
         )
-
-        desc = _collect_descendants(self.app.continuous_wrap)
-        text_widgets = [w for w in desc if isinstance(w, tk.Text)]
-        mapped_text_widgets = [w for w in text_widgets if w.winfo_manager() != ""]
-        treeviews = [w for w in desc if isinstance(w, ttk.Treeview)]
-
-        self.assertEqual(len(treeviews), 0, "All Script must contain 0 ttk.Treeview widgets")
-        self.assertEqual(len(mapped_text_widgets), 1, f"Expected 1 mapped tk.Text, got {len(mapped_text_widgets)}")
-        self.assertIs(mapped_text_widgets[0], self.app.txt_all_script)
-        self.assertLessEqual(len(text_widgets), 3, f"Expected <=3 total tk.Text descendants, got {len(text_widgets)}")
-        self.assertEqual(len(self.app._all_script_block_ranges), 150, "Expected 150 block ranges in Technique A")
 
         # Dialogue Preview uses wrap='none' (visible bleed, no auto-shrink)
         self.app.var_continuous_view.set(False)

@@ -217,14 +217,15 @@ class TestP3S14ToolbarSearchUI(unittest.TestCase):
         self.app.update_idletasks()
         self.assertEqual(self.app.lbl_gd_title.cget("text"), "Dialogue Preview")
 
-        # All Script ON, Preview ON -> "All Script Preview"
+        # All Script ON -> Preview disabled & title stays "All Script" (S10 U-05)
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
         self.app.update_idletasks()
-        self.assertEqual(self.app.lbl_gd_title.cget("text"), "All Script Preview")
+        self.assertFalse(self.app.var_preview_compiled.get())
+        self.assertEqual(self.app.lbl_gd_title.cget("text"), "All Script")
 
-        # All Script ON, Preview OFF -> "All Script"
-        self.app.var_preview_compiled.set(False)
+        # All Script ON, Preview toggle attempt -> still "All Script"
+        self.app.var_preview_compiled.set(True)
         self.app._on_toggle_preview_compiled()
         self.app.update_idletasks()
         self.assertEqual(self.app.lbl_gd_title.cget("text"), "All Script")

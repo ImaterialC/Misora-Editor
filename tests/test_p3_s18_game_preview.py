@@ -152,27 +152,29 @@ class TestP3S18GamePreview(unittest.TestCase):
         self.assertEqual(self.app.undo_journal.undo_depth, 0)
 
     def test_02_probe_all_script_preview_lightweight_frames_no_canvas(self):
-        """[Probe 2 — FEAT-10 / Technique A] All Script Preview renders in single read-only txt_all_script
-        with wrap='none', overflow bleed, and zero per-card tk.Canvas widgets.
-        """
+        """[Probe 2 — S10 U-05] All Script disables Preview mode and renders read-only Virtualized Card Pool with zero red overflow markers."""
         four_lines = "Line 1\nLine 2\nLine 3\n" + ("1234567890" * 6)
         self._load_v2_story([("Pecorine", four_lines), ("", "Narration line.")])
 
         self.app.var_continuous_view.set(True)
+        self.app._on_toggle_continuous_view()
         self.app.var_preview_compiled.set(True)
         self.app._on_toggle_preview_compiled()
         self.app.update_idletasks()
 
-        # Zero per-card tk.Canvas widgets inside cont_stream_frame
-        canvases = _find_widgets_of_type(self.app.cont_stream_frame, tk.Canvas)
-        self.assertEqual(len(canvases), 0)
+        # U-05: All Script Preview retired; Preview stays disabled/False in All Script
+        self.assertFalse(self.app.var_preview_compiled.get())
+        self.assertEqual(self.app.lbl_gd_title.cget("text"), "All Script")
+        self.assertEqual(len(self.app._all_script_render_images), 0)
         self.assertEqual(self.app._card_widgets, {})
 
-        # Single read-only txt_all_script uses wrap='none' and marks overflow bleed
-        self.assertEqual(str(self.app.txt_all_script.cget("wrap")), "none")
-        self.assertEqual(str(self.app.txt_all_script.cget("state")), "disabled")
-        self.assertTrue(len(self.app.txt_all_script.tag_ranges("line_overflow")) >= 2)
-        self.assertTrue(len(self.app.txt_all_script.tag_ranges("gutter_overflow")) >= 2)
+        # Pooled card body is read-only with wrap='none' and zero red overflow markers
+        card0 = self.app._as_visible_cards.get(0)
+        self.assertIsNotNone(card0)
+        self.assertEqual(str(card0.txt_body.cget("wrap")), "none")
+        self.assertEqual(str(card0.txt_body.cget("state")), "disabled")
+        self.assertEqual(card0.txt_body.tag_ranges("line_overflow"), ())
+        self.assertEqual(card0.txt_body.tag_ranges("gutter_overflow"), ())
 
         # Pure presentation: zero dirty / undo mutation
         self.assertFalse(self.app.is_dirty)

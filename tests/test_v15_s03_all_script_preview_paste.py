@@ -93,7 +93,7 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
     # Defect / Behavior Probes (MUST FAIL pre-patch, PASS post-patch)
     # -------------------------------------------------------------------------
     def test_probe_1_no_third_window_leaked_in_all_script_and_preview(self) -> None:
-        """Probe 1: gd_scroll_wrap is never packed simultaneously with continuous_wrap."""
+        """Probe 1: gd_scroll_wrap is never packed simultaneously with continuous_wrap (and S10 disables All Script Preview)."""
         self._load_synthetic_v2([
             Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Hello!"]),
             Record(cmd_id=10, cmd_name="touch", args=[]),
@@ -106,12 +106,13 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.assertEqual(self.app.gd_scroll_wrap.winfo_manager(), "")
         self.assertNotEqual(self.app.continuous_wrap.winfo_manager(), "")
 
-        # Toggle Preview ON and OFF while in All Script and call _update_empty_state_visibility()
+        # Attempting Preview toggle while in All Script stays disabled/False and never leaks gd_scroll_wrap
         for prev_val in (True, False):
             self.app.var_preview_compiled.set(prev_val)
             self.app._on_toggle_preview_compiled()
             self.app._update_empty_state_visibility()
             self.app.update_idletasks()
+            self.assertFalse(self.app.var_preview_compiled.get())
             self.assertEqual(
                 self.app.gd_scroll_wrap.winfo_manager(),
                 "",
@@ -120,7 +121,7 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
             self.assertNotEqual(self.app.continuous_wrap.winfo_manager(), "")
 
     def test_probe_2_all_script_technique_a_single_text_and_150_box_nav(self) -> None:
-        """Probe 2: 150-box All Script uses ONE read-only tk.Text (txt_all_script), click selects, double-click jumps."""
+        """Probe 2 (S10 Virtualized Pool): 150-box All Script keeps bounded read-only card pool, click selects, double-click jumps."""
         self._load_synthetic_v2(self._make_150_box_records(), name="s03_150.v2.txt")
 
         t0 = time.perf_counter()
@@ -129,32 +130,36 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.app.update_idletasks()
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Single read-only tk.Text widget active; zero 150-card widget explosion
-        self.assertTrue(hasattr(self.app, "txt_all_script"))
-        self.assertIsInstance(self.app.txt_all_script, tk.Text)
-        self.assertEqual(str(self.app.txt_all_script.cget("state")), "disabled")
+        # Bounded Virtualized Pool active; zero 150-card widget explosion
+        self.assertEqual(self.app.txt_all_script.winfo_manager(), "")
+        self.assertNotEqual(self.app.cont_canvas.winfo_manager(), "")
         self.assertEqual(self.app._card_widgets, {})
         self.assertEqual(len(self.app.cont_stream_frame.winfo_children()), 0)
-        self.assertTrue(hasattr(self.app, "_all_script_block_ranges"))
-        self.assertIn(-1, self.app._all_script_block_ranges)
-        self.assertIn(149, self.app._all_script_block_ranges)
+        self.assertLessEqual(len(self.app._as_card_pool), 30)
+        self.assertEqual(len(self.app._as_slots), 151)  # Box 0 + 150 dialogue boxes
 
-        # Single-click on box 42 selects it in-place and updates Raw View
-        start_ln, _end_ln = self.app._all_script_block_ranges[42]
-        self.app._on_all_script_click_at_index(f"{start_ln}.0")
+        # Focus & single-click on box 42 selects it in-place and updates Raw View
+        self.app._focus_continuous_box(42)
+        self.app.update_idletasks()
+        card42 = self.app._as_visible_cards.get(42)
+        self.assertIsNotNone(card42)
+        self.app._on_as_card_click(card42)
         self.assertFalse(self.app.is_box0_active)
         self.assertEqual(self.app.current_box_idx, 42)
         raw_txt = self.app.txt_raw.get("1.0", "end-1c")
         self.assertIn("Line 43 dialogue text.", raw_txt)
         self.assertIn(">>", raw_txt)
 
-        # Single-click on Box 0 (-1) activates Box 0 cleanly
-        b0_start, _ = self.app._all_script_block_ranges[-1]
-        self.app._on_all_script_click_at_index(f"{b0_start}.0")
+        # Click on Box 0 (-1) activates Box 0 cleanly
+        self.app._focus_continuous_box(-1)
+        self.app._on_as_box0_click()
         self.assertTrue(self.app.is_box0_active)
 
         # Double-click on box 42 jumps cleanly into Dialogue View at box 42
-        self.app._on_all_script_activate_at_index(f"{start_ln}.0")
+        self.app._focus_continuous_box(42)
+        card42 = self.app._as_visible_cards.get(42)
+        self.assertIsNotNone(card42)
+        self.app._on_as_card_double_click(card42)
         self.app.update_idletasks()
         self.assertFalse(self.app.var_continuous_view.get())
         self.assertFalse(self.app.is_box0_active)
@@ -164,14 +169,14 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
         self.app.update_idletasks()
-        b0_start, _ = self.app._all_script_block_ranges[-1]
-        self.app._on_all_script_activate_at_index(f"{b0_start}.0")
+        self.app._focus_continuous_box(-1)
+        self.app._on_as_box0_double_click()
         self.app.update_idletasks()
         self.assertFalse(self.app.var_continuous_view.get())
         self.assertTrue(self.app.is_box0_active)
 
         print(
-            f"\n[S03 Benchmark] 150-box Technique A render: {elapsed_ms:.2f} ms | "
+            f"\n[S10/S03 Benchmark] 150-box Virtualized Pool render: {elapsed_ms:.2f} ms | "
             f"Python={platform.python_version()} Tk={tk.TkVersion} OS={platform.platform()}"
         )
 
