@@ -1,10 +1,10 @@
 # Misora: Story Editor — Canonical Project State
 
-Last updated: 2026-11-26
+Last updated: 2026-11-27
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.10 — S11 Async XUAT Translation Archiving, Pre-Import Archive Checkbox, Complete Speaker Exclusion, 1-Line 54d Metadata/Actor Import, & Unified Progress Controller)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.10"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Target release: v1.5.0 (Current session build: v1.4.11 — S11b Strict XUAT Scanner & Canonical Metrics, `Ctrl+S` Save Project Remap, `Q-04` Investigations, `Q-18` Deferral, & Dialogue Preview Red-Block Removal)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.11"`; unified across UI, splash, MTL engine, and tests (`U00`).
 Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08).
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
@@ -121,6 +121,21 @@ Test suites included in the 440 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S11b (`v1.4.11`) — Strict XUAT English Text Scanner (`Q-01`), `Ctrl+S` Save Project Remap & Profiling (`Q-02`), `Q-04` Investigations, `Q-18` Deferral, & Dialogue Preview Red-Block Removal (`Q-23`) (2026-11-27)
+- **`Q-01` Strict XUAT Scanner & Canonical Metrics (`core/xuat_index.py`, `misora.py`):** `resolve_xuat_text_roots()` accepts strictly `Translation\en\Text` across all 5 entry-point categories (6 concrete path forms) + direct `.txt` inside `Translation\en\Text`, rejecting `Translation\ja\Text`, arbitrary `Text/`, standalone `.txt`, `en\Other`, and `en\RedirectedResources`. Added 5 `endswith` rule exclusions (`.font.txt`, `.resizer.txt`, `postprocessors.txt`, `preprocessors.txt`, `substitutions.txt`), `files_scanned == len(files_indexed) + len(skipped_files)`, `entries_read`/`unique_keys`/`duplicate_keys`/`duplicate_entries`, `XuatIndex.__bool__() -> bool(self.entries)`, and UI `Scanned`/`Indexed`/`Skipped` distinction.
+- **`Q-02` `Ctrl+S` Save Project Remap & 5-Stage Profiling (`misora.py`, `README.md`):**
+  - **Measured Profiling (`Windows-11-10.0.26100-SP0`, `Python 3.12.10`, `Tk 8.6`, 5 runs):** Path A (`Ctrl+S` `.misora`, 3 docs × 50 boxes): median `10.797 ms` (range `9.299–20.100 ms`). Path B1 (`Ctrl+Shift+S` `.v2.txt`, 50 boxes, XUAT sync ON, 10 files / 1,000 entries, 6 modified boxes): median `96.234 ms` (range `88.384–191.610 ms`; Stage 3 `_sync_modified_boxes_to_xuat` = `93.725 ms` / `97.4%`); XUAT sync OFF: `2.553 ms`; plain `.txt`: `1.421 ms`. Real `.unity3d` bundle `save_bundle_story()`: `UNMEASURED / BLOCKED (missing production fixture)`.
+  - Remapped `Ctrl+S` -> `on_save_project()` (never clears story `is_dirty`/`mark_saved()`, honest toast, full `_current_project_path` lifecycle `(a)`–`(g)`) and `Ctrl+Shift+S` -> `on_save()` (`Save File / Patch Bundle`, right-clicked-tab-aware context menu). Fixed bounded incidental `KeyError: 'dark'` in `ProjectDiffDialog.__init__()` (`misora.py:1287`), where `assets/icon.py::THEME` is a flat palette dict with no `"dark"` key causing eager `KeyError` in `getattr(parent, "theme", THEME["dark"])` (changed to `getattr(parent, "theme", None) or THEME`, guarded by `test_guard_3_project_diff_dialog_theme_fallback_no_keyerror`).
+- **`Q-04` & `Q-18` Outcomes:** `Q-04.1.1` = intended `▶ [BOX #NNN]` Active Box marker; `Q-04.1.2` = `NOT REPRODUCED — NEEDS USER REPRODUCTION DETAILS`; `Q-04.1.3` = `NOT TESTED`; `Q-18` (Ruby Preview) = **`DEFERRED`** to post-`v1.5.0` (Track B, prerequisite to `BIG-02` MeCab).
+- **`Q-23` Dialogue Preview Red-Block Removal (`misora.py`, `tests/`):** Removed `_apply_overflow_highlights(txt_w)` from `_render_dialogue_preview_frame()` + added defensive guard in `_apply_overflow_highlights()`; Dialogue Editor (`Preview OFF`) retains red overflow markers.
+- **Verification:** `compileall` PASS; targeted suites (`S11b`, `S03`, `S18`, `S11`, `S07`, `S22`): `38/38 OK` (`82.646s`); `S08..S11b`: `40/40 OK` (`90.665s`); full `unittest discover` hit pre-existing cross-test `Tcl_AsyncDelete` GC race at `test_v15_s07` / `test_v15_s05` (both modules pass `9/9` and `7/7` in isolation).
+- **Manual Windows QA Checklist (Updated S11b — `MANUAL-PENDING`):**
+  1. Press `Ctrl+S` on a dirty story -> verify `.misora` prompt/save, honest toast (`not yet written to bundle/XUAT`), `*` dirty indicator retained, and `Ctrl+Shift+S` saves/patches file.
+  2. Measure real `.unity3d` bundle `Ctrl+Shift+S` save timing on a production bundle.
+  3. Open `Import from XUAT...` -> verify `Scanned` vs `Indexed` counts and `Global — Nunito Bold` ↔ `Japanese` `54d` parity.
+  4. Toggle `Preview` ON on >54d / 4-line dialogue -> verify 0 red highlight blocks in Dialogue Preview while Dialogue Editor (`Preview OFF`) retains red markers.
+  5. Retain all S11, S10 & S09b Manual QA items.
 
 ### v1.5 S11 (`v1.4.10`) — Async XUAT Translation Archiving (`ttk.Treeview`), Pre-Import Archive Checkbox, Complete Speaker Exclusion, 1-Line `54d` Metadata/Actor Import, & Unified Progress Controller (2026-11-26)
 - **`U-11` Pre-Pass Speaker Exclusion (`core/xuat_cleanup.py`):** `_build_protected_actor_sets()` builds `protected_actor_keys` & `protected_actor_values` before Pass 1 from `doc.boxes[*].speaker`, `protected_actors`, forward index matches, and conservative reverse `lookup_by_value()`, enforcing exclusion before insertion across Pass 1/2/3 (`0` speaker rows, including multi-file duplicates and ambiguous right-side values). Added `doc.get_metadata()` Title/Subtitle matching in Pass 3 and cooperative `cancel_event` + `progress_cb`.

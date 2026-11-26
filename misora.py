@@ -1284,7 +1284,7 @@ class ProjectDiffDialog(tk.Toplevel):
         self.minsize(480, 280)
         apply_window_icon(self)
 
-        t = getattr(parent, "theme", THEME["dark"])
+        t = getattr(parent, "theme", None) or THEME
         self.configure(bg=t["bg_main"])
         fg_main = best_contrast_fg(t["bg_main"], t["fg_text"], "#ffffff")
         fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
@@ -2080,6 +2080,7 @@ class MisoraApp(tk.Tk):
 
         # State Variables
         self.current_file_path: Optional[Path] = None
+        self._current_project_path: Optional[Path] = None
         self.current_doc: Optional[StoryDocument] = None
         self.current_unity_env: Any = None
         self.current_text_obj: Any = None
@@ -4055,10 +4056,11 @@ class MisoraApp(tk.Tk):
             self._refresh_xuat_index_async()
 
     def _resolve_xuat_text_root(self, proj_dir: Optional[Path]) -> Optional[Path]:
-        """Resolve XUAT text root strictly to BepInEx\\Translation\\en\\Text (or Text)."""
+        """Resolve XUAT text root strictly to Translation\\en\\Text (or Text)."""
         if not proj_dir:
             return None
         candidates = [
+            proj_dir / "src" / "BepInEx" / "Translation" / "en" / "Text",
             proj_dir / "BepInEx" / "Translation" / "en" / "Text",
             proj_dir / "Translation" / "en" / "Text",
             proj_dir / "Text",
@@ -4538,9 +4540,10 @@ class MisoraApp(tk.Tk):
 
         file_menu.add_separator()
         file_menu.add_command(label="Open Project (.misora)...", command=self.on_open_project)
-        file_menu.add_command(label="Save Project (.misora)...", command=self.on_save_project)
+        file_menu.add_command(label="Save Project (.misora)", command=self.on_save_project, accelerator="Ctrl+S")
+        file_menu.add_command(label="Save Project As (.misora)...", command=lambda: self.on_save_project(save_as=True))
         file_menu.add_separator()
-        file_menu.add_command(label="Save & Patch Bundle", command=self.on_save, accelerator="Ctrl+S")
+        file_menu.add_command(label="Save File / Patch Bundle", command=self.on_save, accelerator="Ctrl+Shift+S")
         file_menu.add_command(label="Reload Current File", command=self.on_reload, accelerator="F5")
         file_menu.add_separator()
         file_menu.add_command(label="Import Script (CSIF / Text)...", command=self.on_import_script, accelerator="Ctrl+Shift+I")
@@ -7591,8 +7594,6 @@ class MisoraApp(tk.Tk):
         txt_w.delete("1.0", tk.END)
         self._configure_editor_rich_tags(txt_w, d_fam, d_sz)
         self._insert_compiled_ngui_text(txt_w, "1.0", raw_text)
-        if not getattr(self, "is_box0_active", False):
-            self._apply_overflow_highlights(txt_w)
         txt_w.config(state="disabled")
 
         canvas.coords(self._dialogue_preview_win, txt_x, txt_y)
@@ -8861,8 +8862,12 @@ class MisoraApp(tk.Tk):
         btn_revert.pack(side="right", padx=4)
 
         self.ico_save = self.get_icon("save", (15, 15))
-        self.btn_save = ttk.Button(action_bar, text=" Save & Patch Bundle (Ctrl+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
+        self.btn_save = ttk.Button(action_bar, text=" Save File / Patch Bundle (Ctrl+Shift+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
         self.btn_save.pack(side="right", padx=4)
+        create_tooltip(
+            self.btn_save,
+            "Save active story file / patch bundle & sync XUAT (Ctrl+Shift+S). Use Ctrl+S to save the .misora project.",
+        )
 
     def _get_active_text_widget(self) -> Optional[tk.Text]:
         """Resolve the currently active or focused Text widget safely without aliasing (Rule 3)."""
@@ -8974,7 +8979,7 @@ class MisoraApp(tk.Tk):
                     self.on_show_replace()
                     return "break"
                 elif key_lower == "s":
-                    self.on_save()
+                    self.on_save_project()
                     return "break"
                 elif key_lower == "o":
                     self.on_open_file()
@@ -9013,7 +9018,10 @@ class MisoraApp(tk.Tk):
                     self.on_toggle_lock_current_box()
                     return "break"
             else:  # is_shift
-                if key_lower == "z":
+                if key_lower == "s":
+                    self.on_save()
+                    return "break"
+                elif key_lower == "z":
                     self.on_redo()
                     return "break"
                 elif key_lower == "c":
@@ -9208,7 +9216,9 @@ class MisoraApp(tk.Tk):
 
         self.bind("<Control-o>", lambda e: self.on_open_file())
         self.bind("<Control-O>", lambda e: self.on_open_folder())
-        self.bind("<Control-s>", lambda e: self.on_save())
+        self.bind("<Control-s>", lambda e: self.on_save_project())
+        self.bind("<Control-Shift-S>", lambda e: self.on_save())
+        self.bind("<Control-Shift-s>", lambda e: self.on_save())
         self.bind("<Control-q>", lambda e: self._on_app_exit())
         self.bind("<Control-r>", lambda e: self.on_insert_ruby())
         self.bind("<Control-R>", lambda e: self.on_insert_ruby())
@@ -13204,8 +13214,14 @@ class MisoraApp(tk.Tk):
         )
 
     def _apply_overflow_highlights(self, widget: Optional[tk.Text]) -> None:
-        """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget (Box 0 immune)."""
+        """Apply inline pixel-calibrated horizontal overflow highlights on a Text widget (Box 0 & Preview immune)."""
         if not widget or not widget.winfo_exists():
+            return
+        if widget is getattr(self, "txt_dialogue_preview", None):
+            try:
+                widget.tag_remove("line_overflow", "1.0", tk.END)
+            except Exception:
+                pass
             return
         if getattr(self, "is_box0_active", False) and widget in (
             getattr(self, "txt_dialogue", None),
@@ -15758,6 +15774,7 @@ class MisoraApp(tk.Tk):
                 next_file = next(iter(self.open_documents))
                 self.open_file(next_file)
             else:
+                self._current_project_path = None
                 self.current_file_path = None
                 self.current_doc = None
                 self.current_unity_env = None
@@ -15827,6 +15844,7 @@ class MisoraApp(tk.Tk):
         self.open_documents.clear()
         if self.current_unity_env is not None:
             dispose_unity_env(self.current_unity_env)
+        self._current_project_path = None
         self.current_file_path = None
         self.current_doc = None
         self.current_unity_env = None
@@ -15844,20 +15862,28 @@ class MisoraApp(tk.Tk):
         if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
             self.undo_journal.set_active_file("")
 
-    def on_save_project(self) -> None:
-        """Prompt for a .misora file path and save the current workspace session."""
+    def on_save_project(self, save_as: bool = False) -> bool:
+        """Save current workspace session to _current_project_path (Ctrl+S), or prompt (first save / Save As)."""
         if not self.open_documents:
             messagebox.showinfo("Save Project", "No files are currently open to save in a project.", parent=self)
-            return
-        init_dir = str(self.last_opened_dir) if getattr(self, "last_opened_dir", None) and self.last_opened_dir.exists() else None
+            return False
+        cur_ws = getattr(self, "_current_project_path", None)
+        if not save_as and cur_ws is not None:
+            return self.save_project(cur_ws)
+        init_dir = str(cur_ws.parent) if cur_ws is not None else (
+            str(self.last_opened_dir) if getattr(self, "last_opened_dir", None) and self.last_opened_dir.exists() else None
+        )
+        init_file = cur_ws.name if cur_ws is not None else ""
         target = filedialog.asksaveasfilename(
             initialdir=init_dir,
+            initialfile=init_file,
             title="Save Misora Project",
             defaultextension=MISORA_WORKSPACE_EXT,
             filetypes=[("Misora Project", f"*{MISORA_WORKSPACE_EXT}"), ("All Files", "*.*")],
         )
         if target:
-            self.save_project(Path(target))
+            return self.save_project(Path(target))
+        return False
 
     def save_project(self, workspace_path: Union[str, Path]) -> bool:
         """Save .misora v1 workspace session (strictly refs + state + stable locks ONLY)."""
@@ -15906,8 +15932,16 @@ class MisoraApp(tk.Tk):
             messagebox.showerror("Save Project Error", f"Could not save project '{ws_path.name}':\n{exc}", parent=self)
             return False
 
-        self.lbl_status.config(text=f"Saved project '{ws_path.name}' ({len(file_entries)} file(s)).")
-        self.show_toast(f"Saved project: {ws_path.name}")
+        self._current_project_path = ws_path
+        self.lbl_status.config(
+            text=(
+                f"Saved project '{ws_path.name}' ({len(file_entries)} file(s)) — "
+                "story edits are not yet written to bundle/XUAT (Ctrl+Shift+S to save file)."
+            )
+        )
+        self.show_toast(
+            "Project (.misora) saved — story edits are not yet written to bundle/XUAT (use Ctrl+Shift+S to save file)."
+        )
         return True
 
     def on_open_project(self) -> None:
@@ -16006,6 +16040,7 @@ class MisoraApp(tk.Tk):
 
         # Safeguard 3: All files missing grace -> restore empty state cleanly
         if not opened_entries:
+            self._current_project_path = None
             self._update_top_header_title()
             self._sync_scope_widgets()
             self._update_views()
@@ -16054,6 +16089,7 @@ class MisoraApp(tk.Tk):
             self.logger.warning("Workspace", full_notice)
             messagebox.showwarning("Project Open Notice", full_notice, parent=self)
 
+        self._current_project_path = ws_path
         self.lbl_status.config(text=f"Opened project '{ws_path.name}' ({len(opened_entries)} file(s)).")
         return True
 
@@ -16102,8 +16138,22 @@ class MisoraApp(tk.Tk):
             menu.add_command(label="Close All Unmodified", command=self.close_all_unmodified)
             menu.add_command(label="Close All", command=self.close_all_files)
             menu.add_separator()
-            if target_path == self.current_file_path:
-                menu.add_command(label="Save File (Ctrl+S)", command=self.on_save)
+            doc_info = self.open_documents.get(target_path, {})
+            is_bundle_target = (
+                (isinstance(doc_info, dict) and bool(doc_info.get("is_bundle", False)))
+                or target_path.suffix.lower() == ".unity3d"
+            )
+            save_label = (
+                "Save & Patch Bundle (Ctrl+Shift+S)"
+                if is_bundle_target
+                else "Save File (Ctrl+Shift+S)"
+            )
+            save_cmd = (
+                self.on_save
+                if target_path == self.current_file_path
+                else (lambda p=target_path: self._save_document_entry(p))
+            )
+            menu.add_command(label=save_label, command=save_cmd)
 
         menu.add_separator()
         menu.add_command(label="Reveal in File Explorer", command=lambda: self._open_containing_folder(target_path))
@@ -18508,8 +18558,21 @@ class MisoraApp(tk.Tk):
                     latest_idx = payload
                     latest_applied = True
                     if mgr is not None:
-                        n_files = len(getattr(payload, "files_indexed", ())) if payload is not None else 0
-                        mgr.complete("reload_xuat", seq, f"XUAT index reloaded ({n_files} files).")
+                        n_indexed = len(getattr(payload, "files_indexed", ())) if payload is not None else 0
+                        n_scanned = getattr(payload, "files_scanned", n_indexed) if payload is not None else 0
+                        n_skipped = len(getattr(payload, "skipped_files", ())) if payload is not None else 0
+                        n_entries = getattr(payload, "entries_read", getattr(payload, "entry_count", 0)) if payload is not None else 0
+                        n_unique = getattr(payload, "unique_keys", 0) if payload is not None else 0
+                        n_dup = getattr(payload, "duplicate_entries", 0) if payload is not None else 0
+                        skip_part = f", Skipped: {n_skipped}" if n_skipped else ""
+                        mgr.complete(
+                            "reload_xuat",
+                            seq,
+                            (
+                                f"XUAT index reloaded (Scanned: {n_scanned}, Indexed: {n_indexed}"
+                                f"{skip_part} | Entries: {n_entries}, Unique: {n_unique}, Dup: {n_dup})."
+                            ),
+                        )
                 elif kind == "xuat_index_error":
                     self.logger.warning("XUAT Index", f"Background XUAT index failed: {payload}")
                     latest_err = str(payload)
@@ -20322,7 +20385,12 @@ class ImportFromXUATDialog(tk.Toplevel):
                 f"({stats['dialogue_duplicates']} duplicates, {stats['dialogue_missing']} missing)  |  "
                 f"Speakers: {stats['speaker_matched']}/{stats['speaker_total']} matched "
                 f"({stats['speaker_missing']} missing)  |  "
-                f"Files indexed: {len(self.xuat_index.files_indexed)}"
+                f"Scanned: {getattr(self.xuat_index, 'files_scanned', len(self.xuat_index.files_indexed))}  |  "
+                f"Indexed: {len(self.xuat_index.files_indexed)}"
+                + (f"  |  Skipped: {len(self.xuat_index.skipped_files)}" if getattr(self.xuat_index, "skipped_files", None) else "")
+                + f"  |  Entries: {getattr(self.xuat_index, 'entries_read', self.xuat_index.entry_count)} "
+                f"(Unique: {getattr(self.xuat_index, 'unique_keys', len(self.xuat_index._norm_stripped_map))}, "
+                f"Dup: {getattr(self.xuat_index, 'duplicate_entries', 0)})"
             )
         )
 

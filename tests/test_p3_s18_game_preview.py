@@ -127,6 +127,8 @@ class TestP3S18GamePreview(unittest.TestCase):
 
         # 4. Visible bleed: embedded text widget is calibrated to 3-line safe height with wrap='none'
         self.assertGreaterEqual(int(self.app.txt_dialogue_preview.cget("height")), 3)
+        # S11b Q-23: zero red overflow highlight blocks in Dialogue Preview
+        self.assertEqual(self.app.txt_dialogue_preview.tag_ranges("line_overflow"), ())
 
         # 5. Pure presentation: zero dirty / undo mutation
         self.assertFalse(self.app.is_dirty)

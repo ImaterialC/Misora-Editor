@@ -27,14 +27,14 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 
 <img align="right" width="95" src="assets/misora_chibi.png" alt="Misora Chibi">
 
-**Misora** completely eliminates this pipeline. It loads `.unity3d` bundles directly into memory, exposes dialogue in a clean **Dialogue View** side-by-side with a **Raw Commands** pane, and allows you to patch the bundle in-place in under **100 milliseconds** (`Ctrl+S`).
+**Misora** completely eliminates this pipeline. It loads `.unity3d` bundles directly into memory, exposes dialogue in a clean **Dialogue View** side-by-side with a **Raw Commands** pane, and allows you to save your `.misora` workspace (`Ctrl+S`) or patch the bundle / save script files in-place (`Ctrl+Shift+S`).
 
 ---
 
 ## <img src="assets/icons/caravan_buddy_icon_100101.png" width="28" height="28" valign="middle"> Key Features
 
 ### 1. Zero-Pipeline In-Place Repacking & Data Integrity
-* **Instant Patching**: Open any `.unity3d` story asset directly. Edit the dialogue text or speaker name and hit **Ctrl+S**; Misora repacks the bundle in-memory with verified atomic same-directory `.tmp` staging, path ID verification, and byte-exact binary serialization (`>H` command IDs, base64 bit-inverted payloads).
+* **Instant Patching**: Open any `.unity3d` story asset directly. Edit the dialogue text or speaker name and hit **Ctrl+Shift+S** (or **Ctrl+S** to save your `.misora` workspace session); Misora repacks the bundle in-memory with verified atomic same-directory `.tmp` staging, path ID verification, and byte-exact binary serialization (`>H` command IDs, base64 bit-inverted payloads).
 * **Bi-directional XUAT Sync**: When saving a bundle correction, Misora automatically locates and updates the matching community translation dictionary (`.txt`) under `Translation\en\Text\`, escaping newlines, preserving BOM/CRLF formatting, and creating automated `.bak` backups.
 * **Strict Text Encoding**: Multi-encoding engine with deterministic BOM detection (`UTF-8-SIG`, `UTF-16`) and strict CP932 / Windows-31J Japanese fallback without silent `errors="replace"` corruption.
 
@@ -69,8 +69,8 @@ In *Princess Connect! Re:Dive*, story data is distributed in compiled Unity3D as
 | :--- | :--- | :--- |
 | **Ctrl + O** | Open File | Open a `.unity3d` bundle or `.txt` story script |
 | **Ctrl + Shift + O** | Open Folder | Select a folder scope for multi-file search |
-| **Ctrl + S** | Save & Patch | Byte-exact repack into `.unity3d` and sync to XUAT `.txt` |
-| **Ctrl + Shift + S** | Save As | Save active story under a new filename |
+| **Ctrl + S** | Save Project | Save `.misora` workspace session (open files, active box, view state, and stable locks; does not overwrite bundle/XUAT) |
+| **Ctrl + Shift + S** | Save File / Patch Bundle | Save active `.v2.txt`/`.txt` or repack `.unity3d` bundle in-place and sync to XUAT `.txt` |
 | **Ctrl + W** | Close File | Close active document with Save/Discard/Cancel prompts |
 | **Ctrl + Z** | Undo | Undo last operation with per-file revision tracking |
 | **Ctrl + Y** / **Ctrl + Shift + Z** | Redo | Redo last reverted operation |

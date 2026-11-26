@@ -34,6 +34,11 @@ _EXCLUDED_FILE_TAILS: Tuple[str, ...] = (
     ".report.txt",
     "_summary.txt",
     "_warnings.txt",
+    ".font.txt",
+    ".resizer.txt",
+    "postprocessors.txt",
+    "preprocessors.txt",
+    "substitutions.txt",
 )
 
 _PARITY_NL_RE = re.compile(r"(\\+)n")
@@ -131,8 +136,26 @@ def normalize_xuat_key(text: str, strip_ngui: bool = True) -> str:
     return collapsed.casefold()
 
 
+def _is_canonical_en_text_dir(path: Path) -> bool:
+    """Return True iff path ends strictly with Translation\\en\\Text (case-insensitive)."""
+    parts = tuple(part.lower() for part in path.parts)
+    return len(parts) >= 3 and parts[-3:] == ("translation", "en", "text")
+
+
+def _is_inside_canonical_en_text(path: Path) -> bool:
+    """Return True iff path or any ancestor directory is a canonical Translation\\en\\Text dir."""
+    cur = path
+    while True:
+        if _is_canonical_en_text_dir(cur):
+            return True
+        parent = cur.parent
+        if parent == cur:
+            return False
+        cur = parent
+
+
 def resolve_xuat_text_roots(roots: Iterable[Union[str, Path]]) -> List[Path]:
-    """Resolve candidate project/folder paths strictly to BepInEx\\Translation\\en\\Text roots."""
+    """Resolve candidate project/folder paths strictly to Translation\\en\\Text roots."""
     resolved: List[Path] = []
     seen: Set[str] = set()
 
@@ -153,30 +176,39 @@ def resolve_xuat_text_roots(roots: Iterable[Union[str, Path]]) -> List[Path]:
         if not lp.exists():
             continue
         if lp.is_file():
-            if p.suffix.lower() == ".txt" and not _is_excluded_xuat_file(p):
+            try:
+                resolved_parent = p.resolve().parent
+            except Exception:
+                resolved_parent = p.parent
+            if (
+                p.suffix.lower() == ".txt"
+                and not _is_excluded_xuat_file(p)
+                and _is_inside_canonical_en_text(resolved_parent)
+            ):
                 _add(p)
             continue
 
-        # Prefer strict BepInEx\Translation\en\Text hierarchy
-        candidates = [
-            p / "BepInEx" / "Translation" / "en" / "Text",
-            p / "Translation" / "en" / "Text",
-            p / "en" / "Text",
-            p / "Text",
-        ]
-        matched_sub = False
-        for c in candidates:
-            if _to_long_path(c).is_dir():
-                _add(c)
-                matched_sub = True
-                break
-        if matched_sub:
+        # 5. Direct Translation\en\Text folder
+        if _is_canonical_en_text_dir(p):
+            _add(p)
             continue
 
-        # Accept explicit Text directory directly, but never plugins/config/RedirectedResources
+        # 1-4. Canonical entry points (Game Root src\BepInEx & BepInEx, BepInEx, Translation, Translation\en)
+        candidates: List[Path] = [
+            p / "src" / "BepInEx" / "Translation" / "en" / "Text",
+            p / "BepInEx" / "Translation" / "en" / "Text",
+            p / "Translation" / "en" / "Text",
+        ]
         low_name = p.name.lower()
-        if low_name == "text":
-            _add(p)
+        if low_name == "translation":
+            candidates.append(p / "en" / "Text")
+        elif low_name == "en" and p.parent.name.lower() == "translation":
+            candidates.append(p / "Text")
+
+        for c in candidates:
+            if _is_canonical_en_text_dir(c) and _to_long_path(c).is_dir():
+                _add(c)
+                break
 
     return resolved
 
@@ -226,6 +258,7 @@ class XuatIndex:
     ) -> None:
         self.roots: List[Path] = list(roots or [])
         self.files_indexed: List[Path] = []
+        self.files_scanned: int = 0
         self.file_fingerprints: Dict[Path, str] = {}
         self.skipped_files: List[Tuple[Path, str]] = []
         self.entry_count: int = 0
@@ -234,6 +267,26 @@ class XuatIndex:
         self._norm_exact_map: Dict[str, List[XuatEntry]] = {}
         self._norm_stripped_map: Dict[str, List[XuatEntry]] = {}
         self._value_map: Dict[str, List[XuatEntry]] = {}
+
+    @property
+    def entries_read(self) -> int:
+        """Canonical valid translation entry count (synchronized with entry_count)."""
+        return self.entry_count
+
+    @property
+    def unique_keys(self) -> int:
+        """Number of unique stripped-normalized keys in _norm_stripped_map."""
+        return len(self._norm_stripped_map)
+
+    @property
+    def duplicate_keys(self) -> int:
+        """Number of stripped-normalized keys with >1 entry."""
+        return sum(1 for v in self._norm_stripped_map.values() if len(v) > 1)
+
+    @property
+    def duplicate_entries(self) -> int:
+        """Duplicate entry count (entries_read - unique_keys)."""
+        return self.entry_count - len(self._norm_stripped_map)
 
     def add_entry(self, entry: XuatEntry) -> None:
         k_exact = unescape_xuat_key(entry.raw_key)
@@ -246,8 +299,8 @@ class XuatIndex:
             self._norm_exact_map.setdefault(k_norm_exact, []).append(entry)
         if k_norm_stripped:
             self._norm_stripped_map.setdefault(k_norm_stripped, []).append(entry)
+            self.entry_count += 1
         self._value_map.setdefault(entry.value, []).append(entry)
-        self.entry_count += 1
 
     def lookup_all_by_norm_key(self, key_text: str) -> List[XuatEntry]:
         """Return all XUAT entries matching exact normalized key (strip_ngui=True) without deduplication."""
@@ -312,7 +365,7 @@ class XuatIndex:
 
     # Mapping-compatible helpers for seamless MTLEngine / xuat_cache unification (D11 / QW-E03)
     def __bool__(self) -> bool:
-        return self.entry_count > 0
+        return bool(self.entries)
 
     def __len__(self) -> int:
         return self.entry_count
@@ -362,6 +415,7 @@ def build_xuat_index(
             return
         seen_files.add(fkey)
 
+        idx.files_scanned += 1
         processed_count += 1
         if progress_cb is not None:
             try:

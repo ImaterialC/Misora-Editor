@@ -199,7 +199,17 @@ class TestV15S03AllScriptPreviewPaste(unittest.TestCase):
         self.assertEqual(self.app.dialogue_preview_canvas.find_withtag("preview_nameplate"), ())
         self.assertGreaterEqual(len(self.app.dialogue_preview_canvas.find_withtag("preview_frame")), 3)
         self.assertEqual(str(self.app.txt_dialogue_preview.cget("wrap")), "none")
-        self.assertTrue(len(self.app.txt_dialogue_preview.tag_ranges("line_overflow")) >= 2)
+        # S11b Q-23: Dialogue Preview must have zero red overflow blocks
+        self.assertEqual(self.app.txt_dialogue_preview.tag_ranges("line_overflow"), ())
+
+        # Dialogue Editor (Preview OFF) must retain red overflow markers
+        self.app.var_preview_compiled.set(False)
+        self.app._on_toggle_preview_compiled()
+        self.app.update_idletasks()
+        self.assertTrue(len(self.app.txt_dialogue.tag_ranges("line_overflow")) >= 2)
+        self.app.var_preview_compiled.set(True)
+        self.app._on_toggle_preview_compiled()
+        self.app.update_idletasks()
 
         # Spoken line MUST draw nameplate and sweep old cstyle_* tags
         self.app.current_box_idx = 1
