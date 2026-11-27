@@ -366,8 +366,8 @@ class TestS2DirtyContract(unittest.TestCase):
         self.app.var_sync_xuat.set(True)
         self.app.xuat_search_roots = [self.tmp_dir]  # so the XUAT block is active
 
-        # Mock sync_manager.find_and_update to raise
-        with patch.object(self.app.sync_manager, "find_and_update", side_effect=RuntimeError("XUAT fail")):
+        # Mock sync_manager.batch_sync to raise
+        with patch.object(self.app.sync_manager, "batch_sync", side_effect=RuntimeError("XUAT fail")):
             res = self.app.on_save()
 
         # Primary save succeeded → True

@@ -3,9 +3,9 @@
 Last updated: 2026-11-27
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.11 — S11b Strict XUAT Scanner & Canonical Metrics, `Ctrl+S` Save Project Remap, `Q-04` Investigations, `Q-18` Deferral, & Dialogue Preview Red-Block Removal)
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.11"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08).
+Target release: v1.5.0 (Current session build: v1.4.12 — S11b2 Bounded Single-Pass Batched XUAT Sync & Strict `Translation\en\Text` Alignment)
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.12"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08); S11b closure baseline observed on commit `f2ab4a15a82754970309b1f9965a6e5503ee358f`.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,7 +41,17 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S11 Verification Baseline — 2026-11-26):
+Unit Test Suite (v1.5 S11b2 Verification Baseline — 2026-11-27, vs pre-patch HEAD f2ab4a1 baseline of 446 tests: 403 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
+py -3.12 -m unittest tests.test_v15_s11b2_xuat_batch_sync tests.test_p3_s10_xuat_integrity tests.test_s2_dirty_contract tests.test_p3_s09_replace_all_backups tests.test_v15_s11b_scanner_save_preview tests.test_v15_s11_xuat_archiving_progress -v
+Result: Ran 43 tests in 58.375s (43/43 OK, skipped=3, exit code 0)
+
+py -3.12 -m unittest discover -s tests -v
+Result: Ran 451 tests in 523.183s (408 pass, 35 skipped, 6 pre-existing failures + 2 pre-existing errors, 0 S11b2 regressions; +5 new S11b2 tests in tests/test_v15_s11b2_xuat_batch_sync.py):
+  - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards (test_01..05) + 35 skips across test_misora_core / test_misora_ui_integration;
+  - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8 ['1.4.12' != '1.4.1']);
+  - S11b2 Regressions: 0.
+
+Historical Unit Test Suite (v1.5 S11 Verification Baseline — 2026-11-26):
 py -3.12 -m unittest tests.test_v15_s11_xuat_archiving_progress tests.test_v15_s07_xuat_cleanup_archive tests.test_p3_s22_import_xuat tests.test_v15_s06_tools_word_wrap tests.test_s8b1_notification_manager -v
 Result: Ran 38 tests (38 pass, 0 failures, 0 errors, exit code 0)
 
@@ -121,6 +131,16 @@ Test suites included in the 440 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S11b2 (`v1.4.12`) — Bounded Single-Pass Batched XUAT Sync & Strict `Translation\en\Text` Alignment (`Q-02b`) (2026-11-27)
+- **Root Cause Eliminated (`core/xunity_sync.py`, `misora.py`):** `_sync_modified_boxes_to_xuat()` previously invoked `preview_matches()` + `find_and_update()` per box, yielding O(B × F) full-tree `rglob("*.txt")` traversals (~72,600 file reads for 20 boxes on a 1,815-file tree). Replaced with a single-pass O(F + E + B + M) `XUnitySyncManager.batch_sync()` pipeline while preserving legacy `preview_matches()` and `find_and_update()` unchanged.
+- **Pure-Core DI & Anti-Circular Import (`core/xunity_sync.py`):** Zero `tkinter`/`misora` imports, zero top-level `.xuat_index` imports, and zero duplicated `_EXCLUDED_FILE_TAILS` constants; `misora.py` injects `is_excluded_fn=_is_excluded_xuat_file`, `resolve_roots_fn=resolve_xuat_text_roots`, `backup_path_fn=make_collision_resistant_backup_path`, and single-batched `conflict_callback` (function-scope lazy fallbacks preserve standalone callers). Stage 1+2 validates roots strictly to `Translation\en\Text` inside `batch_sync()`, handles direct `.txt` roots (`if root.is_file():`) before `os.walk()`, deduplicates case-insensitively, and retains `FileSnapshot` ONLY for matched files. `_resolve_xuat_text_root()` in `misora.py` remains untouched.
+- **Conflicts, Freshness & Granular Clearing (`core/xunity_sync.py`, `misora.py`):** Handles all 4 conflict cases (C3 Same-JP/Diff-EN explicit skip + `[XUAT Sync]` warning; single batched C1 `conflict_callback(List[BatchConflictItem])` invoked at most once; C2 shared update; C4 selective skip), Stage 4 `(st_mtime_ns, st_size, st_ino, st_dev)` metadata freshness guard (reduces scan-to-write stale-write risk; residual `stat`-to-`os.replace` TOCTOU window remains out of scope for locking), and Stage 5 grouped per-file collision-resistant backup + `write_atomic_encoded()`. Updated `on_save()` and `_save_document_entry()` (fixing premature `entry["modified_box_uids"] = set()` clear before sync) to clear ONLY `(succeeded | unmatched) | ineligible/orphan` targets via deterministic non-`None` `target_token`, retaining conflict/freshness/I/O failures for retry.
+- **Verification (`Windows-11-10.0.26100-SP0`, `Python 3.12.10`):** `compileall` PASS (`exit 0`); targeted suites (`S11b2`, `S10`, `S02`, `S09`, `S11b`, `S11`): `43/43 OK (skipped=3)` (`58.375s`); Probe 2 synthetic 100-file / 20-box structural sync: `1` `os.walk`, `100` scan decodes (`<=1` per file), `3` backups, `3` atomic writes, `0.111s` sync / `114.08 ms` total `on_save()`; full `unittest discover -s tests -v`: `Ran 451 tests in 523.183s` (`408 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors`, `0` new regressions vs `f2ab4a1` `446`-test baseline).
+- **Manual Windows QA Checklist (Updated S11b2 — `MANUAL-PENDING`):**
+  1. **Real-tree 1,815-file 20-box XUAT sync benchmark (`Q-02b`):** Edit 20 boxes on a real story against the full 1,815-file `Translation\en\Text` tree, press `Ctrl+Shift+S`, and record the `[XUAT Sync] Synced ... in X.XXXs` duration from the log (HARD STOP / async disk-I/O follow-up gate triggers if >2s).
+  2. Trigger a multi-key conflict + Same-JP/Diff-EN edit -> verify ONE batched confirmation prompt, `[XUAT Sync]` warning logs, and declined/conflicted boxes retained for next save while clean boxes clear.
+  3. Retain all S11b, S11, S10 & S09b Manual QA items.
 
 ### v1.5 S11b (`v1.4.11`) — Strict XUAT English Text Scanner (`Q-01`), `Ctrl+S` Save Project Remap & Profiling (`Q-02`), `Q-04` Investigations, `Q-18` Deferral, & Dialogue Preview Red-Block Removal (`Q-23`) (2026-11-27)
 - **`Q-01` Strict XUAT Scanner & Canonical Metrics (`core/xuat_index.py`, `misora.py`):** `resolve_xuat_text_roots()` accepts strictly `Translation\en\Text` across all 5 entry-point categories (6 concrete path forms) + direct `.txt` inside `Translation\en\Text`, rejecting `Translation\ja\Text`, arbitrary `Text/`, standalone `.txt`, `en\Other`, and `en\RedirectedResources`. Added 5 `endswith` rule exclusions (`.font.txt`, `.resizer.txt`, `postprocessors.txt`, `preprocessors.txt`, `substitutions.txt`), `files_scanned == len(files_indexed) + len(skipped_files)`, `entries_read`/`unique_keys`/`duplicate_keys`/`duplicate_entries`, `XuatIndex.__bool__() -> bool(self.entries)`, and UI `Scanned`/`Indexed`/`Skipped` distinction.

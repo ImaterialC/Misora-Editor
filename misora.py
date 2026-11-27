@@ -86,7 +86,9 @@ try:
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
         game_to_xuat, WrapResult, wrap_text,
     )
-    from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
+    from misora.core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, norm_search, unescape_arg as _ast_unescape_arg
+    from misora.core.xuat_index import _is_excluded_xuat_file
+    from misora.core.xunity_sync import BatchConflictItem, BatchSyncResult, BatchSyncTarget
 except ImportError:
     from assets.icon import THEME, apply_window_icon, get_icon, prune_icon_cache
     from assets.preview_frames import (
@@ -123,7 +125,9 @@ except ImportError:
         FontManager, PRESET_GLOBAL, PRESET_JP, BUILTIN_FONT_PRESETS,
         game_to_xuat, WrapResult, wrap_text,
     )
-    from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, unescape_arg as _ast_unescape_arg
+    from core.story_ast import _INV_CMD_MAP as _AST_INV_CMD_MAP, norm_search, unescape_arg as _ast_unescape_arg
+    from core.xuat_index import _is_excluded_xuat_file
+    from core.xunity_sync import BatchConflictItem, BatchSyncResult, BatchSyncTarget
 
 try:
     from misora.core.security import DPAPISecurityError
@@ -13359,76 +13363,174 @@ class MisoraApp(tk.Tk):
     def on_insert_playername(self) -> None:
         self.apply_ngui_wrapper("{playername}", "")
 
+    def _build_xuat_batch_targets(
+        self,
+        doc: Any,
+        boxes_or_indices: Iterable[Any],
+        orig_jp_map: Dict[int, str],
+    ) -> Tuple[List[BatchSyncTarget], Dict[str, Any]]:
+        """Resolve modified boxes/indices to deterministic BatchSyncTargets and caller metadata."""
+        targets: List[BatchSyncTarget] = []
+        meta: Dict[str, Any] = {
+            "uid_to_indices": {},
+            "index_to_uid": {},
+            "token_to_indices": {},
+            "token_to_uid": {},
+            "ineligible_indices": set(),
+            "ineligible_uids": set(),
+        }
+        boxes = getattr(doc, "boxes", None) if doc else None
+        for seq, item in enumerate(boxes_or_indices):
+            if isinstance(item, int):
+                b_idx = item
+                if not boxes or not (0 <= b_idx < len(boxes)):
+                    meta["ineligible_indices"].add(b_idx)
+                    continue
+                box_obj = boxes[b_idx]
+            else:
+                box_obj = item
+                if box_obj is None:
+                    continue
+                b_idx = getattr(box_obj, "index", -1)
+
+            b_uid = _get_box_uid(box_obj)
+            if b_idx >= 0:
+                meta["index_to_uid"][b_idx] = b_uid
+                if b_uid is not None:
+                    meta["uid_to_indices"].setdefault(b_uid, set()).add(b_idx)
+
+            orig_key = ""
+            if b_uid is not None:
+                # Prefer document's orig_jp_map before global sync_manager cache; no positional fallback
+                orig_key = orig_jp_map.get(b_uid, "") or self.sync_manager.get_jp_key(b_uid, "")
+            elif boxes and hasattr(self, "_original_box_texts") and 0 <= b_idx < len(boxes):
+                orig_key = self._original_box_texts.get(b_idx, "")
+
+            if not orig_key:
+                if b_idx >= 0:
+                    meta["ineligible_indices"].add(b_idx)
+                if b_uid is not None:
+                    meta["ineligible_uids"].add(b_uid)
+                continue
+
+            token = f"uid:{b_uid}" if b_uid is not None else (f"idx:{b_idx}" if b_idx >= 0 else f"pos:{seq}")
+            meta["token_to_uid"][token] = b_uid
+            if b_idx >= 0:
+                meta["token_to_indices"].setdefault(token, set()).add(b_idx)
+
+            targets.append(
+                BatchSyncTarget(
+                    target_token=token,
+                    box_uid=b_uid,
+                    jp_key=orig_key,
+                    norm_key=norm_search(orig_key),
+                    new_english=box_obj.clean_text,
+                    box_index=b_idx,
+                )
+            )
+        return targets, meta
+
+    @staticmethod
+    def _clearable_xuat_sets(result: BatchSyncResult, meta: Dict[str, Any], extra_uids: Optional[Set[int]] = None) -> Tuple[Set[int], Set[int], Set[str]]:
+        """Map BatchSyncResult token outcomes back to clearable UIDs, indices, and retained failed tokens."""
+        clearable_tokens = result.succeeded_tokens | result.unmatched_tokens
+        failed_tokens = (
+            result.conflict_skipped_tokens
+            | result.freshness_failed_tokens
+            | result.io_failed_tokens
+        )
+        clearable_uids: Set[int] = {
+            uid for tok, uid in meta["token_to_uid"].items()
+            if uid is not None and tok in clearable_tokens
+        } | set(meta["ineligible_uids"]) | (set(extra_uids) if extra_uids else set())
+
+        clearable_indices: Set[int] = set(meta["ineligible_indices"])
+        for tok in clearable_tokens:
+            clearable_indices.update(meta["token_to_indices"].get(tok, ()))
+        for uid, idxs in meta["uid_to_indices"].items():
+            if uid in clearable_uids:
+                clearable_indices.update(idxs)
+        return clearable_uids, clearable_indices, failed_tokens
+
     def _sync_modified_boxes_to_xuat(
         self,
         doc: Any,
         boxes_or_indices: Iterable[Any],
         orig_jp_map: Dict[int, str],
         backup_dir: Optional[Path] = None,
-    ) -> Set[str]:
+    ) -> Tuple[BatchSyncResult, Dict[str, Any]]:
         """
-        Synchronize modified boxes to XUAT dictionaries with immutable b_uid JP key resolution
-        and conflict preview gate (BUG-25 / DEP-7).
-        Returns set of synced file names.
+        Synchronize modified boxes to XUAT dictionaries in a single bounded pass (S11b2 / Q-02b)
+        with immutable JP keys, strict Translation\\en\\Text alignment, single batched conflict gate,
+        pre-write freshness check, and granular outcome reporting.
         """
-        if not self.var_sync_xuat.get() or not self.xuat_search_roots or not doc or not getattr(doc, "boxes", None):
-            return set()
+        targets, meta = self._build_xuat_batch_targets(doc, boxes_or_indices, orig_jp_map)
+        if not self.var_sync_xuat.get() or not self.xuat_search_roots or not doc or not getattr(doc, "boxes", None) or not targets:
+            return BatchSyncResult(), meta
 
-        synced_files: Set[str] = set()
-        for item in boxes_or_indices:
-            if isinstance(item, int):
-                if not (0 <= item < len(doc.boxes)):
-                    continue
-                box_obj = doc.boxes[item]
-                b_idx = item
-            else:
-                box_obj = item
-                b_idx = getattr(box_obj, "index", -1)
-
-            b_uid = _get_box_uid(box_obj)
-            orig_key = ""
-            if b_uid is not None:
-                # Prefer document's orig_jp_map before global sync_manager cache
-                orig_key = orig_jp_map.get(b_uid, "") or self.sync_manager.get_jp_key(b_uid, "")
-                if not orig_key:
-                    # Newly inserted or untracked box with b_uid: skip XUAT sync, NO positional fallback!
-                    continue
-            else:
-                # b_uid is None: only then fall back to positional lookup
-                if hasattr(self, "_original_box_texts") and 0 <= b_idx < len(doc.boxes):
-                    orig_key = self._original_box_texts.get(b_idx, "")
-                if not orig_key:
-                    continue
-
-            # Preview matches and gate with conflict confirmation
-            previews = self.sync_manager.preview_matches(
-                japanese_key=orig_key,
-                search_roots=self.xuat_search_roots,
-            )
-            has_conflict = any(p.is_conflict for p in previews)
-            if has_conflict:
-                conflict_files = ", ".join(sorted({p.file_path.name for p in previews if p.is_conflict}))
+        def _prompt_c1_batch(conflicts: List[BatchConflictItem]) -> bool:
+            if len(conflicts) == 1:
+                c = conflicts[0]
+                files_str = ", ".join(c.matched_files)
                 prompt_msg = (
                     f"Conflicting translations found in XUAT dictionaries for:\n"
-                    f"'{orig_key}'\n\n"
-                    f"Conflicting file(s): {conflict_files}\n\n"
+                    f"'{c.jp_key}'\n\n"
+                    f"Conflicting file(s): {files_str}\n\n"
                     f"Do you want to overwrite all occurrences with:\n"
-                    f"'{box_obj.clean_text}'?"
+                    f"'{c.new_english}'?"
                 )
-                if not messagebox.askyesno("XUAT Translation Conflict", prompt_msg):
-                    continue
+            else:
+                preview_lines = [
+                    f"- '{c.jp_key}' ({', '.join(c.matched_files)})"
+                    for c in conflicts[:8]
+                ]
+                if len(conflicts) > 8:
+                    preview_lines.append(f"...and {len(conflicts) - 8} more key(s)")
+                prompt_msg = (
+                    f"Conflicting translations found in XUAT dictionaries for {len(conflicts)} keys:\n"
+                    + "\n".join(preview_lines)
+                    + "\n\nDo you want to overwrite all conflicting occurrences with the new translations?"
+                )
+            return bool(messagebox.askyesno("XUAT Translation Conflict", prompt_msg))
 
-            matches = self.sync_manager.find_and_update(
-                japanese_key=orig_key,
-                new_english_text=box_obj.clean_text,
-                search_roots=self.xuat_search_roots,
-                backup=True,
-                backup_dir=backup_dir,
+        result = self.sync_manager.batch_sync(
+            targets=targets,
+            search_roots=self.xuat_search_roots,
+            backup=True,
+            backup_dir=backup_dir,
+            conflict_callback=_prompt_c1_batch,
+            is_excluded_fn=_is_excluded_xuat_file,
+            resolve_roots_fn=resolve_xuat_text_roots,
+            backup_path_fn=make_collision_resistant_backup_path,
+        )
+
+        if result.c3_conflict_keys:
+            self.logger.warning(
+                "XUAT Sync",
+                f"Skipped C3 (Same-JP/Different-EN) conflict key(s) and retained boxes for retry: {', '.join(result.c3_conflict_keys)}",
             )
-            for m in matches:
-                synced_files.add(m.file_path.name)
+        if result.c1_declined_keys:
+            self.logger.warning(
+                "XUAT Sync",
+                f"Skipped declined C1 conflict key(s) and retained boxes for retry: {', '.join(result.c1_declined_keys)}",
+            )
+        if result.freshness_aborted_files:
+            self.logger.warning(
+                "XUAT Sync",
+                f"Aborted Stage 4 freshness-modified XUAT file(s) and retained boxes for retry: {', '.join(result.freshness_aborted_files)}",
+            )
+        if result.io_failed_files:
+            self.logger.warning(
+                "XUAT Sync",
+                f"Failed atomic write on XUAT file(s) and retained boxes for retry: {', '.join(result.io_failed_files)}",
+            )
 
-        return synced_files
+        self.logger.info(
+            "XUAT Sync",
+            f"Synced {len(result.succeeded_tokens)}/{len(targets)} box(es) across {len(result.synced_files)} XUAT file(s) "
+            f"in {result.elapsed_seconds:.3f}s (scanned {result.files_scanned} files, {result.total_lines_scanned} lines)",
+        )
+        return result, meta
 
     # -------------------------------------------------------------------------
     # Save & Patch Actions (Byte-Exact In-Place Repack)
@@ -13554,23 +13656,29 @@ class MisoraApp(tk.Tk):
                             self.sync_manager.register_jp_key(b_uid, jp)
 
                     boxes_to_sync = sorted(self._modified_boxes) if self._modified_boxes else [self.current_box_idx]
-                    synced_files = self._sync_modified_boxes_to_xuat(
+                    result, meta = self._sync_modified_boxes_to_xuat(
                         doc=self.current_doc,
                         boxes_or_indices=boxes_to_sync,
                         orig_jp_map=getattr(self, "_original_jp_by_uid", {}),
                         backup_dir=backup_dir,
                     )
-                    if synced_files:
-                        files_str = ", ".join(sorted(synced_files))
+                    if result.synced_files:
+                        files_str = ", ".join(sorted(result.synced_files))
                         self.lbl_status.config(text=self.lbl_status.cget("text") + f" | Synced XUAT file(s): {files_str}")
                         self.logger.info("XUAT Sync", f"Synced XUAT file(s): {files_str}")
-                    self._modified_boxes.clear()
+
+                    clearable_uids, clearable_indices, failed_tokens = self._clearable_xuat_sets(result, meta)
+                    if failed_tokens:
+                        self.lbl_status.config(text=self.lbl_status.cget("text") + f" | (XUAT retained {len(failed_tokens)} box(es))")
+
+                    self._modified_boxes -= clearable_indices
                     if hasattr(self, "_modified_box_uids"):
-                        self._modified_box_uids.clear()
+                        self._modified_box_uids -= clearable_uids
                     if cur_p in self.open_documents:
-                        self.open_documents[cur_p]["modified_box_uids"] = set()
+                        cached_uids = self.open_documents[cur_p].get("modified_box_uids", set())
+                        self.open_documents[cur_p]["modified_box_uids"] = cached_uids - clearable_uids
                 except Exception as xuat_err:
-                    self.logger.warning("XUAT", f"Secondary XUAT sync failed (primary save succeeded): {xuat_err}")
+                    self.logger.warning("XUAT Sync", f"Secondary XUAT sync failed (primary save succeeded): {xuat_err}")
                     self.lbl_status.config(text=self.lbl_status.cget("text") + f" | (XUAT sync failed: {xuat_err})")
             else:
                 self._modified_boxes.clear()
@@ -13668,7 +13776,6 @@ class MisoraApp(tk.Tk):
                     env, obj, doc, cur_p, backup_dir=None
                 )
                 entry["dirty"] = False
-                entry["modified_box_uids"] = set()
                 self._record_saved_checkpoint(cur_p, doc, "")
                 self.undo_journal.mark_saved(str(cur_p))
                 self.logger.info("File I/O", f"Saved inactive bundle '{cur_p}' ({written_size} bytes)")
@@ -13683,7 +13790,6 @@ class MisoraApp(tk.Tk):
                 nl = entry.get("newline", None)
                 write_atomic_encoded(cur_p, v2_text, encoding=enc, has_bom=has_bom, newline=nl)
                 entry["dirty"] = False
-                entry["modified_box_uids"] = set()
                 self._record_saved_checkpoint(cur_p, doc, "")
                 self.undo_journal.mark_saved(str(cur_p))
                 self.logger.info("File I/O", f"Saved inactive v2 script '{cur_p}'")
@@ -13706,14 +13812,21 @@ class MisoraApp(tk.Tk):
                 orig_by_uid = entry.get("original_jp_by_uid", {})
                 try:
                     boxes_to_sync = [b for b in doc.boxes if _get_box_uid(b) in modified_uids]
-                    self._sync_modified_boxes_to_xuat(
+                    found_uids = {_get_box_uid(b) for b in boxes_to_sync if _get_box_uid(b) is not None}
+                    orphan_uids = modified_uids - found_uids
+                    result, meta = self._sync_modified_boxes_to_xuat(
                         doc=doc,
                         boxes_or_indices=boxes_to_sync,
                         orig_jp_map=orig_by_uid,
                         backup_dir=backup_dir,
                     )
+                    clearable_uids, _clear_idx, _failed = self._clearable_xuat_sets(result, meta, extra_uids=orphan_uids)
+                    entry["modified_box_uids"] = modified_uids - clearable_uids
                 except Exception as e:
-                    self.logger.warning("UI / Theme / Config", f"Secondary XUAT sync failed for inactive doc: {e}")
+                    entry["modified_box_uids"] = modified_uids
+                    self.logger.warning("XUAT Sync", f"Secondary XUAT sync failed for inactive doc: {e}")
+            else:
+                entry["modified_box_uids"] = set()
 
             self._refresh_opened_files_list()
             return True

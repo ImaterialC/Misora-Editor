@@ -69,8 +69,8 @@ class TestP3S10XuatIntegrity(unittest.TestCase):
         """
         app = self._init_app()
 
-        # Setup mock XUAT dictionary
-        xuat_dir = self.tmp_dir / "xuat_text"
+        # Setup mock XUAT dictionary inside canonical Translation\en\Text (S11b2 Q-02b)
+        xuat_dir = self.tmp_dir / "Translation" / "en" / "Text"
         xuat_dir.mkdir(parents=True, exist_ok=True)
         xuat_file = xuat_dir / "Dialogue.txt"
         xuat_content = (
