@@ -1284,7 +1284,8 @@ class ProjectDiffDialog(tk.Toplevel):
         self.minsize(480, 280)
         apply_window_icon(self)
 
-        t = getattr(parent, "theme", None) or THEME
+        t = dict(getattr(parent, "theme", None) or THEME)
+        t.setdefault("bg_main", t.get("bg_dark", THEME["bg_dark"]))
         self.configure(bg=t["bg_main"])
         fg_main = best_contrast_fg(t["bg_main"], t["fg_text"], "#ffffff")
         fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")

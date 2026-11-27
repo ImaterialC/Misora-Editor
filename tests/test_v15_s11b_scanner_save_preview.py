@@ -585,7 +585,7 @@ class TestV15S11bScannerSavePreview(S11bTestBase):
         try:
             with patch.object(bare_parent, "wait_window", return_value=None):
                 dlg_a = misora.ProjectDiffDialog(bare_parent, [], "fallback.misora")
-            self.assertEqual(str(dlg_a.cget("bg")), misora.THEME["bg_main"])
+            self.assertEqual(str(dlg_a.cget("bg")), misora.THEME["bg_dark"])
         finally:
             if dlg_a is not None:
                 try:
