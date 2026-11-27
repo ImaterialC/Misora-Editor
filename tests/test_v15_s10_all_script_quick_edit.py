@@ -361,16 +361,46 @@ class TestV15S10AllScriptQuickEdit(unittest.TestCase):
         self.assertEqual(len(self.app.dialogue_preview_canvas.find_withtag("preview_arrow")), 1)
 
     def test_probe_5_quick_edit_raw_breaks_multisegment_binary_roundtrip_and_s09b_lock_parity(self) -> None:
-        """Probe 5: Segment-aware Quick Edit, View-Aware sync, 4-seg binary round-trip, 1-op Undo/Redo, and S09b Lock parity."""
-        doc = self._open_records([
-            Record(cmd_id=12, cmd_name="touch", args=["vo_4seg"]),
-            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 1\nLine 1b", "ex0"]),
-            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 2 {0}", "ex1"]),
-            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 3", "ex2"]),
-            Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 4", "ex3"]),
-            Record(cmd_id=10, cmd_name="touch", args=[]),
-            Record(cmd_id=6, cmd_name="print", args=["Kokkoro", "Second Box"]),
-        ])
+        """Probe 5 (S11c-migrated): Unified single-box Quick Edit, Dialogue-Editor Option A parity, 1-op Undo/Redo, and S09b Lock parity."""
+        def _make_records():
+            return [
+                Record(cmd_id=12, cmd_name="touch", args=["vo_4seg"]),
+                Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 1\nLine 1b", "ex0"]),
+                Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 2 {0}", "ex1"]),
+                Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 3", "ex2"]),
+                Record(cmd_id=6, cmd_name="print", args=["Pecorine", "Orig Seg 4", "ex3"]),
+                Record(cmd_id=10, cmd_name="touch", args=[]),
+                Record(cmd_id=6, cmd_name="print", args=["Kokkoro", "Second Box"]),
+            ]
+
+        expected_before = "Edited Seg 1\nSecond line\nHi {playername}!\nEdited Seg 4"
+        expected_after_reload = expected_before + " " * 3  # DEF-01: 4-seg box with 3 cleared trailing segments
+
+        # Reference Path A: Edit via Main Dialogue Editor (txt_dialogue + _on_dialogue_edited)
+        doc_dlg = StoryDocument(_make_records())
+        dlg_path = self.tmp_dir / "s10_p5_dlg_ref.v2.txt"
+        dlg_path.write_text(doc_dlg.to_v2_text(), encoding="utf-8")
+        self.app.open_file(dlg_path)
+        self.app.update_idletasks()
+        self.app.var_continuous_view.set(False)
+        self.app._on_toggle_continuous_view()
+        self.app.txt_dialogue.delete("1.0", "end")
+        self.app.txt_dialogue.insert("1.0", expected_before)
+        self.app._on_dialogue_edited()
+
+        dlg_box_clean = doc_dlg.boxes[0].clean_text if hasattr(self.app.current_doc, "boxes") else self.app.current_doc.boxes[0].clean_text
+        dlg_doc = self.app.current_doc
+        dlg_box_clean = dlg_doc.boxes[0].clean_text
+        dlg_bin = dlg_doc.to_binary()
+        dlg_records_sig = [(r.cmd_id, r.cmd_name, r.category, list(r.args)) for r in dlg_doc.records]
+        dlg_speaker = dlg_doc.boxes[0].speaker
+        dlg_voice_cue = dlg_doc.boxes[0].voice_cue
+        dlg_raw_breaks = [s.raw for s in dlg_doc.boxes[0].segs]
+        dlg_extra_args = [s.record.args[2:] for s in dlg_doc.boxes[0].segs]
+        reloaded_dlg = StoryDocument.from_binary(dlg_bin)
+
+        # Primary Path B: Unified Quick Edit on identical 4-segment document
+        doc = self._open_records(_make_records())
         orig_jp_uid0 = doc.boxes[0].uid
         orig_jp_val0 = self.app._original_jp_by_uid[orig_jp_uid0]
         orig_bin = doc.to_binary()
@@ -381,28 +411,33 @@ class TestV15S10AllScriptQuickEdit(unittest.TestCase):
         self.assertEqual(self.app.btn_tab_raw_commands.cget("text"), "Raw Commands")
         self.assertEqual(self.app.lbl_raw_title.cget("text"), "Raw Commands")
 
-        # Entering All Script auto-selects Quick Edit; plain surface (no ruler, no red tags)
+        # Entering All Script auto-selects Quick Edit; unified single txt_quick_edit (wrap="none", [4 segs] badge, no ruler/red tags)
         self.app.var_continuous_view.set(True)
         self.app._on_toggle_continuous_view()
         self.app.update_idletasks()
         self.assertEqual(self.app._bottom_tab, "quick_edit")
+        self.assertTrue(hasattr(self.app, "txt_quick_edit"))
+        self.assertFalse(hasattr(self.app, "qe_canvas"))
+        self.assertFalse(hasattr(self.app, "qe_inner_frame"))
         seg_widgets = getattr(self.app, "_qe_seg_widgets", [])
-        self.assertEqual(len(seg_widgets), 4, "4-segment box must expose 4 separate Quick Edit editors")
-        for w in seg_widgets:
-            self.assertEqual(w.tag_ranges("line_overflow"), ())
+        self.assertEqual(len(seg_widgets), 1, "S11c unified Quick Edit must expose exactly ONE persistent txt_quick_edit widget")
+        self.assertIs(seg_widgets[0], self.app.txt_quick_edit)
+        self.assertEqual(str(self.app.txt_quick_edit.cget("wrap")), "none")
+        self.assertEqual(self.app.lbl_qe_segs_badge.cget("text"), "[4 segs]")
+        self.assertEqual(self.app.txt_quick_edit.tag_ranges("line_overflow"), ())
 
         # View-Aware Sync in All Script: typing patches active card in-place, ZERO _render_continuous_view calls
         with patch.object(self.app, "_render_continuous_view", wraps=self.app._render_continuous_view) as spy_render:
-            seg_widgets[0].delete("1.0", "end")
-            seg_widgets[0].insert("1.0", "Edited Seg 1\nSecond line")
+            self.app.txt_quick_edit.delete("1.0", "end")
+            self.app.txt_quick_edit.insert("1.0", "Edited Seg 1")
             self.app._on_quick_edit_changed()
 
-            seg_widgets[1].delete("1.0", "end")
-            seg_widgets[1].insert("1.0", "Hi {playername}!")
+            self.app.txt_quick_edit.delete("1.0", "end")
+            self.app.txt_quick_edit.insert("1.0", "Edited Seg 1\nSecond line\nHi {playername}!")
             self.app._on_quick_edit_changed()
 
-            seg_widgets[3].delete("1.0", "end")
-            seg_widgets[3].insert("1.0", "Edited Seg 4")
+            self.app.txt_quick_edit.delete("1.0", "end")
+            self.app.txt_quick_edit.insert("1.0", expected_before)
             self.app._on_quick_edit_changed()
 
             self.assertEqual(spy_render.call_count, 0, "Quick Edit typing must NEVER rebuild All Script pool")
@@ -415,32 +450,45 @@ class TestV15S10AllScriptQuickEdit(unittest.TestCase):
         self.app.on_next_box()
         self.assertEqual(self.app.undo_journal.undo_depth, 1, "Flushing Quick Edit must record exactly ONE Undo op")
 
-        # Inspect underlying doc.records directly (NOT just snapshot fields)
+        # Mandatory Option A Parity Assertions (a)-(e) — ZERO whitespace normalization hacks
+        qe_bin = doc.to_binary()
+        reloaded_qe = StoryDocument.from_binary(qe_bin)
+        # (a) Pre-binary exact clean_text
+        self.assertEqual(dlg_box_clean, expected_before)
+        self.assertEqual(doc.boxes[0].clean_text, expected_before)
+        # (b) Byte-identical binary parity
+        self.assertEqual(dlg_bin, qe_bin)
+        # (c) Post-reload literal parity (DEF-01 trailing 3 spaces on 4-seg box)
+        self.assertEqual(reloaded_dlg.boxes[0].clean_text, expected_after_reload)
+        self.assertEqual(reloaded_qe.boxes[0].clean_text, expected_after_reload)
+        # (d) Re-serialization stability
+        self.assertEqual(reloaded_dlg.to_binary(), dlg_bin)
+        self.assertEqual(reloaded_qe.to_binary(), qe_bin)
+        # (e) Full record arguments, voice_cue, {0}, raw_breaks & extra_args parity
+        qe_records_sig = [(r.cmd_id, r.cmd_name, r.category, list(r.args)) for r in doc.records]
+        self.assertEqual(dlg_records_sig, qe_records_sig)
+        self.assertEqual(doc.boxes[0].speaker, dlg_speaker)
+        self.assertEqual(doc.boxes[0].voice_cue, dlg_voice_cue)
+        self.assertEqual(doc.boxes[0].voice_cue, "vo_4seg")
+        self.assertEqual([s.raw for s in doc.boxes[0].segs], dlg_raw_breaks)
+        self.assertEqual([s.record.args[2:] for s in doc.boxes[0].segs], dlg_extra_args)
+        self.assertEqual([s.record.args[2:] for s in doc.boxes[0].segs], [["ex0"], ["ex1"], ["ex2"], ["ex3"]])
         box0_recs = [r for r in doc.records if r.cmd_name == "print" and r.args[0] == "Pecorine"]
         self.assertEqual(len(box0_recs), 4)
-        self.assertEqual(box0_recs[0].args, ["Pecorine", "Edited Seg 1\nSecond line", "ex0"])
-        self.assertEqual(box0_recs[1].args, ["Pecorine", "Hi {0}!", "ex1"])
-        self.assertEqual(box0_recs[2].args, ["Pecorine", "Orig Seg 3", "ex2"])
-        self.assertEqual(box0_recs[3].args, ["Pecorine", "Edited Seg 4", "ex3"])
+        self.assertEqual(box0_recs[0].args, ["Pecorine", "Edited Seg 1\nSecond line\nHi {0}!\nEdited Seg 4", "ex0"])
+        self.assertEqual(box0_recs[1].args, ["Pecorine", "", "ex1"])
+        self.assertEqual(box0_recs[2].args, ["Pecorine", "", "ex2"])
+        self.assertEqual(box0_recs[3].args, ["Pecorine", "", "ex3"])
 
-        # Binary round-trip preserves all 4 edited segments, voice_cue, kind, extra_args
-        reloaded = StoryDocument.from_binary(doc.to_binary())
-        self.assertEqual(reloaded.boxes[0].voice_cue, "vo_4seg")
-        self.assertEqual([s.text for s in reloaded.boxes[0].segs], [
-            "Edited Seg 1\nSecond line", "Hi {0}!", "Orig Seg 3", "Edited Seg 4"
-        ])
-        self.assertEqual([s.record.args[2:] for s in reloaded.boxes[0].segs], [
-            ["ex0"], ["ex1"], ["ex2"], ["ex3"]
-        ])
-
-        # Undo restores exact original binary & records; Redo restores edited binary & records
+        # Undo restores exact original binary & 4 original segments; Redo restores canonical edited binary & records
         self.app.on_undo()
         self.assertEqual(doc.to_binary(), orig_bin)
-        self.app.on_redo()
-        reloaded_redo = StoryDocument.from_binary(doc.to_binary())
-        self.assertEqual([s.text for s in reloaded_redo.boxes[0].segs], [
-            "Edited Seg 1\nSecond line", "Hi {0}!", "Orig Seg 3", "Edited Seg 4"
+        self.assertEqual([s.text for s in doc.boxes[0].segs], [
+            "Orig Seg 1\nLine 1b", "Orig Seg 2 {0}", "Orig Seg 3", "Orig Seg 4"
         ])
+        self.app.on_redo()
+        self.assertEqual(doc.to_binary(), qe_bin)
+        self.assertEqual([(r.cmd_id, r.cmd_name, r.category, list(r.args)) for r in doc.records], qe_records_sig)
 
         # Immutable JP key untouched
         cur_uid0 = doc.boxes[0].uid

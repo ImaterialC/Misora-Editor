@@ -3261,10 +3261,33 @@ class MisoraApp(tk.Tk):
             self._render_continuous_view()
         if hasattr(self, "_update_bottom_tab_styles"):
             self._update_bottom_tab_styles()
+        if hasattr(self, "qe_body_wrap") and self.qe_body_wrap.winfo_exists():
+            self.qe_body_wrap.configure(bg=t["bg_panel"])
+        if hasattr(self, "lbl_qe_segs_badge") and self.lbl_qe_segs_badge.winfo_exists():
+            self.lbl_qe_segs_badge.configure(
+                font=("Segoe UI", max(8, u_sz - 1), "bold"),
+                fg=t["fg_muted"],
+                bg=t["bg_panel"],
+            )
+        if hasattr(self, "lbl_qe_placeholder") and self.lbl_qe_placeholder.winfo_exists():
+            self.lbl_qe_placeholder.configure(
+                font=("Segoe UI", u_sz),
+                fg=t["fg_muted"],
+                bg=t["bg_panel"],
+            )
+        if hasattr(self, "txt_quick_edit") and self.txt_quick_edit.winfo_exists():
+            self.txt_quick_edit.configure(
+                font=d_font_tuple,
+                bg=t["bg_editor"],
+                fg=editor_fg,
+                insertbackground=t["misora_pink"],
+                selectbackground=t["highlight_bg"],
+                selectforeground=hl_fg,
+            )
         if hasattr(self, "_qe_seg_widgets"):
             for qw in self._qe_seg_widgets:
                 try:
-                    if qw.winfo_exists():
+                    if qw is not getattr(self, "txt_quick_edit", None) and qw.winfo_exists():
                         qw.configure(
                             font=d_font_tuple,
                             bg=t["bg_editor"],
@@ -6536,7 +6559,7 @@ class MisoraApp(tk.Tk):
         )
         self.btn_tab_raw_commands.pack(side="left", padx=(0, 4))
 
-        # Quick Edit Tab Body (plain segment-aware surface; zero ruler / red overflow)
+        # Quick Edit Tab Body (Q-22 unified single-box surface parity with Dialogue Editor; zero ruler / red overflow)
         self.tab_quick_edit_frame = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
         qe_header = self._tag_role(tk.Frame(self.tab_quick_edit_frame, bg=t["bg_panel"]), "panel")
         qe_header.pack(fill="x", padx=8, pady=(4, 2))
@@ -6546,25 +6569,66 @@ class MisoraApp(tk.Tk):
         )
         self.lbl_qe_title.pack(side="left")
 
-        qe_body_wrap = self._tag_role(tk.Frame(self.tab_quick_edit_frame, bg=t["bg_panel"]), "panel")
-        qe_body_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
-        self.qe_scroll_y = tk.Scrollbar(qe_body_wrap, orient="vertical")
-        self.qe_scroll_y.pack(side="right", fill="y")
-        self.qe_canvas = tk.Canvas(
-            qe_body_wrap, bg=t["bg_panel"], highlightthickness=0, bd=0, yscrollcommand=self.qe_scroll_y.set
+        self.lbl_qe_segs_badge = tk.Label(
+            qe_header,
+            text="",
+            font=("Segoe UI", max(8, u_sz - 1), "bold"),
+            fg=t["fg_muted"],
+            bg=t["bg_panel"],
+            anchor="e",
         )
-        self.qe_canvas.pack(side="left", fill="both", expand=True)
-        self.qe_scroll_y.config(command=self.qe_canvas.yview)
-        self.qe_inner_frame = self._tag_role(tk.Frame(self.qe_canvas, bg=t["bg_panel"]), "panel")
-        self._qe_canvas_win = self.qe_canvas.create_window((0, 0), window=self.qe_inner_frame, anchor="nw")
-        self.qe_canvas.bind(
-            "<Configure>",
-            lambda e: self.qe_canvas.itemconfigure(self._qe_canvas_win, width=max(120, e.width)),
+        self.lbl_qe_segs_badge.pack(side="right", padx=(0, 6))
+
+        self.qe_body_wrap = self._tag_role(tk.Frame(self.tab_quick_edit_frame, bg=t["bg_panel"]), "panel")
+        self.qe_body_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+
+        qe_editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+        qe_hl_fg = best_contrast_fg(t["highlight_bg"], t["fg_text"], "#ffffff")
+        self.qe_scroll_y = tk.Scrollbar(self.qe_body_wrap, orient="vertical")
+        self.qe_scroll_x = tk.Scrollbar(self.qe_body_wrap, orient="horizontal")
+        self.txt_quick_edit = tk.Text(
+            self.qe_body_wrap,
+            wrap="none",
+            undo=False,
+            exportselection=True,
+            font=d_font_tuple,
+            bg=t["bg_editor"],
+            fg=qe_editor_fg,
+            insertbackground=t["misora_pink"],
+            selectbackground=t["highlight_bg"],
+            selectforeground=qe_hl_fg,
+            bd=1,
+            relief="solid",
+            highlightthickness=0,
+            padx=8,
+            pady=4,
+            state="normal",
+            xscrollcommand=self.qe_scroll_x.set,
+            yscrollcommand=self.qe_scroll_y.set,
         )
-        self.qe_inner_frame.bind(
-            "<Configure>",
-            lambda _e: self.qe_canvas.configure(scrollregion=self.qe_canvas.bbox("all")),
+        self.qe_scroll_y.config(command=self.txt_quick_edit.yview)
+        self.qe_scroll_x.config(command=self.txt_quick_edit.xview)
+
+        self.lbl_qe_placeholder = tk.Label(
+            self.qe_body_wrap,
+            text="Select a dialogue box to edit",
+            font=("Segoe UI", u_sz),
+            fg=t["fg_muted"],
+            bg=t["bg_panel"],
+            anchor="center",
         )
+        self.lbl_qe_placeholder.pack(fill="both", expand=True)
+
+        self._install_shortcuts_bindtag(self.txt_quick_edit)
+        self.txt_quick_edit.bind("<KeyRelease>", lambda _e: self._on_quick_edit_changed())
+        self.txt_quick_edit.bind("<<Paste>>", lambda _e: self.after_idle(self._on_quick_edit_changed))
+        self.txt_quick_edit.bind("<<Cut>>", lambda _e: self.after_idle(self._on_quick_edit_changed))
+        self.txt_quick_edit.bind("<FocusOut>", self._on_quick_edit_focus_out)
+        self.txt_quick_edit.bind("<Control-z>", lambda e: self._shortcut_undo())
+        self.txt_quick_edit.bind("<Control-y>", lambda e: self._shortcut_redo())
+        self.txt_quick_edit.bind("<Control-Shift-Z>", lambda e: self._shortcut_redo())
+        self.txt_quick_edit.bind("<Control-Shift-z>", lambda e: self._shortcut_redo())
+        self._qe_seg_widgets: List[tk.Text] = []
 
         # Raw Commands Tab Body (preserves lbl_raw_title == "Raw Commands" & S19 Edit Raw v2)
         self.tab_raw_frame = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
@@ -7396,6 +7460,9 @@ class MisoraApp(tk.Tk):
         if self.var_continuous_view.get() and self.current_doc:
             self.var_continuous_view.set(False)
             self._on_toggle_continuous_view()
+        cur_target = self._get_active_text_widget()
+        if cur_target not in getattr(self, "_qe_seg_widgets", ()):
+            self._flush_quick_edit_session()
         self._insert_text_wrapper(open_tag, close_tag, default_inner=default_inner)
         target = self._get_active_text_widget()
         if target:
@@ -9993,6 +10060,7 @@ class MisoraApp(tk.Tk):
         """Confirm, validate, and atomically commit whole-file Raw Commands v2 edits (FEAT-11)."""
         if not self.current_doc:
             return
+        self._flush_quick_edit_session()
         confirmed = messagebox.askyesno(
             "Apply Raw Commands",
             "Applying Raw Commands will replace all workspace records for the current document.\n\n"
@@ -10105,6 +10173,7 @@ class MisoraApp(tk.Tk):
                         self._mark_document_dirty(self.current_file_path)
             return
 
+        self._flush_quick_edit_session()
         if not getattr(self, "_card_widgets", None):
             return
 
@@ -10157,6 +10226,7 @@ class MisoraApp(tk.Tk):
         if not self.current_doc or not (0 <= box_idx < len(self.current_doc.boxes)):
             return False
 
+        self._flush_quick_edit_session()
         new_tx = txt_w.get("1.0", "end-1c")
         box = self.current_doc.boxes[box_idx]
         mutated = False
@@ -10222,6 +10292,8 @@ class MisoraApp(tk.Tk):
             self.cont_canvas.configure(scrollregion=self.cont_canvas.bbox("all"))
 
         self._highlight_ngui_tags_for_widget(txt_w)
+        if mutated and box_idx == getattr(self, "current_box_idx", -1):
+            self._refresh_quick_edit_pane()
         return mutated
 
     def _on_card_focus_in(self, box_idx: int) -> None:
@@ -11228,6 +11300,7 @@ class MisoraApp(tk.Tk):
             return "break"
 
         mutated_count = 0
+        self._flush_quick_edit_session()
         self.undo_journal.begin_batch("Multi-box Delimiter Paste")
         try:
             if not self.is_box_locked(box_idx):
@@ -12210,10 +12283,22 @@ class MisoraApp(tk.Tk):
         else:
             self.btn_tab_raw_commands.configure(bg=t["misora_pink"], fg=active_fg)
             self.btn_tab_quick_edit.configure(bg=t["bg_panel"], fg=normal_fg)
-        if hasattr(self, "qe_canvas") and self.qe_canvas.winfo_exists():
-            self.qe_canvas.configure(bg=t["bg_panel"])
-        if hasattr(self, "qe_inner_frame") and self.qe_inner_frame.winfo_exists():
-            self.qe_inner_frame.configure(bg=t["bg_panel"])
+        if hasattr(self, "qe_body_wrap") and self.qe_body_wrap.winfo_exists():
+            self.qe_body_wrap.configure(bg=t["bg_panel"])
+        if hasattr(self, "lbl_qe_placeholder") and self.lbl_qe_placeholder.winfo_exists():
+            self.lbl_qe_placeholder.configure(bg=t["bg_panel"], fg=t["fg_muted"])
+        if hasattr(self, "lbl_qe_segs_badge") and self.lbl_qe_segs_badge.winfo_exists():
+            self.lbl_qe_segs_badge.configure(bg=t["bg_panel"], fg=t["fg_muted"])
+        if hasattr(self, "txt_quick_edit") and self.txt_quick_edit.winfo_exists():
+            qe_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
+            qe_hl_fg = best_contrast_fg(t["highlight_bg"], t["fg_text"], "#ffffff")
+            self.txt_quick_edit.configure(
+                bg=t["bg_editor"],
+                fg=qe_fg,
+                insertbackground=t["misora_pink"],
+                selectbackground=t["highlight_bg"],
+                selectforeground=qe_hl_fg,
+            )
 
     def _switch_bottom_tab(self, tab_name: str, flush: bool = True) -> None:
         """Switch bottom pane between Quick Edit and Raw Commands (preserving Raw Commands label)."""
@@ -12238,99 +12323,64 @@ class MisoraApp(tk.Tk):
         self._update_bottom_tab_styles()
 
     def _rebuild_quick_edit_widgets(self, box: Optional[Box], box_idx: Optional[int]) -> None:
-        """Build plain segment-aware Quick Edit editors for `box` inside `qe_inner_frame`."""
-        if not hasattr(self, "qe_inner_frame") or not self.qe_inner_frame.winfo_exists():
+        """Show/hide unified single-box Quick Edit surface with idempotent pack geometry (Q-22)."""
+        if not hasattr(self, "txt_quick_edit") or not self.txt_quick_edit.winfo_exists():
             return
-        for child in self.qe_inner_frame.winfo_children():
-            child.destroy()
-        self._qe_seg_widgets = []
-
-        t = self.theme
-        d_sz = int(getattr(self, "dialogue_font_size", self.prefs.get("dialogue_font_size", 11)))
-        d_font_tuple = self._get_dialogue_font_tuple(d_sz)
-        editor_fg = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
-        panel_fg = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
 
         if not self.current_doc:
+            for w in (self.txt_quick_edit, self.qe_scroll_x, self.qe_scroll_y):
+                if self._is_widget_packed(w):
+                    w.pack_forget()
             self.lbl_qe_title.config(text="Quick Edit — No Story Document")
-            tk.Label(
-                self.qe_inner_frame,
-                text="Open a story bundle or v2 script to use segment-aware Quick Edit.",
-                bg=t["bg_panel"],
-                fg=t["fg_muted"],
-                font=("Segoe UI", 9),
-                anchor="w",
-            ).pack(fill="x", pady=6)
+            self.lbl_qe_segs_badge.config(text="")
+            self.lbl_qe_placeholder.config(text="Open a story bundle or v2 script to use Quick Edit.")
+            if not self._is_widget_packed(self.lbl_qe_placeholder):
+                self.lbl_qe_placeholder.pack(fill="both", expand=True)
+            self._qe_seg_widgets = []
             self._qe_session = None
+            self._qe_stale = False
             return
 
         if getattr(self, "is_box0_active", False) or box is None or box_idx is None:
-            self.lbl_qe_title.config(text="Quick Edit — Box 0 (Story Metadata)")
-            tk.Label(
-                self.qe_inner_frame,
-                text="Box 0 metadata is edited in Dialogue Box 0 Metadata mode.",
-                bg=t["bg_panel"],
-                fg=t["fg_muted"],
-                font=("Segoe UI", 9),
-                anchor="w",
-            ).pack(fill="x", pady=6)
+            for w in (self.txt_quick_edit, self.qe_scroll_x, self.qe_scroll_y):
+                if self._is_widget_packed(w):
+                    w.pack_forget()
+            if getattr(self, "is_box0_active", False):
+                self.lbl_qe_title.config(text="Quick Edit — Box 0 (Story Metadata)")
+                placeholder_msg = "Box 0 metadata is edited in Dialogue Box 0 Metadata mode."
+            else:
+                self.lbl_qe_title.config(text="Quick Edit — 0 Dialogue Boxes")
+                placeholder_msg = "Select a dialogue box to edit."
+            self.lbl_qe_segs_badge.config(text="")
+            self.lbl_qe_placeholder.config(text=placeholder_msg)
+            if not self._is_widget_packed(self.lbl_qe_placeholder):
+                self.lbl_qe_placeholder.pack(fill="both", expand=True)
+            self._qe_seg_widgets = []
             self._qe_session = None
+            self._qe_stale = False
             return
+
+        if self._is_widget_packed(self.lbl_qe_placeholder):
+            self.lbl_qe_placeholder.pack_forget()
+        if not self._is_widget_packed(self.txt_quick_edit):
+            for w in (self.qe_scroll_y, self.qe_scroll_x, self.txt_quick_edit):
+                if self._is_widget_packed(w):
+                    w.pack_forget()
+            self.qe_scroll_y.pack(side="right", fill="y")
+            self.qe_scroll_x.pack(side="bottom", fill="x")
+            self.txt_quick_edit.pack(side="left", fill="both", expand=True)
+        self._qe_seg_widgets = [self.txt_quick_edit]
 
         sp_disp = box.speaker if box.speaker else "(Narration)"
         n_segs = len(box.segs)
-        seg_note = f" ({n_segs} segments)" if n_segs > 1 else ""
-        self.lbl_qe_title.config(text=f"Quick Edit — Box #{box_idx + 1}: {sp_disp}{seg_note}")
+        self.lbl_qe_title.config(text=f"Quick Edit — Box #{box_idx + 1}: {sp_disp}")
+        self.lbl_qe_segs_badge.config(text=f"[{n_segs} segs]" if n_segs > 1 else "")
 
-        seg_texts = [game_to_xuat(s.text) for s in box.segs] if box.segs else [""]
         self._suppress_qe_events = True
         try:
-            for k, seg_tx in enumerate(seg_texts):
-                if len(seg_texts) > 1:
-                    row = tk.Frame(self.qe_inner_frame, bg=t["bg_panel"])
-                    row.pack(fill="x", pady=(2, 3))
-                    tk.Label(
-                        row,
-                        text=f"Seg {k + 1}",
-                        width=6,
-                        anchor="nw",
-                        font=("Consolas", 9, "bold"),
-                        bg=t["bg_panel"],
-                        fg=t["misora_pink"],
-                    ).pack(side="left", padx=(0, 6), pady=2)
-                    parent_w = row
-                    txt_h = max(2, min(4, seg_tx.count("\n") + 1))
-                else:
-                    parent_w = self.qe_inner_frame
-                    txt_h = 4
-
-                w = tk.Text(
-                    parent_w,
-                    wrap="word",
-                    undo=False,
-                    height=txt_h,
-                    font=d_font_tuple,
-                    bg=t["bg_editor"],
-                    fg=editor_fg,
-                    insertbackground=t["misora_pink"],
-                    selectbackground=t["highlight_bg"],
-                    selectforeground=panel_fg,
-                    bd=1,
-                    relief="solid",
-                    highlightthickness=0,
-                    padx=8,
-                    pady=4,
-                    state="normal",
-                )
-                w.pack(side="left" if len(seg_texts) > 1 else "top", fill="x", expand=True, pady=(0, 2))
-                w.insert("1.0", seg_tx)
-                self._install_shortcuts_bindtag(w)
-                w.bind("<KeyRelease>", lambda _e: self._on_quick_edit_changed())
-                w.bind("<<Paste>>", lambda _e: self.after_idle(self._on_quick_edit_changed))
-                w.bind("<<Cut>>", lambda _e: self.after_idle(self._on_quick_edit_changed))
-                w.bind("<FocusOut>", self._on_quick_edit_focus_out)
-                self._qe_seg_widgets.append(w)
-
+            self.txt_quick_edit.config(state="normal")
+            self.txt_quick_edit.delete("1.0", tk.END)
+            self.txt_quick_edit.insert("1.0", box.clean_text)
             self._qe_session = {
                 "file_path": str(self.current_file_path or ""),
                 "doc": self.current_doc,
@@ -12361,21 +12411,47 @@ class MisoraApp(tk.Tk):
             and sess is not None
             and sess.get("doc") is self.current_doc
             and sess.get("box_uid") == b_uid
-            and len(self._qe_seg_widgets) == max(1, len(box.segs))
+            and hasattr(self, "txt_quick_edit")
+            and self.txt_quick_edit.winfo_exists()
+            and self._qe_seg_widgets == [self.txt_quick_edit]
         ):
-            # Sync widget texts if underlying model changed externally (e.g., MTL apply / Dialogue typing)
-            expected = [game_to_xuat(s.text) for s in box.segs]
-            current = [w.get("1.0", "end-1c") for w in self._qe_seg_widgets if w.winfo_exists()]
-            if current != expected and len(current) == len(expected):
+            widget_text = self.txt_quick_edit.get("1.0", "end-1c")
+            model_text = box.clean_text
+            if widget_text != model_text:
+                # External mutation (Dialogue Editor, MTL Apply, Replace, Undo/Redo, etc.):
+                # Flush dirty session with sync_from_widget=False so stale widget text
+                # never overwrites the external model mutation.
+                if sess.get("dirty"):
+                    self._flush_quick_edit_session(sync_from_widget=False)
                 self._suppress_qe_events = True
                 try:
-                    for w, val in zip(self._qe_seg_widgets, expected):
-                        w.delete("1.0", tk.END)
-                        w.insert("1.0", val)
-                    sess["old_snapshot"] = BoxSnapshot.from_box(box)
-                    sess["dirty"] = False
+                    self.txt_quick_edit.delete("1.0", tk.END)
+                    self.txt_quick_edit.insert("1.0", model_text)
+                    live_sess = getattr(self, "_qe_session", None)
+                    snap = BoxSnapshot.from_box(box)
+                    if (
+                        live_sess is None
+                        or live_sess.get("doc") is not self.current_doc
+                        or live_sess.get("box_uid") != b_uid
+                    ):
+                        self._qe_session = {
+                            "file_path": str(self.current_file_path or ""),
+                            "doc": self.current_doc,
+                            "box_uid": b_uid,
+                            "box_index": idx,
+                            "old_snapshot": snap,
+                            "dirty": False,
+                        }
+                    else:
+                        live_sess["old_snapshot"] = snap
+                        live_sess["box_index"] = idx
+                        live_sess["dirty"] = False
                 finally:
                     self._suppress_qe_events = False
+            sp_disp = box.speaker if box.speaker else "(Narration)"
+            n_segs = len(box.segs)
+            self.lbl_qe_title.config(text=f"Quick Edit — Box #{idx + 1}: {sp_disp}")
+            self.lbl_qe_segs_badge.config(text=f"[{n_segs} segs]" if n_segs > 1 else "")
             return
         self._rebuild_quick_edit_widgets(box, idx)
 
@@ -12397,40 +12473,50 @@ class MisoraApp(tk.Tk):
             pass
 
     def _on_quick_edit_changed(self) -> bool:
-        """Live-update StoryDocument records & active view surface from Quick Edit without rebuilding All Script."""
+        """Live-update StoryDocument records & active view surface from unified Quick Edit without rebuilding All Script."""
         if getattr(self, "_suppress_qe_events", False):
             return False
+        if not self.current_doc or not self.current_doc.boxes or getattr(self, "is_box0_active", False):
+            return False
+        if not hasattr(self, "txt_quick_edit") or not self.txt_quick_edit.winfo_exists() or not self._qe_seg_widgets:
+            return False
+
         sess = getattr(self, "_qe_session", None)
-        if not sess or not self.current_doc or sess.get("doc") is not self.current_doc:
-            return False
-        if getattr(self, "is_box0_active", False):
-            return False
+        if not sess or sess.get("doc") is not self.current_doc:
+            box_idx = max(0, min(self.current_box_idx, len(self.current_doc.boxes) - 1))
+            box = self.current_doc.boxes[box_idx]
+            box_uid = _get_box_uid(box)
+            sess = {
+                "file_path": str(self.current_file_path or ""),
+                "doc": self.current_doc,
+                "box_uid": box_uid,
+                "box_index": box_idx,
+                "old_snapshot": BoxSnapshot.from_box(box),
+                "dirty": False,
+            }
+            self._qe_session = sess
+        else:
+            box_uid = sess.get("box_uid")
+            box_idx = sess.get("box_index", self.current_box_idx)
+            if box_uid is not None:
+                found_idx = next(
+                    (i for i, b in enumerate(self.current_doc.boxes) if _get_box_uid(b) == box_uid),
+                    None,
+                )
+                if found_idx is not None:
+                    box_idx = found_idx
+            if not (0 <= box_idx < len(self.current_doc.boxes)):
+                return False
+            box = self.current_doc.boxes[box_idx]
+            if sess.get("old_snapshot") is None:
+                sess["old_snapshot"] = BoxSnapshot.from_box(box)
 
-        box_uid = sess.get("box_uid")
-        box_idx = sess.get("box_index", self.current_box_idx)
-        if box_uid is not None:
-            found_idx = next(
-                (i for i, b in enumerate(self.current_doc.boxes) if _get_box_uid(b) == box_uid),
-                None,
-            )
-            if found_idx is not None:
-                box_idx = found_idx
-        if not (0 <= box_idx < len(self.current_doc.boxes)):
-            return False
-
-        box = self.current_doc.boxes[box_idx]
-        if len(self._qe_seg_widgets) != max(1, len(box.segs)):
-            return False
-        edited_segs = [w.get("1.0", "end-1c") for w in self._qe_seg_widgets if w.winfo_exists()]
-        if len(edited_segs) != len(box.segs):
-            return False
-
-        current_xuat_segs = [game_to_xuat(s.text) for s in box.segs]
-        if edited_segs == current_xuat_segs:
+        new_tx = self.txt_quick_edit.get("1.0", "end-1c")
+        if new_tx == box.clean_text:
             return False
 
         try:
-            self.current_doc.inject_box(box_idx, None, "".join(edited_segs), seg_texts=edited_segs)
+            self.current_doc.inject_box(box_idx, None, new_tx)
         except Exception as exc:
             self.logger.exception(f"Quick Edit inject_box failed for box {box_idx}:", exc)
             self.set_status(f"Error updating box #{box_idx + 1}: {exc}", is_error=True)
@@ -12443,6 +12529,10 @@ class MisoraApp(tk.Tk):
         self._modified_boxes.add(box_idx)
         if box_uid is not None and hasattr(self, "_modified_box_uids"):
             self._modified_box_uids.add(box_uid)
+
+        n_segs = len(updated_box.segs)
+        if hasattr(self, "lbl_qe_segs_badge") and self.lbl_qe_segs_badge.winfo_exists():
+            self.lbl_qe_segs_badge.config(text=f"[{n_segs} segs]" if n_segs > 1 else "")
 
         # Guardrail #6: only trigger dirty UI sync on initial clean->dirty transition
         if not was_session_dirty or not self.is_dirty:
@@ -12478,12 +12568,19 @@ class MisoraApp(tk.Tk):
             pass
         return True
 
-    def _flush_quick_edit_session(self) -> bool:
+    def _flush_quick_edit_session(self, sync_from_widget: bool = True) -> bool:
         """Commit any pending Quick Edit session as ONE BoxSnapshotReplaceDelta Undo transaction."""
         sess = getattr(self, "_qe_session", None)
         if not sess:
             return True
-        if getattr(self, "_bottom_tab", "raw") == "quick_edit" and self._qe_seg_widgets and sess.get("doc") is self.current_doc:
+        if (
+            sync_from_widget
+            and getattr(self, "_bottom_tab", "raw") == "quick_edit"
+            and self._qe_seg_widgets
+            and hasattr(self, "txt_quick_edit")
+            and self.txt_quick_edit.winfo_exists()
+            and sess.get("doc") is self.current_doc
+        ):
             self._on_quick_edit_changed()
 
         if not sess.get("dirty"):
@@ -12525,9 +12622,18 @@ class MisoraApp(tk.Tk):
             self._mark_document_dirty(self.current_file_path)
             self._dirty_state_changed()
 
-        sess["old_snapshot"] = new_snap
-        sess["box_index"] = box_idx
-        sess["dirty"] = False
+        if (
+            sess.get("doc") is self.current_doc
+            and self._qe_seg_widgets
+            and hasattr(self, "txt_quick_edit")
+            and self.txt_quick_edit.winfo_exists()
+            and box_idx == getattr(self, "current_box_idx", -1)
+        ):
+            sess["old_snapshot"] = new_snap
+            sess["box_index"] = box_idx
+            sess["dirty"] = False
+        else:
+            self._qe_session = None
         return True
 
     def _commit_speaker_edit(self, source: str = "keyboard") -> bool:
@@ -12784,6 +12890,7 @@ class MisoraApp(tk.Tk):
             return False
 
         if self.current_doc and self.current_doc.boxes:
+            self._flush_quick_edit_session()
             idx = self.current_box_idx
             box = self.current_doc.boxes[idx]
             old_sp = box.speaker
@@ -12876,6 +12983,7 @@ class MisoraApp(tk.Tk):
         """Triggered on keystroke when editing Episode Title, Subtitle, or Synopsis in Box 0. Returns True if mutated (BUG-30)."""
         if not self.current_doc or not self.current_doc.has_metadata():
             return False
+        self._flush_quick_edit_session()
         meta = self.current_doc.get_metadata()
         old_title = meta.get("title", "")
         old_subtitle = meta.get("subtitle", "")
@@ -14724,6 +14832,7 @@ class MisoraApp(tk.Tk):
             return
 
         if self.current_doc and self.current_doc.boxes:
+            self._flush_quick_edit_session()
             box = self.current_doc.boxes[self.current_box_idx]
             matches = matcher(box.clean_text)
             if matches:
@@ -14835,6 +14944,7 @@ class MisoraApp(tk.Tk):
             messagebox.showerror("Search Error", f"Invalid search pattern:\n{e}")
             return
 
+        self._flush_quick_edit_session()
         scope = self.scope_var.get()
         if scope == "current":
             if not self.current_file_path:
@@ -17505,6 +17615,7 @@ class MisoraApp(tk.Tk):
 
     def _on_mtl_drawer_apply_engine(self, engine_name: str) -> bool:
         """Apply a card's scratchpad text to the active box (enforces lock, preserves whitespace)."""
+        self._flush_quick_edit_session(sync_from_widget=False)
         active = self._get_mtl_drawer_active_box()
         if active is None:
             self.show_toast("Select a dialogue box before applying translation.")
@@ -17846,6 +17957,7 @@ class MisoraApp(tk.Tk):
 
     def _on_mtl_all_script_apply_selected(self) -> bool:
         """Apply scratchpad text to the selected box by box.uid (enforces lock, preserves whitespace)."""
+        self._flush_quick_edit_session(sync_from_widget=False)
         self._flush_mtl_all_scratchpad()
         doc = getattr(self, "current_doc", None)
         if not doc or not doc.boxes:
@@ -18030,6 +18142,7 @@ class MisoraApp(tk.Tk):
 
     def _on_mtl_all_script_apply_all(self) -> int:
         """Apply all ready/edited translations to unlocked boxes in one Undo batch."""
+        self._flush_quick_edit_session(sync_from_widget=False)
         self._flush_mtl_all_scratchpad()
         doc = getattr(self, "current_doc", None)
         if not doc or not doc.boxes:
@@ -18212,6 +18325,7 @@ class MisoraApp(tk.Tk):
                     self._latest_applied_mtl_seq[b_uid] = req_seq
 
                     # Mutate AST first (S07 / BUG-13 mutate-before-undo)
+                    self._flush_quick_edit_session(sync_from_widget=False)
                     old_speaker = target_box.speaker
                     old_text = target_box.clean_text
                     old_segs = [s.text for s in target_box.segs]
@@ -18530,6 +18644,7 @@ class MisoraApp(tk.Tk):
 
     def on_paste_cross_box(self, confirm: bool = True) -> None:
         """Apply multi-box translation from clipboard using CSIF codec with mode='replace' (Part C.3 / Phase 4)."""
+        self._flush_quick_edit_session()
         if not self.current_doc or not self.current_doc.boxes:
             messagebox.showwarning("No Story Open", "Open a story bundle or text file first.")
             return
@@ -18543,6 +18658,7 @@ class MisoraApp(tk.Tk):
 
     def on_import_script(self, file_path: Optional[Union[str, Path]] = None, confirm: bool = True) -> None:
         """Import script from a file (CSIF / Text) and apply it via preview dialog (Ctrl+Shift+I)."""
+        self._flush_quick_edit_session()
         if not self.current_doc or not self.current_doc.boxes:
             messagebox.showwarning("No Story Open", "Open a story bundle or text file first.")
             return
@@ -18887,6 +19003,7 @@ class MisoraApp(tk.Tk):
             return stats
 
         self._commit_widget_edit()
+        self._flush_quick_edit_session()
         total = len(doc.boxes)
         if scope == "current":
             if getattr(self, "is_box0_active", False):
@@ -19038,6 +19155,7 @@ class MisoraApp(tk.Tk):
 
         cleared_count = 0
         preserved_count = 0
+        self._flush_quick_edit_session()
         self.undo_journal.begin_batch("Clear Dialogue Skeleton")
         try:
             for i, box in enumerate(self.current_doc.boxes):
@@ -20865,6 +20983,7 @@ class ImportFromXUATDialog(tk.Toplevel):
             return False
 
         self.app._commit_widget_edit()
+        self.app._flush_quick_edit_session()
 
         auto_wrap = bool(self.var_auto_word_wrap.get()) if self.var_auto_word_wrap is not None else False
         measure_fn = None
@@ -22894,6 +23013,7 @@ class TranslatorAssistantDialog(tk.Toplevel):
         box_uid = old_box.uid
 
         try:
+            self.app._flush_quick_edit_session(sync_from_widget=False)
             doc.inject_box(b_idx, old_sp, new_text)
         except Exception as e:
             self.app.logger.exception(f"Failed to apply translation to box {b_idx}:", e)
@@ -23151,6 +23271,7 @@ class BatchTranslateDialog(tk.Toplevel):
                     if doc and 0 <= b_idx < len(doc.boxes):
                         if not self.app.is_box_locked(b_idx):
                             # Mutate AST first (S07 / BUG-13)
+                            self.app._flush_quick_edit_session(sync_from_widget=False)
                             doc.inject_box(b_idx, spk, new_tx)
                             self.app.undo_journal.record(
                                 BoxEditDelta(
