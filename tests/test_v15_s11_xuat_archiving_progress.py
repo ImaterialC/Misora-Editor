@@ -409,13 +409,14 @@ class TestV15S11XuatArchivingProgress(S11TestBase):
             self.assertEqual(len(dlg._rows), 3)
             self.assertTrue(all(r["box_idx"] >= 0 for r in dlg._rows))
 
-            # Metadata rows (Title + Subtitle) + Unique Actor rows (ペコリーヌ, コッコロ) = 1 line x 54d
-            self.assertEqual(len(dlg._metadata_rows), 2)
+            # Metadata rows (Title + Subtitle 1-line, Synopsis 5-line) + Unique Actor rows = 54d
+            self.assertEqual(len(dlg._metadata_rows), 3)
             self.assertEqual(len(dlg._actor_rows), 2)
 
             for mrow in dlg._metadata_rows:
-                self.assertEqual(int(mrow["txt_left"].cget("height")), 1)
-                self.assertEqual(int(mrow["txt_right"].cget("height")), 1)
+                expected_h = 5 if mrow.get("field") == "summary" else 1
+                self.assertEqual(int(mrow["txt_left"].cget("height")), expected_h)
+                self.assertEqual(int(mrow["txt_right"].cget("height")), expected_h)
                 self.assertGreaterEqual(mrow["left_wrap"].winfo_reqwidth(), expected_safe_w)
                 self.assertGreaterEqual(mrow["right_wrap"].winfo_reqwidth(), expected_safe_w)
                 self.assertIn("cb_skip", mrow)
@@ -494,11 +495,14 @@ class TestV15S11XuatArchivingProgress(S11TestBase):
             if dlg_rb.winfo_exists():
                 dlg_rb._on_close()
 
-        # Full successful apply: Metadata (preserving Synopsis), multi-seg actor rename, locked skip, Undo/Redo
+        # Full successful apply (part A: Skip Synopsis explicitly -> preserved untouched; Q-08 opt-out)
         dlg_ok = self.app.on_import_from_xuat()
         self.assertIsNotNone(dlg_ok)
         try:
             dlg_ok.var_archive_xuat.set(False)
+            for mrow in dlg_ok._metadata_rows:
+                if mrow.get("field") == "summary":
+                    mrow["var_skip"].set(True)
             undo_before = self.app.undo_journal.get_undo_depth(p_clean)
             with patch.object(misora.messagebox, "askyesno", return_value=True):
                 self.assertTrue(dlg_ok._on_apply_import())
@@ -507,7 +511,7 @@ class TestV15S11XuatArchivingProgress(S11TestBase):
             meta_after = live_doc.get_metadata()
             self.assertEqual(meta_after["title"], "Chapter 1: Dawn")
             self.assertEqual(meta_after["subtitle"], "Sub: Morning")
-            self.assertEqual(meta_after["summary"], "あらすじJP", "Synopsis must stay strictly untouched")
+            self.assertEqual(meta_after["summary"], "あらすじJP", "Synopsis must stay untouched when skipped")
 
             # Multi-seg box 0 speaker updated & segments preserved
             self.assertEqual(live_doc.boxes[0].speaker, "Pecorine")
@@ -525,6 +529,7 @@ class TestV15S11XuatArchivingProgress(S11TestBase):
             self.app.on_undo()
             self.assertEqual(live_doc.get_metadata()["title"], "第一章")
             self.assertEqual(live_doc.get_metadata()["subtitle"], "プロローグ")
+            self.assertEqual(live_doc.get_metadata()["summary"], "あらすじJP")
             self.assertEqual(live_doc.boxes[0].speaker, "ペコリーヌ")
             self.assertEqual([s.text for s in live_doc.boxes[0].segs], ["セグメント一", "セグメント二"])
             self.assertEqual(live_doc.boxes[2].speaker, "コッコロ")
@@ -539,6 +544,21 @@ class TestV15S11XuatArchivingProgress(S11TestBase):
         finally:
             if dlg_ok.winfo_exists():
                 dlg_ok._on_close()
+
+        # Part B (Q-08): Revert & re-open with Synopsis NOT skipped -> imports Synopsis atomically
+        self.app.on_undo()
+        dlg_syn = self.app.on_import_from_xuat()
+        self.assertIsNotNone(dlg_syn)
+        try:
+            dlg_syn.var_archive_xuat.set(False)
+            with patch.object(misora.messagebox, "askyesno", return_value=True):
+                self.assertTrue(dlg_syn._on_apply_import())
+            self.assertEqual(live_doc.get_metadata()["summary"], "Should NOT touch synopsis")
+            self.app.on_undo()
+            self.assertEqual(live_doc.get_metadata()["summary"], "あらすじJP")
+        finally:
+            if dlg_syn.winfo_exists():
+                dlg_syn._on_close()
 
     def test_probe_5_unified_progress_controller_concurrent_isolation_and_reload_xuat_async(self) -> None:
         """[Probe 5] Unified _ProgressTaskManager concurrent isolation, O(1) progress flood + reliable terminal delivery, cancellable os.walk."""

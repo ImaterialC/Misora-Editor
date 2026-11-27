@@ -2162,6 +2162,7 @@ class MisoraApp(tk.Tk):
         self._locked_box_uids: Set[int] = set()
         self._modified_box_uids: Set[int] = set()
         self._original_jp_by_uid: Dict[int, str] = {}
+        self._original_metadata_by_path: Dict[str, Dict[str, str]] = {}
         self._box_clipboard: List[Any] = []
         self._is_speaker_pinned: bool = False
         self._pinned_speaker_name: Optional[str] = None
@@ -5478,6 +5479,22 @@ class MisoraApp(tk.Tk):
             ),
             "check_panel"
         )
+        self.btn_select_all_boxes = ttk.Button(
+            gd_header,
+            text="All",
+            style="Small.TButton",
+            width=4,
+            command=self._on_select_all_boxes,
+        )
+        self.btn_deselect_all_boxes = ttk.Button(
+            gd_header,
+            text="None",
+            style="Small.TButton",
+            width=5,
+            command=self._on_deselect_all_boxes,
+        )
+        create_tooltip(self.btn_select_all_boxes, "Select All Dialogue Boxes (excludes Box 0)")
+        create_tooltip(self.btn_deselect_all_boxes, "Deselect All Boxes")
 
         # Row 1 Right (packed right-to-left): [VIEW group] [MTL] [AI] [Prev] [Next] [Overflow] [Box: N / M]
         self.lbl_box_counter = self._tag_role(
@@ -9402,6 +9419,16 @@ class MisoraApp(tk.Tk):
             pass
         return True
 
+    @staticmethod
+    def _norm_meta_path_key(fp: Optional[Union[str, Path]]) -> str:
+        """Normalize file paths identically to ImportFromXUATDialog._norm_file_str."""
+        if not fp:
+            return ""
+        try:
+            return os.path.normcase(os.path.normpath(str(Path(fp).resolve())))
+        except Exception:
+            return os.path.normcase(os.path.normpath(str(fp)))
+
     def open_file(self, file_path: Union[str, Path], reload_from_disk: bool = False, refresh_ui: bool = True) -> None:
         """Open and display a .unity3d bundle or plain-text script file."""
         file_path = Path(file_path).resolve()
@@ -9548,6 +9575,11 @@ class MisoraApp(tk.Tk):
             self._locked_box_uids = set(entry.get("locked_box_uids", set()))
             self._modified_box_uids = set(entry.get("modified_box_uids", set()))
             self._original_jp_by_uid = dict(entry.get("original_jp_by_uid", {}))
+            meta_key = self._norm_meta_path_key(file_path)
+            if meta_key and meta_key not in self._original_metadata_by_path:
+                orig_m = entry.get("original_metadata")
+                if isinstance(orig_m, dict):
+                    self._original_metadata_by_path[meta_key] = dict(orig_m)
         else:
             self.current_box_idx = 0
             self.is_box0_active = False
@@ -9593,7 +9625,7 @@ class MisoraApp(tk.Tk):
         self.recent_files.insert(0, file_path)
         self.recent_files = self.recent_files[:15]
         self.last_opened_dir = file_path.parent
-        self.title(f"Misora: Story Editor - {file_path.name}")
+        self.title(self._build_window_title())
 
         if staged["kind"] == "cache":
             entry = staged["entry"]
@@ -9615,6 +9647,16 @@ class MisoraApp(tk.Tk):
                         dispose_unity_env(prior_entry["env"])
                     prior_entry.clear()
             self.open_documents[file_path] = staged["cache"]
+            # Q-08: Record immutable original Box 0 metadata snapshot after cache pruning
+            meta_key = self._norm_meta_path_key(file_path)
+            if meta_key and isinstance(staged.get("cache"), dict):
+                orig_m = (
+                    dict(doc.get_metadata() or {})
+                    if doc is not None and callable(getattr(doc, "get_metadata", None))
+                    else {}
+                )
+                staged["cache"]["original_metadata"] = dict(orig_m)
+                self._original_metadata_by_path[meta_key] = dict(orig_m)
             # Record a fresh saved-state checkpoint for newly loaded documents
             self._record_saved_checkpoint(file_path, staged.get("doc"), staged.get("plain_text", ""))
 
@@ -9664,6 +9706,7 @@ class MisoraApp(tk.Tk):
         self._update_empty_state_visibility()
         self._sync_preview_toggle_availability()
         self._update_dialogue_select_box_ui()
+        self._update_select_all_boxes_ui()
         if hasattr(self, "_sync_raw_edit_buttons"):
             self._sync_raw_edit_buttons()
         compiled = self.var_preview_compiled.get()
@@ -10493,7 +10536,58 @@ class MisoraApp(tk.Tk):
                 self.cb_dialogue_select.pack_forget()
         else:
             self._update_dialogue_select_box_ui()
+        self._update_select_all_boxes_ui()
         self.show_toast(f"Select Box mode {'enabled' if enabled else 'disabled'}")
+
+    def _update_select_all_boxes_ui(self) -> None:
+        """Idempotently show/hide All/None Box selection buttons across Dialogue & All Script views (Q-10)."""
+        if not (hasattr(self, "btn_select_all_boxes") and hasattr(self, "btn_deselect_all_boxes")):
+            return
+        if not (self.btn_select_all_boxes.winfo_exists() and self.btn_deselect_all_boxes.winfo_exists()):
+            return
+        show = bool(getattr(self, "var_select_box_mode", None) and self.var_select_box_mode.get()) and bool(self.current_doc)
+        if show:
+            anchor = (
+                self.cb_dialogue_select
+                if hasattr(self, "cb_dialogue_select") and self._is_widget_packed(self.cb_dialogue_select)
+                else (self.lbl_gd_title if hasattr(self, "lbl_gd_title") and self.lbl_gd_title.winfo_exists() else None)
+            )
+            if not self._is_widget_packed(self.btn_select_all_boxes):
+                kw: Dict[str, Any] = {"side": "left", "padx": (4, 0)}
+                if anchor is not None:
+                    kw["after"] = anchor
+                self.btn_select_all_boxes.pack(**kw)
+            if not self._is_widget_packed(self.btn_deselect_all_boxes):
+                self.btn_deselect_all_boxes.pack(side="left", padx=(2, 0), after=self.btn_select_all_boxes)
+        else:
+            if self._is_widget_packed(self.btn_select_all_boxes):
+                self.btn_select_all_boxes.pack_forget()
+            if self._is_widget_packed(self.btn_deselect_all_boxes):
+                self.btn_deselect_all_boxes.pack_forget()
+
+    def _on_select_all_boxes(self) -> None:
+        """Select all dialogue boxes (0..N-1), strictly excluding Box 0 (-1) and preserving locks (Q-10)."""
+        if not self.current_doc or not self.current_doc.boxes:
+            return
+        self._selected_boxes = set(range(len(self.current_doc.boxes)))
+        if self.var_continuous_view.get():
+            if hasattr(self, "_refresh_as_visible_selection_slots"):
+                self._refresh_as_visible_selection_slots()
+        else:
+            self._update_dialogue_select_box_ui()
+        self._update_select_all_boxes_ui()
+        self.show_toast(f"Selected all {len(self.current_doc.boxes)} dialogue boxes")
+
+    def _on_deselect_all_boxes(self) -> None:
+        """Clear all box selections while keeping Translation Lock states untouched (Q-10)."""
+        self._selected_boxes.clear()
+        if self.var_continuous_view.get():
+            if hasattr(self, "_refresh_as_visible_selection_slots"):
+                self._refresh_as_visible_selection_slots()
+        else:
+            self._update_dialogue_select_box_ui()
+        self._update_select_all_boxes_ui()
+        self.show_toast("Deselected all boxes")
 
     def _update_dialogue_select_box_ui(self) -> None:
         """Update inline Select Box checkbox in Dialogue view header."""
@@ -10565,6 +10659,7 @@ class MisoraApp(tk.Tk):
                 if not self.var_select_box_mode.get():
                     self.var_select_box_mode.set(True)
                 self._selected_boxes = set(range(len(self.current_doc.boxes)))
+                self._update_select_all_boxes_ui()
                 if hasattr(self, "_refresh_as_visible_selection_slots"):
                     self._refresh_as_visible_selection_slots()
                 self.show_toast(f"Selected all {len(self.current_doc.boxes)} boxes")
@@ -10637,6 +10732,34 @@ class MisoraApp(tk.Tk):
         if self.current_file_path and Path(self.current_file_path).resolve() == p:
             self.is_dirty = True
 
+    def _build_window_title(self) -> str:
+        """Build dynamic window title with filename, dirty *, and sanitized <=65-char Box 0 metadata (Q-12)."""
+        base = "Misora: Story Editor"
+        if not self.current_file_path:
+            return base
+        dirty_marker = "*" if self.is_dirty else ""
+        file_name = self.current_file_path.name
+        title = f"{base} - {file_name}{dirty_marker}"
+        doc = getattr(self, "current_doc", None)
+        if doc and callable(getattr(doc, "get_metadata", None)):
+            try:
+                meta = doc.get_metadata() or {}
+            except Exception:
+                meta = {}
+            ep_title = " ".join(str(meta.get("title", "") or "").split())
+            ep_sub = " ".join(str(meta.get("subtitle", "") or "").split())
+            if ep_title or ep_sub:
+                if ep_title and ep_sub:
+                    meta_str = f"{ep_title} ({ep_sub})"
+                elif ep_title:
+                    meta_str = ep_title
+                else:
+                    meta_str = ep_sub
+                if len(meta_str) > 65:
+                    meta_str = meta_str[:64] + "…"
+                title += f" — {meta_str}"
+        return title
+
     def _dirty_state_changed(self) -> None:
         """Pure UI synchronization: title *, Opened Files dock, undo/redo menu states (S2).
 
@@ -10653,10 +10776,8 @@ class MisoraApp(tk.Tk):
                 self.is_dirty = bool(self.open_documents[p].get("dirty", False))
             # If NOT in open_documents: preserve self.is_dirty unchanged (do not reset to False)
 
-        dirty_marker = "*" if self.is_dirty else ""
-        file_name = self.current_file_path.name if self.current_file_path else "Untitled"
         try:
-            self.title(f"Misora: Story Editor - {file_name}{dirty_marker}")
+            self.title(self._build_window_title())
         except Exception:
             pass
 
@@ -13834,6 +13955,9 @@ class MisoraApp(tk.Tk):
         entry["modified_box_uids"] = set(getattr(self, "_modified_box_uids", set()))
         if hasattr(self, "_original_jp_by_uid"):
             entry["original_jp_by_uid"] = dict(self._original_jp_by_uid)
+        meta_key = self._norm_meta_path_key(cur_p)
+        if meta_key and "original_metadata" not in entry and meta_key in getattr(self, "_original_metadata_by_path", {}):
+            entry["original_metadata"] = dict(self._original_metadata_by_path[meta_key])
         if not self.current_doc:
             entry["plain_text"] = getattr(self, "_plain_text_content", "")
         entry["dirty"] = getattr(self, "is_dirty", False)
@@ -15861,6 +15985,9 @@ class MisoraApp(tk.Tk):
         """Prune all document-scoped MTL & XUAT JP caches for a closed or reloaded document (BUG-03 / BONUS-01)."""
         fp_str = str(Path(file_path).resolve()) if file_path else ""
         doc_id = id(doc) if doc is not None else None
+        meta_key = self._norm_meta_path_key(file_path) if file_path else ""
+        if meta_key and hasattr(self, "_original_metadata_by_path"):
+            self._original_metadata_by_path.pop(meta_key, None)
 
         doc_uids: Set[Any] = set()
         if doc is not None and getattr(doc, "boxes", None):
@@ -16013,6 +16140,10 @@ class MisoraApp(tk.Tk):
                     self.undo_journal.set_active_file("")
                 self._update_views()
                 self._sync_edit_menu_states()
+                try:
+                    self.title(self._build_window_title())
+                except Exception:
+                    pass
                 self.lbl_status.config(text="Ready. No files open.")
 
         self._refresh_opened_files_list()
@@ -16082,6 +16213,7 @@ class MisoraApp(tk.Tk):
         self._modified_box_uids = set()
         self._original_box_texts = {}
         self._original_jp_by_uid = {}
+        self._original_metadata_by_path = {}
         self._clear_card_registry()
         if hasattr(self, "undo_journal") and hasattr(self.undo_journal, "set_active_file"):
             self.undo_journal.set_active_file("")
@@ -16886,6 +17018,10 @@ class MisoraApp(tk.Tk):
     )
     _MTL_DRAWER_PAID_ENGINES: Tuple[str, ...] = ("DeepL", "LLM / OpenAI")
     _MTL_DRAWER_CACHE_MAX: int = 256
+    _MTL_GLOBE_URLS: Dict[str, str] = {
+        "Google": "https://translate.google.com/",
+        "DeepL": "https://www.deepl.com/translator",
+    }
 
     def _build_mtl_tab(self, parent: tk.Frame) -> None:
         """Build the docked MTL Drawer tab (Dialogue 1-box multi-engine stack)."""
@@ -17292,6 +17428,18 @@ class MisoraApp(tk.Tk):
             btn_refresh.pack(side="right", padx=(2, 0))
             create_tooltip(btn_refresh, f"Refresh {eng} (bypass session cache)")
 
+            btn_globe = None
+            if eng in self._MTL_GLOBE_URLS:
+                btn_globe = ttk.Button(
+                    card_hdr,
+                    text="🌐",
+                    style="Small.TButton",
+                    width=3,
+                    command=lambda e=eng: self._on_mtl_globe_open(e),
+                )
+                btn_globe.pack(side="right", padx=(2, 2))
+                create_tooltip(btn_globe, f"Copy active box text & open {eng} web translator")
+
             scratch = self._tag_role(
                 tk.Text(
                     card,
@@ -17333,7 +17481,7 @@ class MisoraApp(tk.Tk):
             scratch.bind("<Control-Shift-z>", _local_redo)
             scratch.bind("<Control-Shift-Z>", _local_redo)
 
-            self._mtl_drawer_cards[eng] = {
+            card_entry: Dict[str, Any] = {
                 "frame": card,
                 "lbl_engine": lbl_engine,
                 "lbl_status": lbl_status,
@@ -17341,9 +17489,32 @@ class MisoraApp(tk.Tk):
                 "btn_apply": btn_apply,
                 "scratchpad": scratch,
             }
+            if btn_globe is not None:
+                card_entry["btn_globe"] = btn_globe
+            self._mtl_drawer_cards[eng] = card_entry
 
         self._mtl_drawer_active_context = None
         self._refresh_mtl_drawer_box()
+
+    def _on_mtl_globe_open(self, engine_name: str) -> None:
+        """Copy active dialogue box text to clipboard (omitted on Box 0) & open official web translator (Q-11)."""
+        url = self._MTL_GLOBE_URLS.get(engine_name)
+        if not url:
+            return
+        active = self._get_mtl_drawer_active_box()
+        text = ""
+        if active is not None:
+            _, box = active
+            text = box.clean_text or ""
+        if text:
+            self.safe_clipboard_set(text)
+            self.show_toast(f"Copied active box text to clipboard — opened {engine_name}")
+        else:
+            self.show_toast(f"No active box text — opened {engine_name}")
+        try:
+            webbrowser.open(url, new=2)
+        except Exception:
+            self.show_toast(f"Failed to open {engine_name} web translator")
 
     def _get_mtl_drawer_active_box(self) -> Optional[Tuple[int, Box]]:
         doc = getattr(self, "current_doc", None)
@@ -20082,6 +20253,10 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._rows: List[Dict[str, Any]] = []
         self._metadata_rows: List[Dict[str, Any]] = []
         self._actor_rows: List[Dict[str, Any]] = []
+        self._group_select_states: Dict[str, str] = {}
+        self._group_select_buttons: Dict[str, ttk.Button] = {}
+        self._bulk_updating_group: bool = False
+        self._lbl_empty_state: Optional[tk.Label] = None
         self._focused_box_widget: Optional[tk.Text] = None
         self._active_filter: str = "all"
         self._filter_buttons: Dict[str, ttk.Button] = {}
@@ -20351,10 +20526,21 @@ class ImportFromXUATDialog(tk.Toplevel):
             return False
         return True
 
-    def _build_section_header(self, title: str, t: dict) -> None:
+    def _bind_mousewheel_recursive(self, widget: tk.Misc) -> None:
+        """Bind outer canvas MouseWheel across labels, checkboxes, buttons, headers, and scope_cmb (Q-06).
+
+        Explicitly skips tk.Text so focus-gated inner scroll on txt_left/txt_right
+        from _bind_paired_box_events() is never overwritten.
+        """
+        if isinstance(widget, tk.Text):
+            return
+        widget.bind("<MouseWheel>", self._on_outer_mousewheel)
+        for child in widget.winfo_children():
+            self._bind_mousewheel_recursive(child)
+
+    def _build_section_header(self, title: str, t: dict) -> tk.Frame:
         hdr = tk.Frame(self.rows_frame, bg=t["bg_dark"], padx=8, pady=4)
         hdr.pack(fill="x", padx=4, pady=(6, 2))
-        hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
         tk.Label(
             hdr,
             text=title,
@@ -20363,6 +20549,87 @@ class ImportFromXUATDialog(tk.Toplevel):
             fg=t["misora_pink"],
             anchor="w",
         ).pack(side="left")
+        self._bind_mousewheel_recursive(hdr)
+        return hdr
+
+    def _get_group_rows(self, group_key: str) -> List[Dict[str, Any]]:
+        if group_key == "metadata":
+            return self._metadata_rows
+        if group_key == "actors":
+            return self._actor_rows
+        if group_key == "dialogue":
+            return self._rows
+        return []
+
+    def _make_tristate_group_header(self, title: str, group_key: str, t: dict) -> tk.Frame:
+        """Build a section header with a single-visual tri-state Select All ttk.Button (Q-07)."""
+        hdr = tk.Frame(self.rows_frame, bg=t["bg_dark"], padx=8, pady=4)
+        hdr.pack(fill="x", padx=4, pady=(6, 2))
+        tk.Label(
+            hdr,
+            text=title,
+            font=("Segoe UI", 9, "bold"),
+            bg=t["bg_dark"],
+            fg=t["misora_pink"],
+            anchor="w",
+        ).pack(side="left")
+
+        btn_group_sel = ttk.Button(
+            hdr,
+            text="[ ] Select All",
+            style="Small.TButton",
+            width=15,
+            command=lambda gk=group_key: self._on_group_select_all(gk),
+        )
+        btn_group_sel.pack(side="right", padx=(4, 2))
+        create_tooltip(
+            btn_group_sel,
+            "Select/deselect all eligible rows in group (all filters)",
+        )
+        self._group_select_buttons[group_key] = btn_group_sel
+        self._group_select_states[group_key] = "none"
+        self._bind_mousewheel_recursive(hdr)
+        return hdr
+
+    def _on_group_select_all(self, group_key: str) -> None:
+        """Toggle all eligible unlocked/matched rows in a group in O(1) header update (Q-07)."""
+        current_state = self._group_select_states.get(group_key, "none")
+        rows = self._get_group_rows(group_key)
+        # "partial" or "all" -> deselect all (var_skip=True); "none" -> select all (var_skip=False)
+        target_skip = current_state != "none"
+
+        self._bulk_updating_group = True
+        try:
+            for row_dict in rows:
+                if row_dict.get("is_locked", False):
+                    continue
+                if not row_dict.get("candidates"):
+                    continue
+                row_dict["var_skip"].set(target_skip)
+        finally:
+            self._bulk_updating_group = False
+        self._update_group_header_state(group_key)
+
+    def _update_group_header_state(self, group_key: str) -> None:
+        """Recompute tri-state indicator ('none' / 'partial' / 'all') for a group header."""
+        rows = self._get_group_rows(group_key)
+        eligible = [r for r in rows if not r.get("is_locked", False) and r.get("candidates")]
+        btn = self._group_select_buttons.get(group_key)
+        if not eligible:
+            self._group_select_states[group_key] = "none"
+            if btn is not None and btn.winfo_exists():
+                btn.configure(text="[ ] Select All", state="disabled")
+            return
+        selected = sum(1 for r in eligible if not r["var_skip"].get())
+        if selected == 0:
+            state_str, label = "none", "[ ] Select All"
+        elif selected == len(eligible):
+            state_str, label = "all", "[x] Select All"
+        else:
+            state_str, label = "partial", "[-] Select All"
+        self._group_select_states[group_key] = state_str
+        if btn is not None and btn.winfo_exists():
+            btn.configure(text=label, state="normal")
 
     def _create_paired_box_row(
         self,
@@ -20379,13 +20646,16 @@ class ImportFromXUATDialog(tk.Toplevel):
         lock_badge: str = "",
         show_scope: bool = False,
         norm_key: str = "",
+        wrap_mode: str = "none",
+        group_key: Optional[str] = None,
         extra_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Shared builder for Metadata (1x54d), Unique Actor (1x54d), and Dialogue (3x54d) rows."""
+        """Shared builder for Metadata (1x54d / multi-line Synopsis), Unique Actor (1x54d), and Dialogue (3x54d) rows."""
         t = self.app.theme
         fg_panel = best_contrast_fg(t["bg_panel"], t["fg_text"], "#ffffff")
         fg_editor = best_contrast_fg(t["bg_editor"], t["fg_text"], "#ffffff")
         fg_muted = t["fg_muted"]
+        is_synopsis = bool(extra_data and extra_data.get("field") == "summary")
 
         measure_font = self.app._get_dialogue_measure_font()
         safe_w = self.app._get_54d_reference_safe_w()
@@ -20405,11 +20675,9 @@ class ImportFromXUATDialog(tk.Toplevel):
             pady=6,
         )
         card.pack(fill="x", padx=6, pady=4)
-        card.bind("<MouseWheel>", self._on_outer_mousewheel)
 
         hdr = tk.Frame(card, bg=row_bg)
         hdr.pack(fill="x", pady=(0, 4))
-        hdr.bind("<MouseWheel>", self._on_outer_mousewheel)
 
         tk.Label(
             hdr,
@@ -20492,7 +20760,6 @@ class ImportFromXUATDialog(tk.Toplevel):
 
         pair_frame = tk.Frame(card, bg=row_bg)
         pair_frame.pack(fill="x")
-        pair_frame.bind("<MouseWheel>", self._on_outer_mousewheel)
 
         left_col = tk.Frame(pair_frame, bg=row_bg)
         left_col.pack(side="left", padx=(0, 8))
@@ -20500,8 +20767,12 @@ class ImportFromXUATDialog(tk.Toplevel):
         left_hdr.pack(fill="x")
         tk.Label(left_hdr, text=left_label, font=("Segoe UI", 8), bg=row_bg, fg=fg_muted).pack(side="left")
         left_m = self.app._measure_dialogue_metrics(left_text)
-        left_ov_badge = ("▼" if (lines >= 3 and left_m["has_line_overflow"]) else "") + (
-            "▶" if left_m["has_width_overflow"] else ""
+        left_ov_badge = (
+            ""
+            if is_synopsis
+            else (("▼" if (lines >= 3 and left_m["has_line_overflow"]) else "") + (
+                "▶" if left_m["has_width_overflow"] else ""
+            ))
         )
         lbl_left_overflow = tk.Label(
             left_hdr, text=left_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"]
@@ -20517,7 +20788,7 @@ class ImportFromXUATDialog(tk.Toplevel):
             font=measure_font,
             height=lines,
             width=50,
-            wrap="none",
+            wrap=wrap_mode,
             bg=t["bg_dark"] if is_locked else t["bg_editor"],
             fg=fg_muted if is_locked else fg_editor,
             bd=0,
@@ -20537,8 +20808,12 @@ class ImportFromXUATDialog(tk.Toplevel):
 
         right_text = lookup.candidates[cand_idx].value if lookup.candidates else ""
         right_m = self.app._measure_dialogue_metrics(right_text)
-        right_ov_badge = ("▼" if (lines >= 3 and right_m["has_line_overflow"]) else "") + (
-            "▶" if right_m["has_width_overflow"] else ""
+        right_ov_badge = (
+            ""
+            if is_synopsis
+            else (("▼" if (lines >= 3 and right_m["has_line_overflow"]) else "") + (
+                "▶" if right_m["has_width_overflow"] else ""
+            ))
         )
         lbl_right_overflow = tk.Label(
             right_hdr, text=right_ov_badge, font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_yellow"]
@@ -20554,7 +20829,7 @@ class ImportFromXUATDialog(tk.Toplevel):
             font=measure_font,
             height=lines,
             width=50,
-            wrap="none",
+            wrap=wrap_mode,
             bg=t["bg_dark"] if is_locked else t["bg_editor"],
             fg=fg_muted if is_locked else fg_editor,
             bd=0,
@@ -20566,11 +20841,29 @@ class ImportFromXUATDialog(tk.Toplevel):
         txt_right.config(state="disabled")
         txt_right.pack(fill="both", expand=True)
 
-        self._bind_paired_box_events(txt_left, lines >= 3 and left_m["has_line_overflow"], left_m["has_width_overflow"])
-        self._bind_paired_box_events(txt_right, lines >= 3 and right_m["has_line_overflow"], right_m["has_width_overflow"])
+        self._bind_paired_box_events(
+            txt_left,
+            is_synopsis or (lines >= 3 and left_m["has_line_overflow"]),
+            False if is_synopsis else left_m["has_width_overflow"],
+        )
+        self._bind_paired_box_events(
+            txt_right,
+            is_synopsis or (lines >= 3 and right_m["has_line_overflow"]),
+            False if is_synopsis else right_m["has_width_overflow"],
+        )
+        # Propagate MouseWheel across all non-Text descendants (tk.Text skipped intentionally)
+        self._bind_mousewheel_recursive(card)
+
+        if group_key:
+            def _on_skip_changed(*_args, gk: str = group_key) -> None:
+                if not self._bulk_updating_group:
+                    self._update_group_header_state(gk)
+
+            var_skip.trace_add("write", _on_skip_changed)
 
         row_dict: Dict[str, Any] = {
             "norm_key": norm_key,
+            "group_key": group_key,
             "status": lookup.status,
             "candidates": lookup.candidates,
             "cand_idx": cand_idx,
@@ -20600,14 +20893,30 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._rows.clear()
         self._metadata_rows.clear()
         self._actor_rows.clear()
+        self._group_select_buttons.clear()
+        self._group_select_states.clear()
+        self._lbl_empty_state = None
         self._focused_box_widget = None
 
         doc = self.app.current_doc
+        t = self.app.theme
         if not doc or not doc.boxes:
+            fg_muted = t.get("fg_muted", "#aaaaaa")
+            lbl_empty = tk.Label(
+                self.rows_frame,
+                text="No dialogue boxes found in the active document.",
+                font=("Segoe UI", 10),
+                bg=t["bg_dark"],
+                fg=fg_muted,
+                pady=24,
+            )
+            lbl_empty.pack(fill="x", padx=12, pady=12)
+            lbl_empty.bind("<MouseWheel>", self._on_outer_mousewheel)
+            self._lbl_empty_state = lbl_empty
+            self._on_rows_configure()
             return
 
         self._capture_doc_identity(doc)
-        t = self.app.theme
 
         orig_map = getattr(self.app, "_original_jp_by_uid", {})
         stats = analyze_story_matches(doc, orig_map, self.xuat_index)
@@ -20636,30 +20945,46 @@ class ImportFromXUATDialog(tk.Toplevel):
         for k, btn in self._filter_buttons.items():
             btn.config(text=f"{chip_names[k]} ({chip_counts[k]})")
 
-        # Section 1: Metadata (Title & Subtitle; Box 0 Synopsis is never imported)
+        # Section 1: Metadata (Title & Subtitle 1x54d + Multi-line Synopsis using 4-tuple lookup; Q-08)
         meta = doc.get_metadata() if callable(getattr(doc, "get_metadata", None)) else {}
-        meta_fields: List[Tuple[str, str, str]] = []
+        orig_meta_map = getattr(self.app, "_original_metadata_by_path", {})
+        norm_fp = self._norm_file_str(self.app.current_file_path)
+        orig_meta = orig_meta_map.get(norm_fp, {})
+        meta_fields: List[Tuple[str, str, str, str]] = []
         if meta.get("title"):
-            meta_fields.append(("title", "Title (Box 0 Metadata)", meta["title"]))
+            meta_fields.append(("title", "Title (Box 0 Metadata)", meta["title"], meta["title"]))
         if meta.get("subtitle"):
-            meta_fields.append(("subtitle", "Subtitle / Outline (Box 0 Metadata)", meta["subtitle"]))
+            meta_fields.append(("subtitle", "Subtitle / Outline (Box 0 Metadata)", meta["subtitle"], meta["subtitle"]))
+        current_summary = meta.get("summary", "") or ""
+        original_jp_summary = orig_meta.get("summary", "") or ""
+        synopsis_key = original_jp_summary or current_summary
+        if synopsis_key:
+            meta_fields.append(("summary", "Synopsis (Box 0 Metadata)", current_summary, synopsis_key))
         if meta_fields:
-            self._build_section_header("Story Metadata (1-line × 54d — Synopsis preserved untouched)", t)
-            for m_field, m_label, m_val in meta_fields:
-                m_lookup = self.xuat_index.lookup_candidates(m_val)
+            self._make_tristate_group_header(
+                "Story Metadata (Title, Subtitle: 1-line × 54d; Synopsis: multi-line)",
+                "metadata",
+                t,
+            )
+            for m_field, m_label, m_display, m_lookup_key in meta_fields:
+                m_lookup = self.xuat_index.lookup_candidates(m_lookup_key)
+                is_syn = (m_field == "summary")
                 self._create_paired_box_row(
                     row_list=self._metadata_rows,
                     header_text=m_label,
                     left_label="Current Metadata",
                     right_label="XUAT Match",
-                    left_text=m_val,
+                    left_text=m_display,
                     lookup=m_lookup,
                     cand_idx=0,
-                    lines=1,
+                    lines=5 if is_syn else 1,
                     is_locked=False,
-                    norm_key=normalize_xuat_key(m_val, strip_ngui=True),
-                    extra_data={"field": m_field, "orig_value": m_val},
+                    norm_key=normalize_xuat_key(m_lookup_key, strip_ngui=True),
+                    wrap_mode="word" if is_syn else "none",
+                    group_key="metadata",
+                    extra_data={"field": m_field, "orig_value": m_display},
                 )
+            self._update_group_header_state("metadata")
 
         # Section 2: Unique Actors / Speakers (1-line x 54d)
         speaker_boxes: Dict[str, List[int]] = {}
@@ -20667,7 +20992,11 @@ class ImportFromXUATDialog(tk.Toplevel):
             if box.speaker:
                 speaker_boxes.setdefault(box.speaker, []).append(b_idx)
         if speaker_boxes:
-            self._build_section_header("Unique Actors / Speakers (1-line × 54d — Locked boxes skipped automatically)", t)
+            self._make_tristate_group_header(
+                "Unique Actors / Speakers (1-line × 54d — Locked boxes skipped automatically)",
+                "actors",
+                t,
+            )
             for sp_name, b_indices in speaker_boxes.items():
                 sp_lookup = self.xuat_index.lookup_candidates(sp_name)
                 locked_indices = [i for i in b_indices if self.app.is_box_locked(i)]
@@ -20690,6 +21019,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                     is_locked=all_locked,
                     lock_badge=lock_badge,
                     norm_key=normalize_xuat_key(sp_name, strip_ngui=True),
+                    group_key="actors",
                     extra_data={
                         "orig_speaker": sp_name,
                         "box_indices": tuple(b_indices),
@@ -20697,9 +21027,10 @@ class ImportFromXUATDialog(tk.Toplevel):
                         "locked_indices": tuple(locked_indices),
                     },
                 )
+            self._update_group_header_state("actors")
 
         # Section 3: Ordinary Dialogue (3-line x 54d; Box 0 excluded)
-        self._build_section_header("Dialogue Boxes (3-line × 54d)", t)
+        self._make_tristate_group_header("Dialogue Boxes (3-line × 54d)", "dialogue", t)
         global_overrides = getattr(self.app, "_xuat_global_choice_overrides", {})
 
         for idx, box in enumerate(doc.boxes):
@@ -20731,8 +21062,21 @@ class ImportFromXUATDialog(tk.Toplevel):
                 lock_badge="🔒 Locked (Auto-Skip)" if is_locked else "",
                 show_scope=True,
                 norm_key=norm_k,
+                group_key="dialogue",
                 extra_data={"box_idx": idx, "box_uid": b_uid},
             )
+        self._update_group_header_state("dialogue")
+
+        # Filter zero-match placeholder label (bound explicitly to _on_outer_mousewheel)
+        self._lbl_empty_state = tk.Label(
+            self.rows_frame,
+            text="No dialogue rows match the selected filter.",
+            font=("Segoe UI", 9, "italic"),
+            bg=t["bg_dark"],
+            fg=t.get("fg_muted", "#aaaaaa"),
+            pady=12,
+        )
+        self._lbl_empty_state.bind("<MouseWheel>", self._on_outer_mousewheel)
 
         self._set_filter(self._active_filter)
 
@@ -20827,9 +21171,12 @@ class ImportFromXUATDialog(tk.Toplevel):
             txt_r.config(state="disabled")
         rm = self.app._measure_dialogue_metrics(chosen.value)
         lines = int(row.get("lines", 3))
-        ov_badge = ("▼" if (lines >= 3 and rm["has_line_overflow"]) else "") + (
-            "▶" if rm["has_width_overflow"] else ""
-        )
+        if row.get("field") == "summary":
+            ov_badge = ""
+        else:
+            ov_badge = ("▼" if (lines >= 3 and rm["has_line_overflow"]) else "") + (
+                "▶" if rm["has_width_overflow"] else ""
+            )
         row["lbl_right_overflow"].config(text=ov_badge)
         row["lbl_provenance"].config(text=chosen.provenance)
         row["lbl_dup_counter"].config(text=f"{cand_idx + 1}/{len(cands)}")
@@ -20860,6 +21207,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._active_filter = filter_key
         for k, btn in self._filter_buttons.items():
             btn.configure(style="Pink.TButton" if k == filter_key else "TButton")
+        visible_count = 0
         for row in self._rows:
             st = row["status"]
             show = (
@@ -20869,11 +21217,20 @@ class ImportFromXUATDialog(tk.Toplevel):
                 or (filter_key == "matched" and st in ("matched", "duplicate"))
             )
             if show:
+                visible_count += 1
                 if not row["frame"].winfo_manager():
                     row["frame"].pack(fill="x", padx=6, pady=4)
             else:
                 if row["frame"].winfo_manager():
                     row["frame"].pack_forget()
+        lbl_emp = getattr(self, "_lbl_empty_state", None)
+        if lbl_emp is not None and lbl_emp.winfo_exists():
+            if self._rows and visible_count == 0:
+                if not lbl_emp.winfo_manager():
+                    lbl_emp.pack(fill="x", padx=12, pady=8)
+            else:
+                if lbl_emp.winfo_manager():
+                    lbl_emp.pack_forget()
         self._on_rows_configure()
 
     @staticmethod
@@ -20898,7 +21255,7 @@ class ImportFromXUATDialog(tk.Toplevel):
         if not doc or not doc.boxes:
             return False
 
-        # 1. Metadata plan (Title / Subtitle only; Synopsis untouched)
+        # 1. Metadata plan (Title / Subtitle / Synopsis; Q-08)
         meta_plan: Dict[str, Tuple[str, str, Any]] = {}
         for mrow in self._metadata_rows:
             if mrow["var_skip"].get() or not mrow["candidates"]:
@@ -20953,7 +21310,11 @@ class ImportFromXUATDialog(tk.Toplevel):
             to_import_nums.append(b_num)
             dialogue_plan[b_idx] = (row["box_uid"], chosen_entry)
 
-        meta_lbl = ", ".join(f"{k.capitalize()}" for k in meta_plan) if meta_plan else "None"
+        meta_lbl = (
+            ", ".join("Synopsis" if k == "summary" else k.capitalize() for k in meta_plan)
+            if meta_plan
+            else "None"
+        )
         actor_lbl = "; ".join(actor_summary_parts) if actor_summary_parts else "None"
         prompt = (
             "Confirm XUAT Import Summary:\n\n"
@@ -21012,12 +21373,13 @@ class ImportFromXUATDialog(tk.Toplevel):
 
         self.app.undo_journal.begin_batch("Import from XUAT")
         try:
-            # A. Box 0 Metadata (Title & Subtitle only; Synopsis untouched)
+            # A. Box 0 Metadata (Title, Subtitle, and Synopsis; Q-08)
             if meta_plan:
                 meta_before = doc.get_metadata()
                 new_title = meta_plan["title"][1] if "title" in meta_plan else None
                 new_sub = meta_plan["subtitle"][1] if "subtitle" in meta_plan else None
-                doc.set_metadata(title=new_title, subtitle=new_sub, summary=None)
+                new_summary = meta_plan["summary"][1] if "summary" in meta_plan else None
+                doc.set_metadata(title=new_title, subtitle=new_sub, summary=new_summary)
                 self.app.undo_journal.record(
                     MetadataDelta(
                         file_path=fp_str,
@@ -21026,7 +21388,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                         old_subtitle=meta_before.get("subtitle", ""),
                         new_subtitle=new_sub if new_sub is not None else meta_before.get("subtitle", ""),
                         old_summary=meta_before.get("summary", ""),
-                        new_summary=meta_before.get("summary", ""),
+                        new_summary=new_summary if new_summary is not None else meta_before.get("summary", ""),
                     )
                 )
                 for _mf, (_old_v, _new_v, chosen_m) in meta_plan.items():
@@ -21182,6 +21544,9 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._rows.clear()
         self._metadata_rows.clear()
         self._actor_rows.clear()
+        self._group_select_buttons.clear()
+        self._group_select_states.clear()
+        self._lbl_empty_state = None
         self._filter_buttons.clear()
         self._target_doc_ref = None
         self.var_archive_xuat = None  # type: ignore[assignment]
@@ -21452,11 +21817,7 @@ class XuatCleanupDialog(tk.Toplevel):
 
         tk.Label(
             top,
-            text=(
-                "Import Complete — XUAT Translation Archiving"
-                if self.mode == "post_import"
-                else "XUAT Translation Archiving"
-            ),
+            text="XUAT Translation Archiving",
             font=("Segoe UI", 12, "bold"),
             bg=t["bg_panel"],
             fg=t["misora_pink"],
@@ -21756,7 +22117,7 @@ class XuatCleanupDialog(tk.Toplevel):
                 self_prog = (gen, processed, total)
                 scan_prog_box[0] = self_prog
             frac = (processed / total) if total > 0 else -1.0
-            _mgr_post_prog(frac, f"Scanning XUAT entries ({processed}/{total})...")
+            _mgr_post_prog(frac, self._format_scan_progress(processed, total))
 
         def _worker() -> None:
             try:
@@ -21819,6 +22180,23 @@ class XuatCleanupDialog(tk.Toplevel):
         if self._scan_poll_job is None and self.winfo_exists():
             self._scan_poll_job = self.after(30, self._poll_scan_queue)
 
+    @staticmethod
+    def _format_scan_progress(processed: int, total: int) -> str:
+        """Format 3-pass XUAT archiving scan progress safely using 1-based pass boundaries (Q-09)."""
+        if total < 3 or total % 3 != 0:
+            return f"Scanning XUAT entries... ({processed}/{total})"
+        entries_per_pass = total // 3
+        pass_labels = (
+            "Pass 1/3 — Matching applied imports",
+            "Pass 2/3 — Finding duplicate key occurrences",
+            "Pass 3/3 — Identifying translated entries",
+        )
+        if processed <= 0:
+            return f"{pass_labels[0]} (0/{entries_per_pass})..."
+        pass_idx = min((processed - 1) // entries_per_pass, 2)
+        within_pass = min(processed - (pass_idx * entries_per_pass), entries_per_pass)
+        return f"{pass_labels[pass_idx]} ({within_pass}/{entries_per_pass})..."
+
     def _poll_scan_queue(self) -> None:
         self._scan_poll_job = None
         if not self.winfo_exists() or getattr(self.app, "_destroyed", False):
@@ -21830,7 +22208,7 @@ class XuatCleanupDialog(tk.Toplevel):
         if prog is not None and prog[0] == self._scan_gen and self._is_scanning:
             _, proc, tot = prog
             if self.lbl_counts.winfo_exists():
-                self.lbl_counts.config(text=f"Scanning XUAT entries... ({proc}/{tot})")
+                self.lbl_counts.config(text=self._format_scan_progress(proc, tot))
 
         terminal_handled = False
         while True:

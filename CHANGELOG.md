@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (Target: v1.5.0)
 
-> **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.13`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
+> **Versioning Policy (`U00` — `A.b.c`):** `A` = major product pivot; `b` = official release milestone after all planned sessions and release gates pass; `c` = incremented `+1` per completed session (`1.4.1`..`1.4.14`, then official release `1.5.0`). `BLOCKED`/`REVERTED` sessions are documented without bumping a release version.
+
+### S11d (v1.4.14) — Import from XUAT UX & Editor Productivity (`Q-06`..`Q-12`)
+- **`Q-06` Recursive MouseWheel Label Propagation (`misora.py`):**
+  - Added `ImportFromXUATDialog._bind_mousewheel_recursive(widget)` traversing child widgets of section headers, cards, empty-state placeholder labels (`_lbl_empty_filter` / `_lbl_empty_rows`), and `scope_cmb` while explicitly skipping `tk.Text` widgets so multi-line JP/EN paired boxes preserve focus-gated inner scroll and outer scroll works smoothly over all labels and headers.
+- **`Q-07` Tri-State Group Select All Headers (`misora.py`):**
+  - Added `_make_tristate_group_header()`, `_get_group_rows()`, `_on_group_select_all()`, and `_update_group_header_state()` across `"metadata"`, `"actors"`, and `"dialogue"` groups using dynamic `[ ]` / `[-]` / `[✓]` `ttk.Button` controls (`_group_select_buttons`, `_group_select_states`, re-entrant `_bulk_updating_group` guard), skipping missing and locked rows while toggling all eligible rows regardless of the active filter. Cleared group state in `_on_close()` and `_populate_rows()`.
+- **`Q-08` Multi-Line Synopsis Metadata Import & Archiving Support (`misora.py`, `core/xuat_cleanup.py`):**
+  - Added `MisoraApp._original_metadata_by_path` (keyed via `_norm_meta_path_key()`, captured on disk load/reload in `open_file()`, preserved across `_save_active_document_state()` and cache-hit tab switches, pruned in `_prune_document_caches()`, cleared in `_close_all_documents_without_prompt()`) so Synopsis XUAT lookup succeeds even when an opened story's summary was later cleared to `""` in-editor, while genuinely summary-less stories are cleanly skipped.
+  - Updated `ImportFromXUATDialog._populate_rows()` to use a 4-tuple `meta_fields` (`(field_key, label, display_text, lookup_key)`), added `"Box #0 (Synopsis)"` (`summary`, `lines=5`, `wrap="word"`, unconditional `has_v=True`, Box 0 `U-18` overflow badge & Auto Word Wrap immunity), wired `new_summary` through `_on_apply_import()` (under S11 Document Identity Guard + single `MetadataDelta` Undo/Redo), and added `("summary", "Box #0 (Synopsis)")` to Pass 3 `meta_val_to_labels` in `core/xuat_cleanup.py::classify_cleanup_candidates()`.
+- **`Q-09` Clean Archiving Sub-Header & Pass 1/3..3/3 Progress Labels (`misora.py`):**
+  - Removed the redundant `"Import Complete — "` conditional prefix in `XuatCleanupDialog._build_ui()` and added `XuatCleanupDialog._format_scan_progress(processed, total)` wired into both `_on_prog()` and `_poll_scan_queue()` (`Pass 1/3: Checking imported lines...`, `Pass 2/3: Scanning duplicate keys...`, `Pass 3/3: Matching story lines & metadata...`).
+- **`Q-10` Select All / Deselect All Box Controls (`misora.py`):**
+  - Added `btn_select_all_boxes` (`All`) and `btn_deselect_all_boxes` (`None`) with tooltips in `gd_header`, idempotently packed/unpacked alongside `Select Box` mode in `_update_select_all_boxes_ui()` across both Dialogue and All Script views; `_on_select_all_boxes()` selects `set(range(len(doc.boxes)))` (excluding Box 0 and preserving Translation Lock state).
+- **`Q-11` Safe MTL Drawer Globe Button (`misora.py`):**
+  - Added `MisoraApp._MTL_GLOBE_URLS` (`Google`, `DeepL` only — excluded on `XUAT Cache`, `Local / Sugoi`, `LLM / OpenAI`) and `_on_mtl_globe_open()` copying active dialogue text via `safe_clipboard_set()` (without overwriting clipboard when Box 0 is active) before opening the official translator site via `webbrowser.open(url, new=2)`.
+- **`Q-12` Window Title Episode Metadata (`misora.py`):**
+  - Added `MisoraApp._build_window_title()` (routed from `open_file()`, `close_file()`, and `_dirty_state_changed()`) appending sanitized, `<= 65`-char truncated (`meta_str[:64] + "…"`) Box 0 `title` / `subtitle` metadata (`lbl_gd_title` stays `"Dialogue"`).
+- **Tests & Versioning (`__init__.py`, `tests/`):**
+  - Bumped `__version__` from `"1.4.13"` to `"1.4.14"` (`v1.5.0` remains ON HOLD).
+  - Added `tests/test_v15_s11d_import_ux_productivity.py` (4 failing-first Probes + 2 Regression Guards: `6/6` pass post-patch) and updated `tests/test_v15_s11_xuat_archiving_progress.py::test_probe_4` (0 extra `test_*` methods).
+  - `compileall` PASS; targeted 8-suite verification (`S11d`, `S11`, `S22`, `S07`, `S04`, `S09`, `S2`, `S8b4`): `67/67 OK (skipped=3)` in `142.994s`; `countTestCases() == 466`; monolithic `unittest discover -s tests -v` cleared first 50 modules (`388` tests: `345` pass, `35` skip, `6` pre-existing fail, `2` pre-existing error) + `test_v15_s06::test_guard_1` before hitting the pre-existing `Tcl_AsyncDelete` GC race at `test_v15_s06::test_guard_2`, and the strictly disjoint 10-module tail manifest (`test_v15_s06..test_v15_s11d`) passed `78/78 OK` in `167.538s` (`388 + 78 = 466`: `423` PASS, `35` SKIP, `6` pre-existing FAIL, `2` pre-existing ERROR, `0` new regressions).
 
 ### S11c (v1.4.13) — Unified Single-Box Quick Edit (`Q-22` Only)
 - **Unified Single-Box Quick Edit Surface (`misora.py`):**

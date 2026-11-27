@@ -458,7 +458,7 @@ def classify_cleanup_candidates(
     Tiers:
       - applied: exact (file_path, line_number) confirmed applied in Import from XUAT.
       - duplicate: extra occurrences sharing exact normalize_xuat_key() (never substring).
-      - already_translated_unique: asset dialogue / title / subtitle text matches unescaped
+      - already_translated_unique: asset dialogue / title / subtitle / summary text matches unescaped
         right-side value mapping to strictly 1 unique key across xuat_index AND >= 6 non-space chars.
       - uncertain: short (<6 non-space chars) or multi-key ambiguous; always default selected=False.
     """
@@ -500,7 +500,11 @@ def classify_cleanup_candidates(
             meta = doc.get_metadata() or {}
         except Exception:
             meta = {}
-        for field_key, field_lbl in (("title", "Box #0 (Title)"), ("subtitle", "Box #0 (Subtitle)")):
+        for field_key, field_lbl in (
+            ("title", "Box #0 (Title)"),
+            ("subtitle", "Box #0 (Subtitle)"),
+            ("summary", "Box #0 (Synopsis)"),
+        ):
             mval = meta.get(field_key, "") or ""
             if mval:
                 lbls = meta_val_to_labels.setdefault(mval, [])
@@ -585,7 +589,7 @@ def classify_cleanup_candidates(
                 )
                 classified_locs.add(loc)
 
-    # Pass 3: Conservative right-side matches (dialogue / title / subtitle; zero speaker rows)
+    # Pass 3: Conservative right-side matches (dialogue / title / subtitle / summary; zero speaker rows)
     if cancel_event is None or not cancel_event.is_set():
         for i, entry in enumerate(entries):
             if _tick(i):

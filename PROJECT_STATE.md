@@ -3,9 +3,9 @@
 Last updated: 2026-11-27
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.13 — S11c Unified Single-Box Quick Edit (`Q-22` Only))
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.13"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08); S11b2 baseline committed on `fbe02f01357f027c9c05ab07c5c1b44a8bbb1c1e`.
+Target release: v1.5.0 (Current session build: v1.4.14 — S11d Import from XUAT UX & Editor Productivity (`Q-06`..`Q-12`))
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.14"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08); S11b2 baseline committed on `fbe02f01357f027c9c05ab07c5c1b44a8bbb1c1e`; pre-S11d HEAD `ac61a2407db6e6f418bd99d960cdb15c3e6b63c7`.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,7 +41,20 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S11c Verification Baseline — 2026-11-27, vs committed S11b2 HEAD fbe02f0 baseline of 451 tests: 408 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
+Unit Test Suite (v1.5 S11d Verification Baseline — 2026-11-27, vs pre-patch HEAD ac61a240 baseline of 460 tests: 417 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
+py -3.12 -m unittest tests.test_v15_s11d_import_ux_productivity -v
+Result: Ran 6 tests in 27.590s (6/6 OK, 0 skipped, exit code 0)
+
+py -3.12 -m unittest tests.test_v15_s11d_import_ux_productivity tests.test_v15_s11_xuat_archiving_progress tests.test_p3_s22_import_xuat tests.test_v15_s07_xuat_cleanup_archive tests.test_v15_s04_layout_drawer_controls tests.test_v15_s09_core_fixes_54d tests.test_s2_dirty_contract tests.test_s8b4_ui_polishing -v
+Result: Ran 67 tests in 142.994s (67/67 OK, skipped=3 [missing .unity3d fixture in test_s2_dirty_contract], exit code 0)
+
+py -3.12 -m unittest discover -s tests -v (+ strictly disjoint tail run)
+Result: countTestCases() == 466 (460 + 6 new S11d tests in tests/test_v15_s11d_import_ux_productivity.py). Single-process discover cleared first 50 modules (388 tests: 345 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors) plus test_v15_s06::test_guard_1 before hitting the pre-existing cross-test Tcl_AsyncDelete GC race at test_v15_s06::test_guard_2. The strictly disjoint 10-module tail manifest (tests.test_v15_s06_tools_word_wrap .. tests.test_v15_s11d_import_ux_productivity) passed 78/78 OK in 167.538s (388 + 78 = 466: 423 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors, 0 S11d regressions):
+  - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards (test_01..05) + 35 fixture skips across test_misora_core / test_misora_ui_integration / test_s2_dirty_contract / etc.;
+  - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8 ['1.4.14' != '1.4.1']);
+  - S11d Regressions: 0.
+
+Historical Unit Test Suite (v1.5 S11c Verification Baseline — 2026-11-27, vs committed S11b2 HEAD fbe02f0 baseline of 451 tests: 408 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
 py -3.12 -m unittest tests.test_v15_s11c_quick_edit_unified tests.test_v15_s10_all_script_quick_edit tests.test_v15_s08_release_gate_stress tests.test_v15_s09_core_fixes_54d -v
 Result: Ran 37 tests in 94.587s (37/37 OK, 0 skipped, exit code 0)
 
@@ -74,7 +87,8 @@ Result: Ran 440 tests across 56 modules (397 pass, 35 skipped, 6 pre-existing fa
   - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8);
   - S11 Regressions: 0.
 
-Test suites included in the 460 tests (exact disk discovery):
+Test suites included in the 466 tests (exact disk discovery):
+  tests/test_v15_s11d_import_ux_productivity.py — 6 S11d Import from XUAT UX & Editor Productivity tests (Q-06 recursive MouseWheel over labels/headers/scope_cmb/empty-state preserving Text inner scroll, Q-07 tri-state group Select All [ ]/[-]/[✓] excluding Missing/Locked across filters, Q-08 multi-line Synopsis import/Undo/Identity Guard/U-18 immunity/Pass 3 including cleared-summary fallback via _original_metadata_by_path, Q-09 clean header & Pass 1/3..3/3 progress, Q-10 All/None box controls in gd_header excluding Box 0 & preserving Lock, Q-11 MTL Globe Google/DeepL-only safe clipboard, Q-12 sanitized <=65-char window title metadata) (all pass)
   tests/test_v15_s11c_quick_edit_unified.py — 9 S11c unified single-box Quick Edit (txt_quick_edit wrap='none', [N segs] badge, Option A AST/binary parity with Main Dialogue Editor, pre-mutation BoxSnapshot Undo/Redo & JP cache/UID/lock survival, S09b lock parity & single-fire Ctrl+Z/Y, sync_from_widget=False fallback, _on_dialogue_edited/_on_card_text_edited flush ordering, Box 0 safety, S08 alias compat, idempotent pack/theme) tests (all pass)
   tests/test_v15_s11b2_xuat_batch_sync.py  — 5 S11b2 single-pass O(F+E+B+M) batched XUAT sync, strict Translation\en\Text alignment, C1/C2/C3/C4 conflicts, Stage 4 freshness & granular retry clearing tests (all pass)
   tests/test_v15_s11b_scanner_save_preview.py — 6 S11b strict Translation\en\Text XUAT scanner, Ctrl+S Save Project remap, ProjectDiffDialog theme fallback & Dialogue Preview red-block removal tests (all pass)
@@ -147,6 +161,23 @@ Test suites included in the 460 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S11d (`v1.4.14`) — Import from XUAT UX & Editor Productivity (`Q-06`..`Q-12`) (2026-11-27)
+- **`Q-06` Recursive MouseWheel Label Propagation (`misora.py`):** Added `ImportFromXUATDialog._bind_mousewheel_recursive(widget)` traversing headers, card frames/labels/checkbuttons, empty-state filter/row placeholder labels, and `scope_cmb` while explicitly skipping `tk.Text` so dialogue/metadata paired previews preserve focus-gated inner scroll and outer scroll works smoothly over every label.
+- **`Q-07` Tri-State Group Select All Headers (`misora.py`):** Added `_make_tristate_group_header()`, `_get_group_rows()`, `_on_group_select_all()`, and `_update_group_header_state()` across `"metadata"`, `"actors"`, and `"dialogue"` sections with `[ ]` / `[-]` / `[✓]` `ttk.Button` indicators (`_group_select_buttons`, `_group_select_states`, re-entrant `_bulk_updating_group` guard), skipping missing and locked rows while toggling all eligible rows regardless of active filter.
+- **`Q-08` Multi-Line Synopsis Import & Archiving (`misora.py`, `core/xuat_cleanup.py`):** Added `MisoraApp._original_metadata_by_path` (normalized via `_norm_meta_path_key()`, captured on disk load/reload, preserved on cache-hit switches and `_save_active_document_state()`, pruned in `_prune_document_caches()`, cleared in `_close_all_documents_without_prompt()`) + 4-tuple `meta_fields` `(field_key, label, display_text, lookup_key)` so `"Box #0 (Synopsis)"` (`summary`, `lines=5`, `wrap="word"`, unconditional `has_v=True`, `U-18` overflow/wrap immunity) imports via S11 Document Identity Guard + single `MetadataDelta` Undo/Redo even when edited to `""` in-editor, while genuinely summary-less stories are cleanly skipped. Extended `core/xuat_cleanup.py::classify_cleanup_candidates()` Pass 3 `meta_val_to_labels` with `("summary", "Box #0 (Synopsis)")`.
+- **`Q-09` Clean Archiving Sub-Header & Pass 1/3..3/3 Progress (`misora.py`):** Removed redundant `"Import Complete — "` conditional sub-header in `XuatCleanupDialog._build_ui()` and added `_format_scan_progress(processed, total)` wired into `_on_prog()` and `_poll_scan_queue()`.
+- **`Q-10` Select All / Deselect All Box Controls (`misora.py`):** Added `btn_select_all_boxes` (`All`) and `btn_deselect_all_boxes` (`None`) in `gd_header`, idempotently shown/hidden via `_update_select_all_boxes_ui()` alongside `Select Box` across Dialogue & All Script views; `_on_select_all_boxes()` selects all dialogue boxes excluding Box 0 and preserving Translation Lock state.
+- **`Q-11` Safe MTL Globe Button (`misora.py`):** Added `_MTL_GLOBE_URLS` (`Google` -> Google Translate, `DeepL` -> DeepL Translator) and `_on_mtl_globe_open()` copying active dialogue text via `safe_clipboard_set()` (never clobbering clipboard on Box 0) and opening the official URL (`new=2`); excluded `XUAT Cache`, `Local / Sugoi`, and `LLM / OpenAI`.
+- **`Q-12` Window Title Episode Metadata (`misora.py`):** Added `_build_window_title()` (routed from `open_file()`, `close_file()`, `_dirty_state_changed()`) appending sanitized, `<= 65`-char truncated (`meta_str[:64] + "…"`) Box 0 `title` / `subtitle` metadata while leaving `lbl_gd_title == "Dialogue"`.
+- **Verification (`Windows-11-10.0.26100-SP0`, `Python 3.12.10`):** `compileall` PASS (`exit 0`); `tests.test_v15_s11d_import_ux_productivity`: `6/6 OK` (`27.590s`); targeted 8-suite gate (`S11d`, `S11`, `S22`, `S07`, `S04`, `S09`, `S2`, `S8b4`): `67/67 OK (skipped=3)` (`142.994s`); `countTestCases() == 466`; monolithic `unittest discover` cleared first 50 modules (`388` tests) + `test_v15_s06::test_guard_1` before hitting the pre-existing `Tcl_AsyncDelete` GC race at `test_v15_s06::test_guard_2`, and the strictly disjoint 10-module tail manifest (`test_v15_s06..test_v15_s11d`) passed `78/78 OK` (`167.538s`; `388 + 78 = 466`: `423` pass, `35` skip, `6` pre-existing fail, `2` pre-existing error, `0` S11d regressions).
+- **Manual Windows QA Checklist (Updated S11d — `MANUAL-PENDING`, NEVER `PASS` before manual execution):**
+  1. Open `Import from XUAT...`: scroll mousewheel over empty headers, JP/EN labels, empty-state placeholder label, and `scope_cmb` (outer list scrolls smoothly); hover multi-line JP/EN box and scroll (inner text scrolls on focus); toggle tri-state group headers `[ ]` / `[-]` / `[✓]` (missing & locked rows stay skipped regardless of active filter).
+  2. Test Synopsis row (`5 lines`, word-wrapped) in `Import from XUAT...` on: (a) empty-summary story (skipped), (b) multi-line JP summary (imported with single `Ctrl+Z` Undo/Redo and 0 overflow tags), and (c) story whose JP summary was cleared to `""` in-editor before opening dialog (still imports cleanly), plus `XUAT Translation Archiving` Pass `1/3`..`3/3` progress labels & clean sub-header.
+  3. Toggle `Select Box` in both `Dialogue` and `All Script` views -> verify `All` / `None` buttons appear in `gd_header`, select all dialogue boxes (excluding Box 0, preserving locks), and vanish when `Select Box` is toggled OFF.
+  4. Open MTL Drawer (`Google` & `DeepL` enabled) -> verify `🌐` globe button appears ONLY on `Google`/`DeepL` cards, copies active box text (never clobbering clipboard on Box 0), and opens the official URL.
+  5. Open stories with long/newline Box 0 metadata, edit Box 0, undo, switch tabs, and close last tab -> verify sanitized `<=65`-char title suffix updates cleanly and resets on close.
+  6. Retain all S11c, S11b2, S11b, S11, S10 & S09b Manual QA items.
 
 ### v1.5 S11c (`v1.4.13`) — Unified Single-Box Quick Edit (`Q-22` Only) (2026-11-27)
 - **Unified Single-Box Surface (`misora.py`):** Replaced `qe_canvas`, `qe_inner_frame`, `_qe_canvas_win`, and dynamic per-segment editors with ONE persistent `self.txt_quick_edit` (`wrap="none"`, `undo=False`, `exportselection=True`) + bidirectional `qe_scroll_y`/`qe_scroll_x`, `lbl_qe_segs_badge` (`"[N segs]"` when >1 seg), and `lbl_qe_placeholder` (idempotent `_is_widget_packed()` show/hide for Box 0 / No Document). Explicit theme & Dialogue font parity maintained on construction, `_update_bottom_tab_styles()`, and `_apply_theme_and_fonts_live()` (even when hidden). Zero ruler, zero red overflow tags, zero NGUI decorators, single-fire `Ctrl+Z`/`Ctrl+Y`/`Ctrl+Shift+Z` via `MisoraShortcuts` bindtag, and `_qe_seg_widgets = [self.txt_quick_edit]` preserved as compatibility alias.
