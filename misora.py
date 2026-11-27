@@ -140,15 +140,18 @@ CONFIG_PATH = SCRIPT_DIR / "misora_config.json"
 DEBUG_LOG_PATH = SCRIPT_DIR / "misora_debug.log"
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# Support Me Dialog configuration (U05)
+# Support the Creator Dialog configuration (U05 / Q-14)
 SHOW_PAYPAL_BUTTON: bool = True
 SUPPORT_URL_KOFI: str = "https://ko-fi.com/imaterial"
 SUPPORT_URL_PATREON: str = "https://patreon.com/imaterial"
 SUPPORT_URL_PAYPAL: str = "https://paypal.me/CorneliaCrimson"
-SUPPORT_CAPTION_ID: str = (
-    "Terima kasih. Dukungan sekecil apa pun sangat saya hargai; "
-    "ini juga membantu menutup biaya penggunaan AI."
+SUPPORT_CAPTION_EN: str = (
+    "Thank you for using Misora: Story Editor by Cornelia (PriconneRe:TL). "
+    "Even the smallest support means a great deal and helps keep this open-source project "
+    "and its AI-assisted translation work going."
 )
+# Backward-compatible alias (Q-14 switched SupportMeDialog copy to 100% English)
+SUPPORT_CAPTION_ID: str = SUPPORT_CAPTION_EN
 
 
 def _put_queue_cancellable(
@@ -204,6 +207,7 @@ class ToolTip:
         self.text = text
         self.delay_ms = delay_ms
         self.tip_window: Optional[tk.Toplevel] = None
+        self._label: Optional[tk.Label] = None
         self._after_id: Optional[str] = None
         setattr(self.widget, "_tooltip", self)
 
@@ -211,6 +215,16 @@ class ToolTip:
             self.widget.bind("<Enter>", self.on_enter, add="+")
             self.widget.bind("<Leave>", self.on_leave, add="+")
             self.widget.bind("<Destroy>", self.on_destroy, add="+")
+
+    def set_text(self, text: str) -> None:
+        """Update tooltip text dynamically, syncing any visible tooltip label."""
+        self.text = text
+        if self._label is not None:
+            try:
+                if self._label.winfo_exists():
+                    self._label.configure(text=text)
+            except Exception:
+                pass
 
     def on_enter(self, _event=None) -> None:
         self.cancel_timer()
@@ -266,10 +280,12 @@ class ToolTip:
                 pady=3,
             )
             label.pack(ipadx=1)
+            self._label = label
         except Exception:
             self.hide_tip()
 
     def hide_tip(self, _event=None) -> None:
+        self._label = None
         if self.tip_window:
             try:
                 if self.tip_window.winfo_exists():
@@ -2009,24 +2025,32 @@ class MisoraApp(tk.Tk):
 
     def __init__(self, initial_path: Optional[str] = None, show_splash: bool = True, _progress_callback=None, restore_session: bool = True):
         super().__init__()
+        self._startup_init_complete: bool = False
+        self._caller_withdrew: bool = False
+        self._splash: Optional[MisoraSplashScreen] = None
+
         self.title("Misora: Story Editor")
         self.geometry("1280x820")
         self.minsize(980, 620)
-        self.withdraw()   # stay hidden until splash closes or ready
+        # Use super().withdraw() internally so initial splash hiding never flips _caller_withdrew (Q-05)
+        super().withdraw()
 
-        splash = None
+        splash: Optional[MisoraSplashScreen] = None
         if show_splash and _progress_callback is None:
             try:
                 splash = MisoraSplashScreen(parent=self)
+                self._splash = splash
                 splash.process_events()
             except Exception:
                 splash = None
+                self._splash = None
 
         def _rpt(val: float, msg: str = ""):
-            if splash:
+            sp = getattr(self, "_splash", None)
+            if sp is not None:
                 try:
-                    splash.set_progress(val, msg)
-                    splash.process_events()
+                    sp.set_progress(val, msg)
+                    sp.process_events()
                 except Exception:
                     pass
             elif _progress_callback:
@@ -2271,103 +2295,157 @@ class MisoraApp(tk.Tk):
         # Auto-detect project paths
         self._detect_environment()
 
-        _rpt(0.55, "Building UI layout…")
-        # Build UI
-        self._apply_styles()
-        self._build_menu()
-        self._build_search_bar()
+        try:
+            _rpt(0.55, "Building UI layout…")
+            # Build UI
+            self._apply_styles()
+            self._build_menu()
+            self._build_search_bar()
 
-        _rpt(0.70, "Initializing editor panels…")
-        self._build_main_panels()
-        self._build_side_drawer()
-        self._build_status_bar()
-        self._bind_shortcuts()
+            _rpt(0.70, "Initializing editor panels…")
+            self._build_main_panels()
+            self._build_side_drawer()
+            self._build_status_bar()
+            self._bind_shortcuts()
 
-        _rpt(0.85, "Applying theme and fonts…")
-        # Sync initial widget fonts & colors with saved preferences
-        self._apply_theme_and_fonts_live(save=False)
-        self._update_empty_state_visibility()
+            _rpt(0.85, "Applying theme and fonts…")
+            # Sync initial widget fonts & colors with saved preferences
+            self._apply_theme_and_fonts_live(save=False)
+            self._update_empty_state_visibility()
 
-        # Flush config on exit and unhook Win32 WNDPROC cleanly
-        self.protocol("WM_DELETE_WINDOW", self._on_app_exit)
-        self.bind("<Destroy>", self._on_root_destroy)
+            # Flush config on exit and unhook Win32 WNDPROC cleanly
+            self.protocol("WM_DELETE_WINDOW", self._on_app_exit)
+            self.bind("<Destroy>", self._on_root_destroy)
 
-        _rpt(0.85, "Enabling drag & drop…")
-        # Enable native OS Drag & Drop safely on the outer frame HWND
-        self._init_drag_and_drop()
+            _rpt(0.88, "Enabling drag & drop…")
+            # Enable native OS Drag & Drop safely on the outer frame HWND
+            self._init_drag_and_drop()
 
-        # Background polling starts on-demand when work is dispatched (BONUS-03)
-        self._search_poll_job = None
-        self._mtl_poll_job = None
+            # Background polling starts on-demand when work is dispatched (BONUS-03)
+            self._search_poll_job = None
+            self._mtl_poll_job = None
 
-        # Restore saved window geometry and view toggles (Bug #2 / S9c)
-        if hasattr(self, "_saved_geometry") and self._saved_geometry:
-            try:
-                sw = self.winfo_screenwidth()
-                sh = self.winfo_screenheight()
-                safe_geom = sanitize_window_geometry(self._saved_geometry, sw, sh)
-                self.geometry(safe_geom)
-            except Exception:
-                pass
-        if hasattr(self, "_saved_continuous_view") and hasattr(self, "var_continuous_view"):
-            if self._saved_continuous_view:
-                self.var_continuous_view.set(True)
-                self._on_toggle_continuous_view()
-            else:
-                self.var_continuous_view.set(False)
-        if hasattr(self, "_saved_sync_xuat") and hasattr(self, "var_sync_xuat"):
-            self.var_sync_xuat.set(self._saved_sync_xuat)
+            # Restore saved window geometry and view toggles (Bug #2 / S9c)
+            if hasattr(self, "_saved_geometry") and self._saved_geometry:
+                try:
+                    sw = self.winfo_screenwidth()
+                    sh = self.winfo_screenheight()
+                    safe_geom = sanitize_window_geometry(self._saved_geometry, sw, sh)
+                    self.geometry(safe_geom)
+                except Exception:
+                    pass
+            if hasattr(self, "_saved_continuous_view") and hasattr(self, "var_continuous_view"):
+                if self._saved_continuous_view:
+                    self.var_continuous_view.set(True)
+                    self._on_toggle_continuous_view()
+                else:
+                    self.var_continuous_view.set(False)
+            if hasattr(self, "_saved_sync_xuat") and hasattr(self, "var_sync_xuat"):
+                self.var_sync_xuat.set(self._saved_sync_xuat)
 
-        _rpt(1.00, "Ready!")
-        self.logger.info("UI / Theme / Config", f"Misora initialized. Config path: {CONFIG_PATH}")
+            self.logger.info("UI / Theme / Config", f"Misora initialized. Config path: {CONFIG_PATH}")
+        except Exception:
+            if self._splash is not None:
+                try:
+                    self._splash.close()
+                except Exception:
+                    pass
+                self._splash = None
+            raise
 
-        if splash:
-            splash.close()
-
-        # Reveal the main window instantly (DEP-9 / AGENTS.md §22)
-        self.deiconify()
-
-        self._rpt_done = True
+        self._startup_init_complete = True
         self._ui_ready = True
-        # Defer session file restoration to idle loop so startup never hangs (BUG-35)
+        splash_owns_reveal = self._splash is not None
+        if not splash_owns_reveal:
+            _rpt(1.00, "Ready!")
+            self._rpt_done = True
+            self.deiconify()
+        else:
+            self._rpt_done = False
+
+        # Defer session file restoration to idle loop so startup stays non-blocking while splash remains open (Q-05 / BUG-35)
         def _deferred_restore() -> None:
             if not self.winfo_exists() or getattr(self, "_destroyed", False):
+                self._close_splash_safely()
                 return
-            if restore_session and getattr(self, "xuat_search_roots", None) and self.xuat_index is None:
-                self._refresh_xuat_index_async(show_progress=False)
-            if initial_path and os.path.exists(initial_path):
-                init_p = Path(initial_path)
-                if init_p.is_dir():
-                    try:
-                        self._process_opened_folder(init_p, source_label="Initial Path")
-                    except Exception as exc:
-                        self.logger.error("File I/O", f"Failed opening initial folder '{initial_path}': {exc}")
-                else:
-                    try:
-                        self.open_file(init_p)
-                    except Exception as exc:
-                        self.logger.error("File I/O", f"Failed opening initial file '{initial_path}': {exc}")
-            elif restore_session and hasattr(self, "_saved_opened_files") and self._saved_opened_files:
-                for fp in self._saved_opened_files:
-                    fp_exists = Path(fp).exists() if isinstance(fp, (str, Path)) else False
-                    if fp_exists:
+            try:
+                if splash_owns_reveal:
+                    _rpt(0.95, "Restoring session files…")
+                if restore_session and getattr(self, "xuat_search_roots", None) and self.xuat_index is None:
+                    self._refresh_xuat_index_async(show_progress=False)
+                if initial_path and os.path.exists(initial_path):
+                    init_p = Path(initial_path)
+                    if init_p.is_dir():
+                        try:
+                            self._process_opened_folder(init_p, source_label="Initial Path")
+                        except Exception as exc:
+                            self.logger.error("File I/O", f"Failed opening initial folder '{initial_path}': {exc}")
+                    else:
+                        try:
+                            self.open_file(init_p)
+                        except Exception as exc:
+                            self.logger.error("File I/O", f"Failed opening initial file '{initial_path}': {exc}")
+                    if splash_owns_reveal:
+                        _rpt(0.98, "Loading initial workspace…")
+                elif restore_session and hasattr(self, "_saved_opened_files") and self._saved_opened_files:
+                    restored_paths = [
+                        fp for fp in self._saved_opened_files
+                        if (isinstance(fp, (str, Path)) and Path(fp).exists())
+                    ]
+                    total_fp = max(1, len(restored_paths))
+                    for idx_fp, fp in enumerate(restored_paths, start=1):
+                        if not self.winfo_exists() or getattr(self, "_destroyed", False):
+                            return
                         try:
                             self.open_file(fp)
                         except Exception as exc:
                             self.logger.error("File I/O", f"Failed restoring session file '{fp}': {exc}")
-                if hasattr(self, "_saved_active_file") and self._saved_active_file:
-                    act_exists = Path(self._saved_active_file).exists() if isinstance(self._saved_active_file, (str, Path)) else False
-                    if act_exists:
-                        try:
-                            self.open_file(self._saved_active_file)
-                        except Exception as exc:
-                            self.logger.error("File I/O", f"Failed activating session file '{self._saved_active_file}': {exc}")
+                        if splash_owns_reveal:
+                            _rpt(0.95 + (0.04 * (idx_fp / total_fp)), f"Restoring file {idx_fp}/{total_fp}…")
+                    if hasattr(self, "_saved_active_file") and self._saved_active_file:
+                        act_exists = Path(self._saved_active_file).exists() if isinstance(self._saved_active_file, (str, Path)) else False
+                        if act_exists:
+                            try:
+                                self.open_file(self._saved_active_file)
+                            except Exception as exc:
+                                self.logger.error("File I/O", f"Failed activating session file '{self._saved_active_file}': {exc}")
+                if splash_owns_reveal:
+                    _rpt(1.00, "Ready!")
+                    self._rpt_done = True
+            finally:
+                self._close_splash_safely()
+                if (
+                    splash_owns_reveal
+                    and self.winfo_exists()
+                    and not getattr(self, "_destroyed", False)
+                    and not getattr(self, "_caller_withdrew", False)
+                ):
+                    self.deiconify()
 
         self.after_idle(_deferred_restore)
 
-    def get_icon(self, name: str, size: Tuple[int, int] = (18, 18)) -> Optional[tk.PhotoImage]:
+    def _close_splash_safely(self) -> None:
+        sp = getattr(self, "_splash", None)
+        if sp is not None:
+            self._splash = None
+            try:
+                sp.close()
+            except Exception:
+                pass
+
+    def withdraw(self) -> None:  # type: ignore[override]
+        """Track external withdraw() calls after __init__ so _deferred_restore never overrides them."""
+        if getattr(self, "_startup_init_complete", False):
+            self._caller_withdrew = True
+        super().withdraw()
+
+    def deiconify(self) -> None:  # type: ignore[override]
+        self._caller_withdrew = False
+        super().deiconify()
+
+    def get_icon(self, name: str, size: Tuple[int, int] = (20, 20), dpi_aware: bool = False) -> Optional[tk.PhotoImage]:
         """Retrieve an illustrated icon PhotoImage bound to this MisoraApp Tk instance."""
-        return get_icon(name, size, master=self)
+        return get_icon(name, size, master=self, dpi_aware=dpi_aware)
 
     def safe_clipboard_get(self) -> str:
         """Read text from clipboard with retry on TclError and CRLF/CR normalization (AGENTS.md Rule 14)."""
@@ -2463,6 +2541,7 @@ class MisoraApp(tk.Tk):
     def _on_root_destroy(self, event: tk.Event) -> None:
         if event.widget is self:
             self._destroyed = True
+            self._close_splash_safely()
             self.search_cancel_flag = True
             if hasattr(self, "_search_cancel_event") and self._search_cancel_event is not None:
                 try:
@@ -4596,6 +4675,7 @@ class MisoraApp(tk.Tk):
         self.edit_menu.add_command(label="Wrap Selection with Ruby ([rub:...]...[/rub])", command=self.on_insert_ruby, accelerator="Ctrl+R")
         self.edit_menu.add_command(label="NGUI Color & Gradient Picker...", command=self.on_open_color_picker)
         self.edit_menu.add_command(label="Insert {playername}", command=self.on_insert_playername, accelerator="Ctrl+P")
+        self.edit_menu.add_command(label="Reset Color Tag ([-])", command=lambda: self.apply_ngui_wrapper("[-]", ""))
         self.edit_menu.add_separator()
         self.edit_menu.add_command(
             label="Lock / Unlock Active Box",
@@ -4694,9 +4774,6 @@ class MisoraApp(tk.Tk):
         self._all_menus.append(search_menu)
 
         cust_menu = tk.Menu(menubar, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
-        cust_menu.add_command(label="Display & Theme Settings...", command=lambda: self._toggle_side_drawer("customize"), accelerator="Ctrl+,")
-        cust_menu.add_command(label="AI / LLM Translation Prompt Settings...", command=self.on_open_ai_prompt_settings)
-        cust_menu.add_separator()
         cust_menu.add_command(label="Increase Dialogue Font Size", command=lambda: self._adjust_dialogue_font_size(1))
         cust_menu.add_command(label="Decrease Dialogue Font Size", command=lambda: self._adjust_dialogue_font_size(-1))
         cust_menu.add_separator()
@@ -4714,42 +4791,6 @@ class MisoraApp(tk.Tk):
         cust_menu.add_command(label="Reset Display & Colors to Default", command=self._reset_customization_defaults)
         menubar.add_cascade(label="Customize", menu=cust_menu)
         self._all_menus.append(cust_menu)
-
-        # NGUI GLOSSARY TOP-LEVEL MENU (#6)
-        glossary_menu = tk.Menu(
-            menubar,
-            tearoff=0,
-            bg=t["bg_panel"],
-            fg=panel_fg,
-            activebackground=t["misora_pink"],
-            activeforeground=accent_fg,
-        )
-        glossary_menu.add_command(
-            label="Open NGUI & Ruby Glossary Drawer",
-            command=lambda: self._toggle_side_drawer("glossary"),
-            accelerator="F1",
-        )
-        glossary_menu.add_separator()
-        glossary_menu.add_command(
-            label="Wrap with Ruby ([rub:...]...[/rub])",
-            command=self.on_insert_ruby,
-            accelerator="Ctrl+R",
-        )
-        glossary_menu.add_command(
-            label="Color & Gradient Picker...",
-            command=self.on_open_color_picker,
-        )
-        glossary_menu.add_command(
-            label="Insert {playername}",
-            command=self.on_insert_playername,
-            accelerator="Ctrl+P",
-        )
-        glossary_menu.add_command(
-            label="Reset Color Tag ([-])",
-            command=lambda: self.apply_ngui_wrapper("[-]", ""),
-        )
-        menubar.add_cascade(label="NGUI Glossary", menu=glossary_menu)
-        self._all_menus.append(glossary_menu)
 
         # FOLDERS & FILES MENU (#4B)
         folders_menu = tk.Menu(
@@ -4985,7 +5026,7 @@ class MisoraApp(tk.Tk):
         self._all_menus.append(self.debug_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0, bg=t["bg_panel"], fg=panel_fg, activebackground=t["misora_pink"], activeforeground=accent_fg)
-        help_menu.add_command(label="NGUI & Ruby Glossary", command=lambda: self._open_side_drawer("glossary"), accelerator="F1")
+        help_menu.add_command(label="Support the Creator...", command=self.on_support_me)
         help_menu.add_separator()
         help_menu.add_command(label="About Misora: Story Editor", command=self.on_about)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -5087,6 +5128,8 @@ class MisoraApp(tk.Tk):
         self.ico_replace_all = self.get_icon("replace_all", (14, 14))
         self.btn_replace = ttk.Button(self.search_grid, text=" Replace", image=self.ico_replace, compound="left", style="Search.TButton", command=self.on_replace_next, width=14)
         self.btn_replace_all = ttk.Button(self.search_grid, text=" Replace All", image=self.ico_replace_all, compound="left", style="Search.TButton", command=self.on_replace_all, width=14)
+        create_tooltip(self.btn_replace, "Replace Next — Replace the current match in editor (Ctrl+H)")
+        create_tooltip(self.btn_replace_all, "Replace All — Replace all matching occurrences across active scope")
 
         self.replace_spacer = self._tag_role(tk.Frame(self.search_grid, bg=t["bg_panel"], width=28, height=1), "panel")
         self.row_replace = _ReplaceRowProxy(self)
@@ -5102,14 +5145,17 @@ class MisoraApp(tk.Tk):
         self.var_inc_bundles = tk.BooleanVar(master=self, value=True)
         self.var_inc_text = tk.BooleanVar(master=self, value=True)
 
-        cb_case = ttk.Checkbutton(row2, text="Match Case", variable=self.var_case, style="Panel.TCheckbutton")
-        cb_case.pack(side="left", padx=4)
+        self.cb_case = ttk.Checkbutton(row2, text="Match Case", variable=self.var_case, style="Panel.TCheckbutton")
+        self.cb_case.pack(side="left", padx=4)
+        create_tooltip(self.cb_case, "Match Case — Distinguish uppercase and lowercase letters")
 
-        cb_rx = ttk.Checkbutton(row2, text="Regex", variable=self.var_regex, style="Panel.TCheckbutton")
-        cb_rx.pack(side="left", padx=4)
+        self.cb_rx = ttk.Checkbutton(row2, text="Regex", variable=self.var_regex, style="Panel.TCheckbutton")
+        self.cb_rx.pack(side="left", padx=4)
+        create_tooltip(self.cb_rx, "Regex — Interpret Find query as a Python regular expression")
 
-        cb_ws = ttk.Checkbutton(row2, text="Ignore Whitespace & {playername}", variable=self.var_ignore_ws, style="Panel.TCheckbutton")
-        cb_ws.pack(side="left", padx=4)
+        self.cb_ws = ttk.Checkbutton(row2, text="Ignore Whitespace & {playername}", variable=self.var_ignore_ws, style="Panel.TCheckbutton")
+        self.cb_ws.pack(side="left", padx=4)
+        create_tooltip(self.cb_ws, "Ignore Whitespace & {playername} — Match text regardless of linebreaks or {0}/{playername}")
 
         self._tag_role(tk.Label(row2, text="|", bg=t["bg_panel"], fg=t["border"]), "label_sep").pack(side="left", padx=6)
 
@@ -5118,24 +5164,30 @@ class MisoraApp(tk.Tk):
 
         self.rb_proj = ttk.Radiobutton(row2, text="Project", variable=self.scope_var, value="project", style="Panel.TRadiobutton", command=self._sync_scope_widgets)
         self.rb_proj.pack(side="left", padx=2)
+        create_tooltip(self.rb_proj, "Project Scope — Search across the configured project folder")
 
         self.rb_folder = ttk.Radiobutton(row2, text="Folder", variable=self.scope_var, value="folder", style="Panel.TRadiobutton", command=self._sync_scope_widgets)
         self.rb_folder.pack(side="left", padx=2)
+        create_tooltip(self.rb_folder, "Folder Scope — Search inside the chosen folder path")
 
         self.rb_cur = ttk.Radiobutton(row2, text="Current File(s)", variable=self.scope_var, value="current", style="Panel.TRadiobutton", command=self._sync_scope_widgets)
         self.rb_cur.pack(side="left", padx=2)
+        create_tooltip(self.rb_cur, "Current File(s) Scope — Search only across opened workspace files")
 
         self._tag_role(tk.Label(row2, text="|", bg=t["bg_panel"], fg=t["border"]), "label_sep").pack(side="left", padx=6)
-        cb_bdl = ttk.Checkbutton(row2, text=".unity3d", variable=self.var_inc_bundles, style="Panel.TCheckbutton")
-        cb_bdl.pack(side="left", padx=2)
-        cb_txt = ttk.Checkbutton(row2, text=".txt", variable=self.var_inc_text, style="Panel.TCheckbutton")
-        cb_txt.pack(side="left", padx=2)
+        self.cb_bdl = ttk.Checkbutton(row2, text=".unity3d", variable=self.var_inc_bundles, style="Panel.TCheckbutton")
+        self.cb_bdl.pack(side="left", padx=2)
+        create_tooltip(self.cb_bdl, "Include Bundles — Include .unity3d story bundles in search")
+        self.cb_txt = ttk.Checkbutton(row2, text=".txt", variable=self.var_inc_text, style="Panel.TCheckbutton")
+        self.cb_txt.pack(side="left", padx=2)
+        create_tooltip(self.cb_txt, "Include Text — Include .txt scripts in search")
 
         self._tag_role(tk.Label(row2, text="|", bg=t["bg_panel"], fg=t["border"]), "label_sep").pack(side="left", padx=6)
 
         # Browse [...] button on LEFT of entry
         self.btn_browse_search_folder = ttk.Button(row2, text="...", style="Small.TButton", command=self.on_browse_scope_path, width=3)
         self.btn_browse_search_folder.pack(side="left", padx=(0, 2))
+        create_tooltip(self.btn_browse_search_folder, "Browse Search Folder — Choose folder path for Folder search scope")
 
         # Directory path entry on RIGHT of [...], expands to fill remaining space
         self.folder_path_var = tk.StringVar(master=self, value="")
@@ -5223,6 +5275,7 @@ class MisoraApp(tk.Tk):
         )
         self.btn_tab_search.pack(side="left", padx=(2, 2))
         self.btn_tab_search.bind("<Double-Button-1>", lambda _e: self.on_show_find())
+        create_tooltip(self.btn_tab_search, "Search Results — Switch to project/bundle search hits (double-click to Find)")
 
         self.btn_tab_files = tk.Button(
             self.dock_tab_bar,
@@ -5351,8 +5404,9 @@ class MisoraApp(tk.Tk):
         self.lbl_files_title.pack(side="left", fill="x", expand=True)
 
         self.ico_folder = self.get_icon("folder", (13, 13))
-        btn_open_more = ttk.Button(files_header, text=" Open...", image=self.ico_folder, compound="left", style="Small.TButton", command=self.on_open_file)
-        btn_open_more.pack(side="right")
+        self.btn_open_more = ttk.Button(files_header, text=" Open...", image=self.ico_folder, compound="left", style="Small.TButton", command=self.on_open_file)
+        self.btn_open_more.pack(side="right")
+        create_tooltip(self.btn_open_more, "Open More Files — Add story files or bundles to workspace (Ctrl+O)")
 
         self.files_container = self._tag_role(tk.Frame(self.tab_files_frame, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
         self.files_container.pack(fill="both", expand=True, padx=4, pady=(0, 6))
@@ -5479,22 +5533,29 @@ class MisoraApp(tk.Tk):
             ),
             "check_panel"
         )
+        create_tooltip(self.cb_dialogue_select, "Select Active Box — Include or exclude the active box in multi-box actions")
+        self.ico_box_select_all = self.get_icon("BoxSelectAll", (20, 20), dpi_aware=True)
         self.btn_select_all_boxes = ttk.Button(
             gd_header,
             text="All",
+            image=self.ico_box_select_all if self.ico_box_select_all else "",
+            compound="none" if self.ico_box_select_all else "left",
             style="Small.TButton",
-            width=4,
+            width=3 if self.ico_box_select_all else 4,
             command=self._on_select_all_boxes,
         )
+        self.ico_box_select_none = self.get_icon("BoxSelectNone", (20, 20), dpi_aware=True)
         self.btn_deselect_all_boxes = ttk.Button(
             gd_header,
             text="None",
+            image=self.ico_box_select_none if self.ico_box_select_none else "",
+            compound="none" if self.ico_box_select_none else "left",
             style="Small.TButton",
-            width=5,
+            width=3 if self.ico_box_select_none else 5,
             command=self._on_deselect_all_boxes,
         )
-        create_tooltip(self.btn_select_all_boxes, "Select All Dialogue Boxes (excludes Box 0)")
-        create_tooltip(self.btn_deselect_all_boxes, "Deselect All Boxes")
+        create_tooltip(self.btn_select_all_boxes, "Select All Boxes — Select all dialogue boxes (excludes Box 0)")
+        create_tooltip(self.btn_deselect_all_boxes, "Deselect All Boxes — Clear multi-box selection")
 
         # Row 1 Right (packed right-to-left): [VIEW group] [MTL] [AI] [Prev] [Next] [Overflow] [Box: N / M]
         self.lbl_box_counter = self._tag_role(
@@ -5539,7 +5600,7 @@ class MisoraApp(tk.Tk):
         self.btn_ai_prompt.pack(side="right", padx=(2, 2))
         create_tooltip(self.btn_ai_prompt, "Copy AI Translation Prompt (Ctrl+Shift+T)")
 
-        self.ico_mtl = self.get_icon("mtl", (16, 16))
+        self.ico_mtl = self.get_icon("language-translation-icon", (20, 20), dpi_aware=True)
         self.btn_translate = ttk.Button(
             gd_header,
             text="MTL",
@@ -5582,7 +5643,7 @@ class MisoraApp(tk.Tk):
         self.cb_sel_box.pack(side="left", padx=1, pady=0)
         create_tooltip(self.cb_sel_box, "Toggle Multi-Box Selection Mode")
 
-        self.ico_all_script = self.get_icon("all_script", (14, 14))
+        self.ico_all_script = self.get_icon("BoxConversationList", (20, 20), dpi_aware=True)
         self.cb_cont = self._tag_role(
             tk.Checkbutton(
                 self.view_group,
@@ -5948,7 +6009,7 @@ class MisoraApp(tk.Tk):
         self._tag_role(tk.Label(self.actions_bar, text="|", bg=t["bg_editor"], fg=t["border"]), "label_ribbon_sep").pack(side="left", padx=1)
 
         # Box Actions Group (New Box, Cut Box, Copy Box, Paste Box)
-        self.ico_plus = self.get_icon("plus", (16, 16))
+        self.ico_plus = self.get_icon("BoxD", (20, 20), dpi_aware=True)
         self.btn_box_new = self._tag_role(
             tk.Button(self.actions_bar, text="➕", image=self.ico_plus, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_new),
             "ribbon_btn"
@@ -5956,7 +6017,7 @@ class MisoraApp(tk.Tk):
         self.btn_box_new.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_box_new, "New Dialogue Box (Ctrl+N)")
 
-        self.ico_box_cut = self.get_icon("box_cut", (18, 18))
+        self.ico_box_cut = self.get_icon("BoxCut", (20, 20), dpi_aware=True)
         self.btn_box_cut = self._tag_role(
             tk.Button(self.actions_bar, text="✂📦", image=self.ico_box_cut, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_cut),
             "ribbon_btn"
@@ -5964,7 +6025,7 @@ class MisoraApp(tk.Tk):
         self.btn_box_cut.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_box_cut, "Cut Selected Box(es) (Ctrl+Alt+X)")
 
-        self.ico_box_copy = self.get_icon("box_copy", (18, 18))
+        self.ico_box_copy = self.get_icon("BoxCopy", (20, 20), dpi_aware=True)
         self.btn_box_copy = self._tag_role(
             tk.Button(self.actions_bar, text="📋📦", image=self.ico_box_copy, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_copy),
             "ribbon_btn"
@@ -5972,7 +6033,7 @@ class MisoraApp(tk.Tk):
         self.btn_box_copy.pack(side="left", padx=1, pady=1)
         create_tooltip(self.btn_box_copy, "Copy Selected Box(es) (Ctrl+Alt+C)")
 
-        self.ico_box_paste = self.get_icon("box_paste", (18, 18))
+        self.ico_box_paste = self.get_icon("BoxPaste", (20, 20), dpi_aware=True)
         self.btn_box_paste = self._tag_role(
             tk.Button(self.actions_bar, text="📥📦", image=self.ico_box_paste, fg=btn_fg, bg=btn_bg, activebackground=btn_hover, activeforeground=btn_fg, bd=1, relief="raised", cursor="hand2", command=self.on_box_paste),
             "ribbon_btn"
@@ -6082,6 +6143,7 @@ class MisoraApp(tk.Tk):
             "ribbon_primary_btn"
         )
         self.btn_empty_open.pack(pady=(0, 8))
+        create_tooltip(self.btn_empty_open, "Open Files — Open story files, bundles, or folders (Ctrl+O)")
 
         self.lbl_empty_dnd_hint = self._tag_role(
             tk.Label(
@@ -6142,6 +6204,10 @@ class MisoraApp(tk.Tk):
         self.clean_editor_row = tk.Frame(text_container, bg=t["bg_panel"])
         self.clean_editor_row.pack(fill="both", expand=True)
 
+        # Horizontal Scrollbar for wrap="none" Dialogue Editor (packed bottom before side="left" children; Q-03)
+        self.clean_scroll_x = tk.Scrollbar(self.clean_editor_row, orient="horizontal")
+        self.clean_scroll_x.pack(side="bottom", fill="x")
+
         # Vertical Line Numbers Gutter for Clean View (#12)
         d_font_tuple = self._get_dialogue_font_tuple(d_sz)
         self.gutter_clean = tk.Text(
@@ -6166,7 +6232,7 @@ class MisoraApp(tk.Tk):
 
         self.txt_dialogue = tk.Text(
             self.clean_editor_row,
-            wrap="word",
+            wrap="none",
             height=7,
             font=d_font_tuple,
             bg=t["bg_editor"],
@@ -6182,8 +6248,10 @@ class MisoraApp(tk.Tk):
             relief="solid",
             highlightthickness=0,
             undo=False,
+            xscrollcommand=self.clean_scroll_x.set,
         )
         self.txt_dialogue.pack(side="left", fill="both", expand=True)
+        self.clean_scroll_x.config(command=self.txt_dialogue.xview)
         self._configure_editor_rich_tags(self.txt_dialogue, d_fam, d_sz)
         self.txt_dialogue.bind("<KeyRelease>", lambda e: self._commit_widget_edit(self.txt_dialogue))
         self.txt_dialogue.bind("<<Cut>>", lambda e: self.after_idle(lambda: self._commit_widget_edit(self.txt_dialogue)))
@@ -6562,6 +6630,7 @@ class MisoraApp(tk.Tk):
             command=lambda: self._switch_bottom_tab("quick_edit"),
         )
         self.btn_tab_quick_edit.pack(side="left", padx=(0, 4))
+        create_tooltip(self.btn_tab_quick_edit, "Quick Edit — Edit active segment text without changing raw command layout")
 
         self.btn_tab_raw_commands = tk.Button(
             self.bottom_tab_bar,
@@ -6575,6 +6644,7 @@ class MisoraApp(tk.Tk):
             command=lambda: self._switch_bottom_tab("raw"),
         )
         self.btn_tab_raw_commands.pack(side="left", padx=(0, 4))
+        create_tooltip(self.btn_tab_raw_commands, "Raw Commands — Inspect or edit low-level binary/v2 command arguments")
 
         # Quick Edit Tab Body (Q-22 unified single-box surface parity with Dialogue Editor; zero ruler / red overflow)
         self.tab_quick_edit_frame = self._tag_role(tk.Frame(bottom_view, bg=t["bg_panel"]), "panel")
@@ -8076,21 +8146,26 @@ class MisoraApp(tk.Tk):
         )
         self.cb_custom_font.pack(side="right")
         self.cb_custom_font.bind("<<ComboboxSelected>>", lambda _e: self._on_custom_font_selected())
+        create_tooltip(self.cb_custom_font, "Custom Font — Choose a custom .ttf/.otf family loaded from the fonts directory")
 
         custom_btn_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
         custom_btn_row.pack(fill="x", padx=8, pady=(2, 6))
-        ttk.Button(
+        self.btn_refresh_fonts = ttk.Button(
             custom_btn_row,
             text="Refresh Fonts",
             style="Small.TButton",
             command=self._refresh_custom_fonts,
-        ).pack(side="left", padx=(0, 4))
-        ttk.Button(
+        )
+        self.btn_refresh_fonts.pack(side="left", padx=(0, 4))
+        create_tooltip(self.btn_refresh_fonts, "Refresh Fonts — Rescan custom fonts folder and update dropdown list")
+        self.btn_open_fonts_folder = ttk.Button(
             custom_btn_row,
             text="Open Fonts Folder",
             style="Small.TButton",
             command=self._open_fonts_folder,
-        ).pack(side="left")
+        )
+        self.btn_open_fonts_folder.pack(side="left")
+        create_tooltip(self.btn_open_fonts_folder, "Open Fonts Folder — Open the local custom fonts directory in Explorer")
 
         self.var_dlg_font_sz = tk.IntVar(master=self, value=int(self.prefs["dialogue_font_size"]))
         self.var_raw_font_sz = tk.IntVar(master=self, value=int(self.prefs["raw_font_size"]))
@@ -8131,21 +8206,24 @@ class MisoraApp(tk.Tk):
         preset_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
         preset_row.pack(fill="x", padx=8, pady=3)
         self.var_preset = tk.StringVar(master=self, value=self._detect_active_preset_name())
-        cb_preset = ttk.Combobox(
+        self.cb_preset = ttk.Combobox(
             preset_row,
             textvariable=self.var_preset,
             values=list(THEME_PRESETS.keys()) + ["Custom"],
             state="readonly",
             width=22,
         )
-        cb_preset.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        cb_preset.bind("<<ComboboxSelected>>", lambda _e: self._apply_theme_preset(self.var_preset.get()))
-        ttk.Button(
+        self.cb_preset.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.cb_preset.bind("<<ComboboxSelected>>", lambda _e: self._apply_theme_preset(self.var_preset.get()))
+        create_tooltip(self.cb_preset, "Theme Preset — Choose a built-in Misora color palette")
+        self.btn_apply_preset = ttk.Button(
             preset_row,
             text="Apply",
             style="Small.TButton",
             command=lambda: self._apply_theme_preset(self.var_preset.get()),
-        ).pack(side="right")
+        )
+        self.btn_apply_preset.pack(side="right")
+        create_tooltip(self.btn_apply_preset, "Apply Preset — Apply the selected theme preset to all surfaces")
 
         self._tag_role(
             tk.Label(body, text="CUSTOM WINDOW COLORS", font=("Segoe UI", 9, "bold"), bg=t["bg_panel"], fg=t["misora_pink"]),
@@ -8204,12 +8282,14 @@ class MisoraApp(tk.Tk):
 
         btn_row = self._tag_role(tk.Frame(body, bg=t["bg_panel"]), "panel")
         btn_row.pack(fill="x", padx=8, pady=(12, 10))
-        ttk.Button(
+        self.btn_reset_custom = ttk.Button(
             btn_row,
             text="Reset All to Defaults",
             style="TButton",
             command=self._reset_customization_defaults,
-        ).pack(fill="x")
+        )
+        self.btn_reset_custom.pack(fill="x")
+        create_tooltip(self.btn_reset_custom, "Reset All to Defaults — Restore default fonts, sizes, and theme colors")
 
     def _build_glossary_tab(self, parent: tk.Frame) -> None:
         """Populate interactive NGUI Glossary & Syntax Reference panel."""
@@ -8221,7 +8301,7 @@ class MisoraApp(tk.Tk):
 
         self._tag_role(tk.Label(filter_row, text="Filter:", bg=t["bg_panel"], fg=t["fg_muted"]), "label_muted").pack(side="left", padx=(0, 4))
         self.var_glossary_filter = tk.StringVar(master=self)
-        ent_filter = self._tag_role(
+        self.ent_glossary_filter = self._tag_role(
             tk.Entry(
                 filter_row,
                 textvariable=self.var_glossary_filter,
@@ -8234,8 +8314,9 @@ class MisoraApp(tk.Tk):
             ),
             "entry_editor"
         )
-        ent_filter.pack(side="left", fill="x", expand=True)
-        ent_filter.bind("<KeyRelease>", lambda _e: self._filter_glossary())
+        self.ent_glossary_filter.pack(side="left", fill="x", expand=True)
+        self.ent_glossary_filter.bind("<KeyRelease>", lambda _e: self._filter_glossary())
+        create_tooltip(self.ent_glossary_filter, "Glossary Filter — Narrow NGUI and Ruby syntax entries by keyword")
 
         list_wrap = self._tag_role(tk.Frame(parent, bg=t["bg_editor"], bd=1, relief="solid"), "editor_box")
         list_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
@@ -8274,12 +8355,14 @@ class MisoraApp(tk.Tk):
         ins_bar = self._tag_role(tk.Frame(parent, bg=t["bg_panel"]), "panel")
         ins_bar.pack(fill="x", padx=6, pady=(0, 6))
 
-        ttk.Button(
+        self.btn_insert_glossary = ttk.Button(
             ins_bar,
             text="Insert / Wrap Selected Tag into Dialogue",
             style="Pink.TButton",
             command=self._insert_selected_glossary_tag,
-        ).pack(fill="x")
+        )
+        self.btn_insert_glossary.pack(fill="x")
+        create_tooltip(self.btn_insert_glossary, "Insert / Wrap Selected Tag — Apply the selected NGUI or Ruby tag in active dialogue")
 
         self._render_glossary_list()
 
@@ -8850,11 +8933,10 @@ class MisoraApp(tk.Tk):
         return "break"
 
     def _auto_resize_dialogue_box(self) -> None:
-        """Adjust dialogue editor line height to fit multi-line text comfortably inside scroll bounds."""
+        """Adjust dialogue editor line height to logical lines (horizontal scroll handles wide wrap='none' lines)."""
         content = self.txt_dialogue.get("1.0", "end-1c")
         lines = content.split("\n")
-        est_visual_lines = sum(max(1, (len(ln) // 68) + 1) for ln in lines)
-        target_lines = max(7, min(32, est_visual_lines + 1))
+        target_lines = max(7, min(32, len(lines) + 1))
         self.txt_dialogue.configure(height=target_lines)
         self.gd_inner.update_idletasks()
         self._sync_gd_scroll_bounds()
@@ -8938,17 +9020,19 @@ class MisoraApp(tk.Tk):
         self.progress_bar = self.status_progress_bar
 
         self.var_sync_xuat = tk.BooleanVar(master=self, value=True)
-        cb_sync = ttk.Checkbutton(
+        self.cb_sync_xuat = ttk.Checkbutton(
             action_bar,
             text="Also update matching XUAT .txt dictionary on Save",
             variable=self.var_sync_xuat,
             style="Panel.TCheckbutton"
         )
-        cb_sync.pack(side="right", padx=(8, 12))
+        self.cb_sync_xuat.pack(side="right", padx=(8, 12))
+        create_tooltip(self.cb_sync_xuat, "Sync XUAT on Save — Keep matching XUAT .txt translation entries updated when saving")
 
         self.ico_revert = self.get_icon("revert", (15, 15))
-        btn_revert = ttk.Button(action_bar, text=" Revert Box", image=self.ico_revert, compound="left", style="TButton", command=self.on_revert_box)
-        btn_revert.pack(side="right", padx=4)
+        self.btn_revert = ttk.Button(action_bar, text=" Revert Box", image=self.ico_revert, compound="left", style="TButton", command=self.on_revert_box)
+        self.btn_revert.pack(side="right", padx=4)
+        create_tooltip(self.btn_revert, "Revert Box — Discard unsaved edits on the active dialogue box")
 
         self.ico_save = self.get_icon("save", (15, 15))
         self.btn_save = ttk.Button(action_bar, text=" Save File / Patch Bundle (Ctrl+Shift+S)", image=self.ico_save, compound="left", style="Pink.TButton", command=self.on_save)
@@ -11105,6 +11189,15 @@ class MisoraApp(tk.Tk):
             justify="left",
         ).pack(anchor="w", pady=(0, 12))
 
+        ico_ins = self.get_icon("BoxInsert", (20, 20), dpi_aware=True)
+        ico_rep = self.get_icon("BoxReplace", (20, 20), dpi_aware=True)
+        setattr(dlg, "_paste_mode_icons", (ico_ins, ico_rep))
+
+        btn_ins_kw: Dict[str, Any] = {}
+        if ico_ins is not None:
+            btn_ins_kw["image"] = ico_ins
+            btn_ins_kw["compound"] = "left"
+
         btn_ins = tk.Button(
             frame,
             text=f"Insert {ins_desc}",
@@ -11117,6 +11210,7 @@ class MisoraApp(tk.Tk):
             pady=5,
             cursor="hand2",
             command=lambda: _choose("insert"),
+            **btn_ins_kw,
         )
         btn_ins.pack(fill="x", pady=2)
 
@@ -11125,6 +11219,11 @@ class MisoraApp(tk.Tk):
             if sel_count > 0
             else "Replace (Select target box(es) first to Replace)"
         )
+        btn_rep_kw: Dict[str, Any] = {}
+        if ico_rep is not None:
+            btn_rep_kw["image"] = ico_rep
+            btn_rep_kw["compound"] = "left"
+
         btn_rep = tk.Button(
             frame,
             text=rep_label,
@@ -11138,6 +11237,7 @@ class MisoraApp(tk.Tk):
             cursor="hand2" if can_replace else "arrow",
             state="normal" if can_replace else "disabled",
             command=lambda: _choose("replace"),
+            **btn_rep_kw,
         )
         btn_rep.pack(fill="x", pady=2)
 
@@ -19465,11 +19565,19 @@ class MisoraApp(tk.Tk):
 
         tk.Label(
             body,
-            text="Misora: Story Editor",
-            font=("Segoe UI", 14, "bold"),
+            text="PriconneRe:TL",
+            font=("Segoe UI", 16, "bold"),
             bg=t["bg_panel"],
             fg=t["misora_pink"],
         ).pack(anchor="center")
+
+        tk.Label(
+            body,
+            text="Misora: Story Editor",
+            font=("Segoe UI", 13, "bold"),
+            bg=t["bg_panel"],
+            fg=fg_panel,
+        ).pack(anchor="center", pady=(2, 0))
 
         tk.Label(
             body,
@@ -19484,7 +19592,8 @@ class MisoraApp(tk.Tk):
             text=(
                 "A specialized GUI text editor for Princess Connect! Re:Dive\n"
                 "Unity3D story bundles (.unity3d) and XUAT translation files.\n\n"
-                "MIT License — Created for the Priconne Modding Community."
+                "Created by Cornelia · PriconneRe:TL\n"
+                "MIT License — Built for the Princess Connect! Re:Dive Modding Community."
             ),
             font=("Segoe UI", 9),
             bg=t["bg_panel"],
@@ -19511,7 +19620,7 @@ class MisoraApp(tk.Tk):
 
         ttk.Button(
             btn_row,
-            text="Support Me",
+            text="Support the Creator",
             style="Pink.TButton",
             command=_launch_support,
         ).pack(side="left", expand=True, fill="x", padx=(0, 6))
@@ -19575,7 +19684,7 @@ class SupportMeDialog(tk.Toplevel):
         self._closed: bool = False
         self.support_buttons: Dict[str, tk.Widget] = {}
 
-        self.title("Support Misora: Story Editor")
+        self.title("Support the Creator — Misora: Story Editor")
         self.resizable(False, False)
         self.transient(parent)
         apply_window_icon(self)
@@ -19599,11 +19708,11 @@ class SupportMeDialog(tk.Toplevel):
 
         tk.Label(
             container,
-            text=SUPPORT_CAPTION_ID,
+            text=SUPPORT_CAPTION_EN,
             font=("Segoe UI", 9),
             bg=t["bg_panel"],
             fg=fg_panel,
-            wraplength=420,
+            wraplength=580,
             justify="center",
         ).pack(pady=(0, 14))
 
@@ -19722,7 +19831,12 @@ class SupportMeDialog(tk.Toplevel):
             self._gif_image.seek(frame_idx)
             rgba = self._gif_image.convert("RGBA")
             w, h = rgba.size
-            scale = min(240.0 / max(1, w), 240.0 / max(1, h))
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            screen_max_w = max(320, sw - 80) if sw > 0 else 600
+            screen_max_h = max(220, sh - 260) if sh > 0 else 360
+            target_w = min(600, screen_max_w)
+            scale = min(float(target_w) / max(1, w), float(screen_max_h) / max(1, h))
             tw = max(1, int(round(w * scale)))
             th = max(1, int(round(h * scale)))
             if (w, h) != (tw, th):
@@ -20255,6 +20369,11 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._actor_rows: List[Dict[str, Any]] = []
         self._group_select_states: Dict[str, str] = {}
         self._group_select_buttons: Dict[str, ttk.Button] = {}
+        self._group_select_icons: Dict[str, Optional[tk.PhotoImage]] = {
+            "none": self.app.get_icon("BoxSelectNone", (20, 20), dpi_aware=True),
+            "partial": self.app.get_icon("BoxSelectOne", (20, 20), dpi_aware=True),
+            "all": self.app.get_icon("BoxSelectAll", (20, 20), dpi_aware=True),
+        }
         self._bulk_updating_group: bool = False
         self._lbl_empty_state: Optional[tk.Label] = None
         self._focused_box_widget: Optional[tk.Text] = None
@@ -20315,6 +20434,7 @@ class ImportFromXUATDialog(tk.Toplevel):
             command=self._on_reload_index,
         )
         self.btn_reload_xuat.pack(side="right")
+        create_tooltip(self.btn_reload_xuat, "Reload XUAT Index — Rescan project XUAT .txt translation files in background")
 
         self.lbl_summary = tk.Label(
             top,
@@ -20329,6 +20449,12 @@ class ImportFromXUATDialog(tk.Toplevel):
         ctrl_row = tk.Frame(top, bg=t["bg_panel"])
         ctrl_row.pack(fill="x", pady=(2, 0))
 
+        filter_tips = {
+            "all": "Show All Rows — Display all metadata, actors, and dialogue entries",
+            "duplicates": "Show Duplicates — Filter to keys with multiple conflicting XUAT candidates",
+            "missing": "Show Missing — Filter to lines with no matching XUAT translation",
+            "matched": "Show Matched — Filter to lines with at least one matching XUAT entry",
+        }
         for f_key, f_label in (
             ("all", "All"),
             ("duplicates", "Duplicates"),
@@ -20342,9 +20468,10 @@ class ImportFromXUATDialog(tk.Toplevel):
                 command=lambda k=f_key: self._set_filter(k),
             )
             btn.pack(side="left", padx=(0, 4))
+            create_tooltip(btn, filter_tips[f_key])
             self._filter_buttons[f_key] = btn
 
-        cb_arch = tk.Checkbutton(
+        self.cb_archive_xuat = tk.Checkbutton(
             ctrl_row,
             text="Archive the XUAT translation",
             variable=self.var_archive_xuat,
@@ -20354,11 +20481,12 @@ class ImportFromXUATDialog(tk.Toplevel):
             activebackground=t["bg_panel"],
             activeforeground=fg_panel,
         )
-        cb_arch.pack(side="right")
+        self.cb_archive_xuat.pack(side="right")
+        create_tooltip(self.cb_archive_xuat, "Archive XUAT Lines — Move imported entries to XUAT backup archive after applying")
 
         opts_row = tk.Frame(top, bg=t["bg_panel"])
         opts_row.pack(fill="x", pady=(4, 0))
-        cb_wrap = tk.Checkbutton(
+        self.cb_auto_word_wrap = tk.Checkbutton(
             opts_row,
             text=f"Auto Word Wrap imported lines to {DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES}",
             variable=self.var_auto_word_wrap,
@@ -20368,7 +20496,11 @@ class ImportFromXUATDialog(tk.Toplevel):
             activebackground=t["bg_panel"],
             activeforeground=fg_panel,
         )
-        cb_wrap.pack(side="right")
+        self.cb_auto_word_wrap.pack(side="right")
+        create_tooltip(
+            self.cb_auto_word_wrap,
+            f"Auto Word Wrap — Reflow imported lines to <= {DIALOGUE_MAX_DIGITS}d across <= {DIALOGUE_MAX_LINES} lines on Apply",
+        )
 
         self.lbl_archive_optout_warning = tk.Label(
             top,
@@ -20409,11 +20541,14 @@ class ImportFromXUATDialog(tk.Toplevel):
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=12, pady=8)
         btn_bar.pack(fill="x", side="bottom")
 
-        ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_close).pack(side="right", padx=4)
+        self.btn_cancel = ttk.Button(btn_bar, text="Cancel", style="TButton", command=self._on_close)
+        self.btn_cancel.pack(side="right", padx=4)
+        create_tooltip(self.btn_cancel, "Cancel Import — Close without changing the active story document (Esc)")
         self.btn_apply = ttk.Button(
             btn_bar, text="Apply Import", style="Pink.TButton", command=self._on_apply_import
         )
         self.btn_apply.pack(side="right", padx=4)
+        create_tooltip(self.btn_apply, "Apply Import — Write selected XUAT translations into the active story document")
 
     def _refresh_archive_optout_warning(self) -> None:
         if not self.winfo_exists() or self.var_archive_xuat is None:
@@ -20574,17 +20709,21 @@ class ImportFromXUATDialog(tk.Toplevel):
             anchor="w",
         ).pack(side="left")
 
+        none_ico = self._group_select_icons.get("none")
         btn_group_sel = ttk.Button(
             hdr,
-            text="[ ] Select All",
+            text="Select All",
+            image=none_ico if none_ico else "",
+            compound="none" if none_ico else "left",
             style="Small.TButton",
-            width=15,
+            width=3 if none_ico else 14,
             command=lambda gk=group_key: self._on_group_select_all(gk),
         )
+        setattr(btn_group_sel, "_state_icons", dict(self._group_select_icons))
         btn_group_sel.pack(side="right", padx=(4, 2))
         create_tooltip(
             btn_group_sel,
-            "Select/deselect all eligible rows in group (all filters)",
+            "No items selected — click to select all eligible rows in group (all filters)",
         )
         self._group_select_buttons[group_key] = btn_group_sel
         self._group_select_states[group_key] = "none"
@@ -20611,25 +20750,57 @@ class ImportFromXUATDialog(tk.Toplevel):
         self._update_group_header_state(group_key)
 
     def _update_group_header_state(self, group_key: str) -> None:
-        """Recompute tri-state indicator ('none' / 'partial' / 'all') for a group header."""
+        """Recompute tri-state indicator ('none' / 'partial' / 'all') for a group header (Q-07 / Q-15)."""
         rows = self._get_group_rows(group_key)
         eligible = [r for r in rows if not r.get("is_locked", False) and r.get("candidates")]
         btn = self._group_select_buttons.get(group_key)
         if not eligible:
             self._group_select_states[group_key] = "none"
             if btn is not None and btn.winfo_exists():
-                btn.configure(text="[ ] Select All", state="disabled")
+                ico = self._group_select_icons.get("none")
+                btn.configure(
+                    text="Select All",
+                    image=ico if ico else "",
+                    compound="none" if ico else "left",
+                    width=3 if ico else 14,
+                    state="disabled",
+                )
+                tip = getattr(btn, "_tooltip", None)
+                if tip is not None and hasattr(tip, "set_text"):
+                    tip.set_text("No eligible items in group (all filters)")
             return
         selected = sum(1 for r in eligible if not r["var_skip"].get())
         if selected == 0:
-            state_str, label = "none", "[ ] Select All"
+            state_str, label, tip_text = (
+                "none",
+                "Select All",
+                "No items selected — click to select all eligible rows in group (all filters)",
+            )
         elif selected == len(eligible):
-            state_str, label = "all", "[x] Select All"
+            state_str, label, tip_text = (
+                "all",
+                "Deselect All",
+                "All eligible items selected — click to deselect all eligible rows in group (all filters)",
+            )
         else:
-            state_str, label = "partial", "[-] Select All"
+            state_str, label, tip_text = (
+                "partial",
+                "Some selected",
+                "Some selected (partially selected) — click to deselect all eligible rows in group (all filters)",
+            )
         self._group_select_states[group_key] = state_str
         if btn is not None and btn.winfo_exists():
-            btn.configure(text=label, state="normal")
+            ico = self._group_select_icons.get(state_str)
+            btn.configure(
+                text=label,
+                image=ico if ico else "",
+                compound="none" if ico else "left",
+                width=3 if ico else 14,
+                state="normal",
+            )
+            tip = getattr(btn, "_tooltip", None)
+            if tip is not None and hasattr(tip, "set_text"):
+                tip.set_text(tip_text)
 
     def _create_paired_box_row(
         self,
@@ -20710,6 +20881,7 @@ class ImportFromXUATDialog(tk.Toplevel):
             activeforeground=fg_panel,
         )
         cb_skip.pack(side="right")
+        create_tooltip(cb_skip, "Skip Row — Keep current story text instead of importing this row's XUAT value")
 
         prov_text = lookup.candidates[cand_idx].provenance if lookup.candidates else "No XUAT match"
         lbl_provenance = tk.Label(
@@ -20724,6 +20896,9 @@ class ImportFromXUATDialog(tk.Toplevel):
         lbl_dup_counter = tk.Label(hdr, text="", font=("Segoe UI", 8, "bold"), bg=row_bg, fg=t["accent_blue"])
         var_scope = tk.StringVar(master=self, value="This Box")
         r_idx = len(row_list)
+        scope_cmb: Optional[ttk.Combobox] = None
+        btn_prev: Optional[ttk.Button] = None
+        btn_next: Optional[ttk.Button] = None
 
         if len(lookup.candidates) > 1:
             if show_scope:
@@ -20739,6 +20914,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                     "<<ComboboxSelected>>",
                     lambda _e, idx_ref=r_idx: self._apply_conflict_scope(idx_ref),
                 )
+                create_tooltip(scope_cmb, "Duplicate Resolution Scope — Apply chosen candidate to This Box, This Story, or Global")
             btn_next = ttk.Button(
                 hdr,
                 text="▶",
@@ -20747,6 +20923,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                 command=lambda rl=row_list, idx_ref=r_idx, sc=show_scope: self._step_section_candidate(rl, idx_ref, 1, apply_scope=sc),
             )
             btn_next.pack(side="right", padx=(1, 2))
+            create_tooltip(btn_next, "Next Candidate — Cycle to the next matching XUAT translation")
             lbl_dup_counter.config(text=f"{cand_idx + 1}/{len(lookup.candidates)}")
             lbl_dup_counter.pack(side="right", padx=2)
             btn_prev = ttk.Button(
@@ -20757,6 +20934,7 @@ class ImportFromXUATDialog(tk.Toplevel):
                 command=lambda rl=row_list, idx_ref=r_idx, sc=show_scope: self._step_section_candidate(rl, idx_ref, -1, apply_scope=sc),
             )
             btn_prev.pack(side="right", padx=(2, 1))
+            create_tooltip(btn_prev, "Previous Candidate — Cycle to the previous matching XUAT translation")
 
         pair_frame = tk.Frame(card, bg=row_bg)
         pair_frame.pack(fill="x")
@@ -20871,6 +21049,9 @@ class ImportFromXUATDialog(tk.Toplevel):
             "var_skip": var_skip,
             "cb_skip": cb_skip,
             "var_scope": var_scope,
+            "scope_cmb": scope_cmb,
+            "btn_prev": btn_prev,
+            "btn_next": btn_next,
             "lines": lines,
             "frame": card,
             "left_wrap": left_wrap,
@@ -21858,6 +22039,7 @@ class XuatCleanupDialog(tk.Toplevel):
         )
         if self.applied_records:
             self.cb_include_applied.pack(anchor="w", pady=(0, 4))
+        create_tooltip(self.cb_include_applied, "Include Applied Lines — Include XUAT entries applied in this import batch")
 
         opts_grid = tk.Frame(top, bg=t["bg_panel"])
         opts_grid.pack(fill="x", pady=(2, 4))
@@ -21999,10 +22181,12 @@ class XuatCleanupDialog(tk.Toplevel):
             bulk_bar, text="Select All", style="Small.TButton", command=lambda: self._bulk_select(True)
         )
         self.btn_select_all.pack(side="left", padx=(0, 4))
+        create_tooltip(self.btn_select_all, "Select All Cleanup Rows — Mark every listed cleanup candidate for archiving")
         self.btn_deselect_all = ttk.Button(
             bulk_bar, text="Deselect All", style="Small.TButton", command=lambda: self._bulk_select(False)
         )
         self.btn_deselect_all.pack(side="left")
+        create_tooltip(self.btn_deselect_all, "Deselect All Cleanup Rows — Clear checkmarks from all cleanup candidates")
         tk.Label(
             bulk_bar,
             text="Click [✓]/[ ] or press Space on a row to toggle selection",
@@ -22044,13 +22228,14 @@ class XuatCleanupDialog(tk.Toplevel):
 
         btn_bar = tk.Frame(self, bg=t["bg_panel"], padx=14, pady=8)
         btn_bar.pack(fill="x", side="bottom")
-        ttk.Button(btn_bar, text="Close (Keep XUAT Untouched)", style="TButton", command=self._on_close).pack(
-            side="right", padx=(6, 0)
-        )
+        self.btn_close = ttk.Button(btn_bar, text="Close (Keep XUAT Untouched)", style="TButton", command=self._on_close)
+        self.btn_close.pack(side="right", padx=(6, 0))
+        create_tooltip(self.btn_close, "Close Cleanup — Leave XUAT .txt files unchanged (Esc)")
         self.btn_execute = ttk.Button(
             btn_bar, text="Archive & Clean Selected", style="Pink.TButton", command=self._on_execute_cleanup
         )
         self.btn_execute.pack(side="right")
+        create_tooltip(self.btn_execute, "Archive & Clean Selected — Back up and remove checked XUAT dictionary entries")
 
     def _set_controls_busy(self, busy: bool) -> None:
         """Disable execution & bulk controls while scanning or inserting Treeview batches (Guardrail #3)."""

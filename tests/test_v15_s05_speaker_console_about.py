@@ -289,7 +289,9 @@ class TestV15S05SpeakerConsoleAbout(unittest.TestCase):
         joined_about = "\n".join(str(x) for x in about_labels)
         self.assertIn("Misora: Story Editor", joined_about)
         self.assertIn(f"v{misora.__version__}", joined_about)
-        self.assertIn("Support Me", joined_about)
+        self.assertIn("PriconneRe:TL", joined_about)
+        self.assertIn("Cornelia", joined_about)
+        self.assertIn("Support the Creator", joined_about)
         about_dlg.destroy()
 
         # 2. Sequential GIF playback on synthetic 4-frame GIF
@@ -310,7 +312,7 @@ class TestV15S05SpeakerConsoleAbout(unittest.TestCase):
         self.assertEqual(dlg._gif_frame_idx, 1)
         self.assertIs(dlg._current_frame_photo, first_photo, "Must reuse single active PhotoImage sequentially")
 
-        # Verify Indonesian caption & crowdfunding URLs
+        # Verify English Support the Creator caption & crowdfunding URLs (Q-14)
         desc = self._collect_descendants(dlg)
         texts = []
         for w in desc:
@@ -319,10 +321,10 @@ class TestV15S05SpeakerConsoleAbout(unittest.TestCase):
             except Exception:
                 pass
         all_text = "\n".join(texts)
-        self.assertIn(
-            "Terima kasih. Dukungan sekecil apa pun sangat saya hargai; ini juga membantu menutup biaya penggunaan AI.",
-            all_text,
-        )
+        self.assertIn(misora.SUPPORT_CAPTION_EN, all_text)
+        self.assertIn("PriconneRe:TL", all_text)
+        self.assertIn("Cornelia", all_text)
+        self.assertNotIn("Terima kasih", all_text)
 
         with patch("webbrowser.open") as mock_open:
             dlg.support_buttons["Ko-fi"].invoke()

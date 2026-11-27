@@ -1,11 +1,11 @@
 # Misora: Story Editor — Canonical Project State
 
-Last updated: 2026-11-27
+Last updated: 2026-11-28
 Repository: `ImaterialC/Misora-Editor`
 Local working path: `D:\Misora-Editor`
-Target release: v1.5.0 (Current session build: v1.4.14 — S11d Import from XUAT UX & Editor Productivity (`Q-06`..`Q-12`))
-Current code baseline: root `__init__.py` reports `__version__ = "1.4.14"`; unified across UI, splash, MTL engine, and tests (`U00`).
-Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08); S11b2 baseline committed on `fbe02f01357f027c9c05ab07c5c1b44a8bbb1c1e`; pre-S11d HEAD `ac61a2407db6e6f418bd99d960cdb15c3e6b63c7`.
+Target release: v1.5.0 (ON HOLD; Current session build: v1.4.15 — S11e UI Polish, Branding & Usability (`Q-03`, `Q-05`, `Q-13`..`Q-17`))
+Current code baseline: root `__init__.py` reports `__version__ = "1.4.15"`; unified across UI, splash, MTL engine, and tests (`U00`).
+Starting baseline pinned at commit `1da8ee84d6e6d23e8886b296f65a6e5503ee358f` (clean working tree after S08); S11b2 baseline committed on `fbe02f01357f027c9c05ab07c5c1b44a8bbb1c1e`; S11d baseline `da74305dda9fc09b669f78258357e4e5b0e0782e`.
 
 This file is the single canonical ledger and roadmap. It replaces legacy variants.
 Historical B1–B20 progress is preserved, while defect root-causes, test baselines,
@@ -41,7 +41,20 @@ Compile Check:
 py -3.12 -m compileall -q __init__.py misora.py core assets tests
 Result: PASS (Exit code 0, 0 syntax/compilation errors)
 
-Unit Test Suite (v1.5 S11d Verification Baseline — 2026-11-27, vs pre-patch HEAD ac61a240 baseline of 460 tests: 417 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
+Unit Test Suite (v1.5 S11e Verification Baseline — 2026-11-28, vs committed S11d HEAD da74305 baseline of 466 tests: 423 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
+py -3.12 -m unittest tests.test_v15_s11e_polish_splash_menu_tooltips -v
+Result: pre-patch TDD gate Ran 9 tests in 23.527s (7/7 Probes FAIL, 2/2 Guards PASS); post-patch 9/9 OK (0 skipped, exit code 0)
+
+py -3.12 -m unittest tests.test_v15_s11e_polish_splash_menu_tooltips tests.test_v15_s11d_import_ux_productivity tests.test_v15_s05_speaker_console_about tests.test_v15_s04_layout_drawer_controls tests.test_v15_s08_release_gate_stress tests.test_v15_s03_all_script_preview_paste tests.test_p3_s12_lifecycle_security tests.test_p3_s14_toolbar_search_ui tests.test_p3_s18_game_preview tests.test_misora_ui_integration tests.test_s8b4_ui_polishing -v
+Result: Ran 98 tests in 182.768s (98/98 OK, skipped=5 [missing .unity3d fixture in test_misora_ui_integration / test_v15_s03], exit code 0)
+
+py -3.12 -m unittest discover -s tests -v
+Result: countTestCases() == 475 (466 + 9 new S11e tests in tests/test_v15_s11e_polish_splash_menu_tooltips.py). Monolithic discovery completed cleanly: Ran 475 tests in 589.521s | FAILED (failures=6, errors=2, skipped=35) — 432 PASS, 35 skipped, 6 pre-existing failures, 2 pre-existing errors, 0 S11e regressions:
+  - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards (test_01..05) + 35 fixture skips across test_misora_core / test_misora_ui_integration / test_s2_dirty_contract / etc.;
+  - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8 ['1.4.15' != '1.4.1']);
+  - S11e Regressions: 0.
+
+Historical Unit Test Suite (v1.5 S11d Verification Baseline — 2026-11-27, vs committed pre-S11d HEAD ac61a240 baseline of 460 tests: 417 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
 py -3.12 -m unittest tests.test_v15_s11d_import_ux_productivity -v
 Result: Ran 6 tests in 27.590s (6/6 OK, 0 skipped, exit code 0)
 
@@ -49,10 +62,7 @@ py -3.12 -m unittest tests.test_v15_s11d_import_ux_productivity tests.test_v15_s
 Result: Ran 67 tests in 142.994s (67/67 OK, skipped=3 [missing .unity3d fixture in test_s2_dirty_contract], exit code 0)
 
 py -3.12 -m unittest discover -s tests -v (+ strictly disjoint tail run)
-Result: countTestCases() == 466 (460 + 6 new S11d tests in tests/test_v15_s11d_import_ux_productivity.py). Single-process discover cleared first 50 modules (388 tests: 345 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors) plus test_v15_s06::test_guard_1 before hitting the pre-existing cross-test Tcl_AsyncDelete GC race at test_v15_s06::test_guard_2. The strictly disjoint 10-module tail manifest (tests.test_v15_s06_tools_word_wrap .. tests.test_v15_s11d_import_ux_productivity) passed 78/78 OK in 167.538s (388 + 78 = 466: 423 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors, 0 S11d regressions):
-  - Fixture-Blocked (storydata_1001005.unity3d): 3 failures + 2 errors in test_s8b2_memory_guards (test_01..05) + 35 fixture skips across test_misora_core / test_misora_ui_integration / test_s2_dirty_contract / etc.;
-  - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8 ['1.4.14' != '1.4.1']);
-  - S11d Regressions: 0.
+Result: countTestCases() == 466 (460 + 6 new S11d tests in tests/test_v15_s11d_import_ux_productivity.py). Single-process discover cleared first 50 modules (388 tests: 345 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors) plus test_v15_s06::test_guard_1 before hitting the pre-existing cross-test Tcl_AsyncDelete GC race at test_v15_s06::test_guard_2. The strictly disjoint 10-module tail manifest (tests.test_v15_s06_tools_word_wrap .. tests.test_v15_s11d_import_ux_productivity) passed 78/78 OK in 167.538s (388 + 78 = 466: 423 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors, 0 S11d regressions).
 
 Historical Unit Test Suite (v1.5 S11c Verification Baseline — 2026-11-27, vs committed S11b2 HEAD fbe02f0 baseline of 451 tests: 408 pass, 35 skipped, 6 pre-existing failures, 2 pre-existing errors):
 py -3.12 -m unittest tests.test_v15_s11c_quick_edit_unified tests.test_v15_s10_all_script_quick_edit tests.test_v15_s08_release_gate_stress tests.test_v15_s09_core_fixes_54d -v
@@ -87,8 +97,9 @@ Result: Ran 440 tests across 56 modules (397 pass, 35 skipped, 6 pre-existing fa
   - Pre-existing non-fixture hygiene failures (deferred to S12): 3 failures (test_phase3_performance_config::test_05, test_s9c_workspace_safety::test_04, test_v15_s01_stability_remediation::test_probe_8);
   - S11 Regressions: 0.
 
-Test suites included in the 466 tests (exact disk discovery):
-  tests/test_v15_s11d_import_ux_productivity.py — 6 S11d Import from XUAT UX & Editor Productivity tests (Q-06 recursive MouseWheel over labels/headers/scope_cmb/empty-state preserving Text inner scroll, Q-07 tri-state group Select All [ ]/[-]/[✓] excluding Missing/Locked across filters, Q-08 multi-line Synopsis import/Undo/Identity Guard/U-18 immunity/Pass 3 including cleared-summary fallback via _original_metadata_by_path, Q-09 clean header & Pass 1/3..3/3 progress, Q-10 All/None box controls in gd_header excluding Box 0 & preserving Lock, Q-11 MTL Globe Google/DeepL-only safe clipboard, Q-12 sanitized <=65-char window title metadata) (all pass)
+Test suites included in the 475 tests (exact disk discovery):
+  tests/test_v15_s11e_polish_splash_menu_tooltips.py — 9 S11e UI Polish, Branding & Usability tests (Q-03 per-widget word-wrap & pack-only clean_scroll_x mutual exclusion/gutter toggle; Q-05 non-blocking splash through slowed _deferred_restore + dooneevent event pumping + exception cleanup + withdraw() guard; Q-13 PriconneRe:TL/Cornelia splash & About + v1.4.15 parity; Q-14 Support the Creator EN copy + ~600px width/height clamped GIF; Q-15 DPI-aware LANCZOS icons, verified map, BoxInsert/BoxReplace chooser, 3-icon Q-07/Q-10 selection trio + 'Some selected' + accessible fallback; Q-16 menu inventory & NGUI Glossary dedup; Q-17 3-layer 350ms ToolTip coverage) (all pass)
+  tests/test_v15_s11d_import_ux_productivity.py — 6 S11d Import from XUAT UX & Editor Productivity tests (Q-06 recursive MouseWheel over labels/headers/scope_cmb/empty-state preserving Text inner scroll, Q-07 tri-state group Select All/Deselect All/Some selected excluding Missing/Locked across filters, Q-08 multi-line Synopsis import/Undo/Identity Guard/U-18 immunity/Pass 3 including cleared-summary fallback via _original_metadata_by_path, Q-09 clean header & Pass 1/3..3/3 progress, Q-10 All/None box controls in gd_header excluding Box 0 & preserving Lock, Q-11 MTL Globe Google/DeepL-only safe clipboard, Q-12 sanitized <=65-char window title metadata) (all pass)
   tests/test_v15_s11c_quick_edit_unified.py — 9 S11c unified single-box Quick Edit (txt_quick_edit wrap='none', [N segs] badge, Option A AST/binary parity with Main Dialogue Editor, pre-mutation BoxSnapshot Undo/Redo & JP cache/UID/lock survival, S09b lock parity & single-fire Ctrl+Z/Y, sync_from_widget=False fallback, _on_dialogue_edited/_on_card_text_edited flush ordering, Box 0 safety, S08 alias compat, idempotent pack/theme) tests (all pass)
   tests/test_v15_s11b2_xuat_batch_sync.py  — 5 S11b2 single-pass O(F+E+B+M) batched XUAT sync, strict Translation\en\Text alignment, C1/C2/C3/C4 conflicts, Stage 4 freshness & granular retry clearing tests (all pass)
   tests/test_v15_s11b_scanner_save_preview.py — 6 S11b strict Translation\en\Text XUAT scanner, Ctrl+S Save Project remap, ProjectDiffDialog theme fallback & Dialogue Preview red-block removal tests (all pass)
@@ -161,6 +172,24 @@ Test suites included in the 466 tests (exact disk discovery):
 - **Status:** ALL automated stabilization sessions (`S01..S13`) are 100% COMPLETE.
 - **Track 2 Unlocked:** Track 2 (`S14..S23`) and `AGENTS.md` §24 MTL Drawer gate are unlocked.
 - **BUG-09 Production Fixture Status:** Real production `.unity3d` verification for `BUG-09` remains explicitly `BLOCKED` (synthetic bundle test passed in S03; real proprietary production fixture `storydata_1001005.unity3d` intentionally excluded from repository). Per `AGENTS.md` §2, missing real production fixtures remain `BLOCKED`, never assumed or falsified as `PASS`.
+
+### v1.5 S11e (`v1.4.15`) — UI Polish, Branding & Usability (`Q-03`, `Q-05`, `Q-13`..`Q-17`) (2026-11-28)
+- **Dated Design Rulings & Decisions:**
+  - **Q-17 Option (b) Approval (Dated 2026-11-28):** Project Lead explicitly approved 3-surface coverage-tier single-box `350ms` `ToolTip` formatting (`"Name — Action (Shortcut)"`) across Search/Dock/Workspace, Side Drawer, and `ImportFromXUATDialog`/`XuatCleanupDialog` cleanly (no bloaty multi-box custom popup).
+  - **Final Icon Map Ledger Note:** Verified on-disk asset mapping (**`BoxInsert.png` -> `Insert` button** and **`BoxReplace.png` -> `Replace` button** inside `_show_box_paste_mode_dialog()`, keeping `actions_bar` at its existing 4 box buttons (`BoxD`, `BoxCut`, `BoxCopy`, `BoxPaste`); `language-translation-icon` -> MTL; `BoxConversationList` -> All Script; `BoxSelectAll`/`BoxSelectOne` [`"Some selected"`]/`BoxSelectNone` -> Q-07/Q-10; `BoxConversation.png` parked/unused) **supersedes the earlier v5 roadmap line**.
+- **`Q-03` Per-Widget Word-Wrap Contract (`misora.py`):** Switched `txt_dialogue` to `wrap="none"`, added pack-only `clean_scroll_x` inside `clean_editor_row` (`_on_toggle_line_numbers()` `.pack(before=...)` & Box 0 / Preview mutual exclusion preserved cleanly), and sized `_auto_resize_dialogue_box()` by logical line count (`7..32`). `txt_box0_summary`, `txt_glossary`, `txt_mtl_all_*`, MTL scratchpads, and dialog editors keep `wrap="word"`.
+- **`Q-05` Full Non-Blocking Splash Lifecycle (`assets/splash.py`, `misora.py`):** Added bounded `_tkinter.DONT_WAIT` event pumping (`<= 24` events, `_pumping`/`_closed` guards) in `MisoraSplashScreen.process_events()`, kept `self._splash` open until `_deferred_restore()` completes when `show_splash=True` (while preserving synchronous `deiconify()` + `"Ready!"` at `__init__` exit when `self._splash is None` for P3-S12), guarded startup exceptions so splash never lingers on failure, and overrode `withdraw()`/`deiconify()` using `super().withdraw()` initially so `_caller_withdrew` tracks only external withdrawals.
+- **`Q-13` & `Q-14` Branding & Support Dialog (`assets/splash.py`, `misora.py`):** Highlighted bold/larger `PriconneRe:TL` + `Cornelia` branding across Splash & About (`"Support the Creator"` button), updated `SupportMeDialog` to title `"Support the Creator — Misora: Story Editor"`, English `SUPPORT_CAPTION_EN`, and `~600px` `Service.gif` display clamped by screen width (`sw - 80`) and height (`sh - 260`).
+- **`Q-15`, `Q-16`, `Q-17` Icons, Menu Dedup & 3-Layer Tooltips (`assets/icon.py`, `misora.py`):** Added `get_dpi_scale()`, `scale_icon_size()`, and Pillow `Image.Resampling.LANCZOS` DPI-aware icon loading (`dpi_aware=False` default preserved for `S04`), wired all verified PNG icons + 3-icon selection trio, removed top-level `NGUI Glossary` (moving `"Reset Color Tag ([-])"` to `Edit`), removed `Help > NGUI & Ruby Glossary` & `Customize` duplicates, exposed `Help > Support the Creator...`, and added `ToolTip.set_text()` + `350ms` tooltips across all 3 UI layers.
+- **Verification (`Windows-11-10.0.26100-SP0`, `Python 3.12.10`):** `compileall` PASS (`exit 0`); `tests.test_v15_s11e_polish_splash_menu_tooltips`: `7/7` Probes FAIL + `2/2` Guards PASS pre-patch -> `9/9 OK` post-patch; targeted 11-suite run (`S11e`, `S11d`, `S05`, `S04`, `S08`, `S03`, `P3-S12`, `P3-S14`, `P3-S18`, `test_misora_ui_integration`, `S8b4`): `98/98 OK (skipped=5)` (`182.768s`); `countTestCases() == 475`; monolithic `unittest discover -s tests -v`: `Ran 475 tests in 589.521s | FAILED (failures=6, errors=2, skipped=35)` (`432` pass, `35` skip, `6` pre-existing fail, `2` pre-existing error, `0` S11e regressions).
+- **Manual Windows QA Checklist (Updated S11e — `MANUAL-PENDING`, NEVER `PASS` before manual execution):**
+  1. Launch `misora.bat` with saved session files -> verify frosted-glass splash (`PriconneRe:TL`, `Cornelia`, `v1.4.15`) animates smoothly through UI construction AND session restoration without freezing, then closes once before revealing the main window.
+  2. Open a wide `txt_dialogue` line -> verify `wrap="none"`, bottom horizontal scrollbar inside `clean_editor_row`, toggling line numbers (`Ctrl+/`) cleanly, and opening Box 0 / `Preview` hides `clean_scroll_x` cleanly.
+  3. Open `Help > About Misora: Story Editor` and click `Support the Creator` (and `Help > Support the Creator...`) -> verify `PriconneRe:TL`/`Cornelia` branding, 100% English copy, ~600px `Service.gif` animation, and zero clipped buttons on 720p/125% DPI.
+  4. Verify verified PNG icons at `20px`/DPI-scaled sharpness on toolbar, `gd_header`, `Select Box` (`All`/`None`), `_show_box_paste_mode_dialog()` (`BoxInsert` vs `BoxReplace`), and `ImportFromXUATDialog` group headers (`BoxSelectNone`, `BoxSelectOne` `"Some selected"`, `BoxSelectAll`).
+  5. Inspect main menu bar -> confirm `NGUI Glossary` top-level menu is removed, `Edit > Reset Color Tag ([-])` works, `View > Toggle NGUI Glossary Panel (F1)` is the sole glossary toggle, `Customize` duplicates are gone, and `Help` has `Support the Creator...` + `About`.
+  6. Hover controls across Search Bar, Left Dock, Workspace, Side Drawer, `ImportFromXUATDialog`, and `XuatCleanupDialog` -> confirm `350ms` tooltips appear accurately (`Some selected` updates dynamically on group toggle).
+  7. Retain all S11d, S11c, S11b2, S11b, S11, S10 & S09b Manual QA items.
 
 ### v1.5 S11d (`v1.4.14`) — Import from XUAT UX & Editor Productivity (`Q-06`..`Q-12`) (2026-11-27)
 - **`Q-06` Recursive MouseWheel Label Propagation (`misora.py`):** Added `ImportFromXUATDialog._bind_mousewheel_recursive(widget)` traversing headers, card frames/labels/checkbuttons, empty-state filter/row placeholder labels, and `scope_cmb` while explicitly skipping `tk.Text` so dialogue/metadata paired previews preserve focus-gated inner scroll and outer scroll works smoothly over every label.

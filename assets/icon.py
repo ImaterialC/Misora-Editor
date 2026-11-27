@@ -114,7 +114,38 @@ def apply_window_icon(window: tk.Tk) -> None:
         pass
 
 
-def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Widget] = None) -> Optional[tk.PhotoImage]:
+def get_dpi_scale(master: Optional[tk.Misc] = None) -> float:
+    """Return clamped DPI scale factor (1.0 .. 2.5) relative to standard 96 DPI."""
+    root = master
+    if root is not None:
+        try:
+            root = root.winfo_toplevel()
+        except Exception:
+            pass
+    if root is None:
+        root = getattr(tk, "_default_root", None)
+    if root is not None:
+        try:
+            px = float(root.winfo_fpixels("1i"))
+            if px > 0:
+                return max(1.0, min(2.5, px / 96.0))
+        except Exception:
+            pass
+    return 1.0
+
+
+def scale_icon_size(size: Tuple[int, int], master: Optional[tk.Misc] = None) -> Tuple[int, int]:
+    """Scale a logical (width, height) icon size by the active Tk DPI factor."""
+    scale = get_dpi_scale(master)
+    return (max(1, int(round(size[0] * scale))), max(1, int(round(size[1] * scale))))
+
+
+def get_icon(
+    name: str,
+    size: Tuple[int, int] = (20, 20),
+    master: Optional[tk.Widget] = None,
+    dpi_aware: bool = False,
+) -> Optional[tk.PhotoImage]:
     """Retrieve a cached Tkinter PhotoImage for the given illustrated icon name and size."""
     root = master
     if root is not None:
@@ -125,8 +156,9 @@ def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Wi
     if root is None:
         root = getattr(tk, "_default_root", None)
 
+    eff_size = scale_icon_size(size, master=root) if dpi_aware else size
     root_id = id(root) if root else 0
-    cache_key = (root_id, name, size[0], size[1])
+    cache_key = (root_id, name, eff_size[0], eff_size[1])
     if cache_key in _ICON_CACHE:
         img = _ICON_CACHE[cache_key]
         try:
@@ -153,8 +185,8 @@ def get_icon(name: str, size: Tuple[int, int] = (18, 18), master: Optional[tk.Wi
                 raw_im.close()
             except Exception:
                 pass
-        if pil_im.size != size:
-            pil_im = pil_im.resize(size, Image.Resampling.LANCZOS)
+        if pil_im.size != eff_size:
+            pil_im = pil_im.resize(eff_size, Image.Resampling.LANCZOS)
         tk_im = ImageTk.PhotoImage(pil_im, master=root) if root else ImageTk.PhotoImage(pil_im)
 
         # Enforce MAX_ICON_CACHE capacity bounding (S8b-2)

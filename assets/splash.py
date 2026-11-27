@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Optional
 
 try:
+    import _tkinter
+except ImportError:  # pragma: no cover
+    _tkinter = None  # type: ignore
+
+try:
     from PIL import Image, ImageTk
     _HAS_PIL = True
 except ImportError:
@@ -63,6 +68,8 @@ class MisoraSplashScreen:
 
     def __init__(self, parent: Optional[tk.Tk] = None):
         self._is_toplevel = parent is not None
+        self._closed: bool = False
+        self._pumping: bool = False
         if self._is_toplevel:
             self._root = tk.Toplevel(parent)
         else:
@@ -97,38 +104,63 @@ class MisoraSplashScreen:
         if self._photo:
             self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
 
-        # Subtle dark glass bar at bottom for text legibility
-        self._canvas.create_rectangle(0, SPLASH_H - 80, SPLASH_W, SPLASH_H, fill="#120624", outline="")
-        self._canvas.create_line(0, SPLASH_H - 80, SPLASH_W, SPLASH_H - 80, fill="#7b42bc", width=1)
+        # Subtle dark glass bar at bottom for text legibility (96px for PriconneRe:TL + Misora + creator)
+        self._canvas.create_rectangle(0, SPLASH_H - 96, SPLASH_W, SPLASH_H, fill="#120624", outline="")
+        self._canvas.create_line(0, SPLASH_H - 96, SPLASH_W, SPLASH_H - 96, fill="#7b42bc", width=1)
 
-        # Title: "Misora: Story Editor" (prominent, with shadow)
+        # Prominent PriconneRe:TL brand header (larger, bold, with shadow)
         self._canvas.create_text(
-            21, SPLASH_H - 51,
+            21, SPLASH_H - 73,
             anchor="w",
-            text="Misora: Story Editor",
-            font=("Segoe UI", 18, "bold"),
+            text="PriconneRe:TL",
+            font=("Segoe UI", 14, "bold"),
             fill="#0a0314",
         )
         self._canvas.create_text(
-            20, SPLASH_H - 52,
+            20, SPLASH_H - 74,
+            anchor="w",
+            text="PriconneRe:TL",
+            font=("Segoe UI", 14, "bold"),
+            fill="#e8dbfa",
+        )
+
+        # Creator & version badge (right-aligned)
+        self._canvas.create_text(
+            SPLASH_W - 20, SPLASH_H - 74,
+            anchor="e",
+            text=f"Created by Cornelia · v{_VERSION}",
+            font=("Segoe UI", 9, "bold"),
+            fill="#d4c4ec",
+        )
+
+        # Title: "Misora: Story Editor" (prominent, with shadow)
+        self._canvas.create_text(
+            21, SPLASH_H - 47,
             anchor="w",
             text="Misora: Story Editor",
-            font=("Segoe UI", 18, "bold"),
+            font=("Segoe UI", 15, "bold"),
+            fill="#0a0314",
+        )
+        self._canvas.create_text(
+            20, SPLASH_H - 48,
+            anchor="w",
+            text="Misora: Story Editor",
+            font=("Segoe UI", 15, "bold"),
             fill="#ffffff",
         )
 
-        # Version & Tool descriptor (small)
+        # Tool descriptor (small)
         self._canvas.create_text(
-            SPLASH_W - 20, SPLASH_H - 52,
+            SPLASH_W - 20, SPLASH_H - 48,
             anchor="e",
-            text=f"Priconne Unity3D Story Tool · v{_VERSION}",
+            text="Priconne Unity3D Story Tool",
             font=("Segoe UI", 8),
-            fill="#d4c4ec",
+            fill="#bfaee0",
         )
 
         # Loading status message (small)
         self._msg_id = self._canvas.create_text(
-            20, SPLASH_H - 24,
+            20, SPLASH_H - 20,
             anchor="w",
             text="Starting…",
             font=("Segoe UI", 8),
@@ -165,25 +197,49 @@ class MisoraSplashScreen:
                 pass
 
     def set_progress(self, val: float, msg: str = "") -> None:
-        """Update progress bar fill and small status text."""
-        val = max(0.0, min(1.0, float(val)))
-        bar_w = int(SPLASH_W * val)
-        self._canvas.coords(self._bar_id, 0, SPLASH_H - 4, bar_w, SPLASH_H)
-        if msg:
-            self._canvas.itemconfig(self._msg_id, text=msg)
-        self._root.update_idletasks()
-
-    def process_events(self) -> None:
-        """Process pending UI events."""
+        """Update progress bar fill and small status text safely."""
+        if self._closed:
+            return
         try:
+            if not self._root.winfo_exists():
+                return
+            val = max(0.0, min(1.0, float(val)))
+            bar_w = int(SPLASH_W * val)
+            self._canvas.coords(self._bar_id, 0, SPLASH_H - 4, bar_w, SPLASH_H)
+            if msg:
+                self._canvas.itemconfig(self._msg_id, text=msg)
             self._root.update_idletasks()
         except Exception:
             pass
 
-    def close(self, callback=None) -> None:
-        """Destroy the splash window immediately."""
+    def process_events(self) -> None:
+        """Pump pending Tk/Win32 UI ticks non-blockingly so Windows never flags Not Responding."""
+        if self._closed or self._pumping:
+            return
+        self._pumping = True
         try:
-            self._root.destroy()
+            if not self._root.winfo_exists():
+                return
+            self._root.update_idletasks()
+            dont_wait = getattr(_tkinter, "DONT_WAIT", 2) if _tkinter is not None else 2
+            for _ in range(24):
+                if self._closed or not self._root.winfo_exists():
+                    break
+                if not self._root.tk.dooneevent(dont_wait):
+                    break
+        except Exception:
+            pass
+        finally:
+            self._pumping = False
+
+    def close(self, callback=None) -> None:
+        """Destroy the splash window idempotently."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self._root.winfo_exists():
+                self._root.destroy()
         except Exception:
             pass
         if callable(callback):

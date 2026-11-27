@@ -212,7 +212,7 @@ class TestV15S11dImportUxProductivity(S11dTestBase):
             dlg._populate_rows()
             dlg.update_idletasks()
 
-        # Q-07: Tri-state group Select All buttons & inspectable state map
+        # Q-07: Tri-state group Select All buttons & inspectable state map (with Q-15 3-icon selection trio)
         self.assertTrue(hasattr(dlg, "_group_select_states"))
         self.assertTrue(hasattr(dlg, "_group_select_buttons"))
         for gk in ("metadata", "actors", "dialogue"):
@@ -220,7 +220,8 @@ class TestV15S11dImportUxProductivity(S11dTestBase):
             btn = dlg._group_select_buttons[gk]
             self.assertIsInstance(btn, ttk.Button)
             self.assertEqual(dlg._group_select_states[gk], "all")
-            self.assertEqual(btn.cget("text"), "[x] Select All")
+            self.assertEqual(btn.cget("text"), "Deselect All")
+            self.assertTrue(str(btn.cget("image")))
             self.assertTrue(hasattr(btn, "_tooltip"))
             self.assertIn("all filters", btn._tooltip.text.lower())
 
@@ -231,7 +232,7 @@ class TestV15S11dImportUxProductivity(S11dTestBase):
             self.assertEqual(spy_upd.call_count, 1, "Bulk toggle must call _update_group_header_state once")
 
         self.assertEqual(dlg._group_select_states["dialogue"], "none")
-        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "[ ] Select All")
+        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "Select All")
         # Both visible duplicate (idx 0) and filtered-out matched row (idx 3) were deselected (var_skip=True)
         self.assertTrue(dlg._rows[0]["var_skip"].get())
         self.assertTrue(dlg._rows[3]["var_skip"].get())
@@ -240,15 +241,16 @@ class TestV15S11dImportUxProductivity(S11dTestBase):
         # Locked row (idx 1) stays locked/skipped
         self.assertTrue(dlg._rows[1]["var_skip"].get())
 
-        # Partial state when 1 eligible row is toggled back ON
+        # Partial state when 1 eligible row is toggled back ON ("Some selected" — NEVER "One selected")
         dlg._rows[0]["var_skip"].set(False)
         self.assertEqual(dlg._group_select_states["dialogue"], "partial")
-        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "[-] Select All")
+        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "Some selected")
+        self.assertNotIn("one selected", str(dlg._group_select_buttons["dialogue"].cget("text")).lower())
 
         # Clicking header on partial deselects all eligible -> none
         dlg._on_group_select_all("dialogue")
         self.assertEqual(dlg._group_select_states["dialogue"], "none")
-        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "[ ] Select All")
+        self.assertEqual(dlg._group_select_buttons["dialogue"].cget("text"), "Select All")
         self.assertTrue(dlg._rows[0]["var_skip"].get())
 
         # Reload rebuilds state cleanly with zero stale button references
