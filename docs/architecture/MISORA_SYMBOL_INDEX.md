@@ -4,7 +4,7 @@
 > **Navigation aid only:** declarations do not prove runtime reachability, call relationships, test coverage, safety, or dead code.
 > Domain grouping is heuristic, not semantic classification.
 
-- Indexed Source Revision: `36e316dc45431cdc1f78b06e380c269b1d3c562a`
+- Indexed Source Revision: `fb6088e7161495e13e5a8e88c687d3aea42a9989`
 - Indexed Python files: 23
 - Parser: Python `ast` (stdlib); UTF-8 decoding is strict.
 
@@ -34,7 +34,7 @@
 | `core/xuat_cleanup.py` | `c67386319f50a781345b389d01cf32c37296587e5a84ecdc6d7de09c08a6478d` | 32 |
 | `core/xuat_index.py` | `ae0845114a08ecbd30110f5b9a1fe6d99d7475b35aec693b38a2d0140fcd226f` | 33 |
 | `core/xunity_sync.py` | `6db2fb6e245196af3e81fe1782648b8701deb71593724be75fc3ff1ba2a03132` | 21 |
-| `misora.py` | `ed39ce3de83dfbb3cb5e8e0f5148919e470a1cac514ccb3acbaf17af7579aee6` | 620 |
+| `misora.py` | `891f128b5ce4cb98309b063eba3167b8ca2dac4475a4848454ac029c349afb17` | 620 |
 
 ## Symbols
 
