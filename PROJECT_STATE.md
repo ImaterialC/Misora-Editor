@@ -41,9 +41,9 @@ Monolithic discovery completed cleanly with `countTestCases() == 504` (`494` pos
 
 ### T-08a (`BUG-UI-TOOLTIP-CLIP-01`) status
 
-- **Automated fix & TDD:** `PASS` (`92	3	misora.py` adding `_get_work_area()` and 4-edge clamping + bottom flip in `ToolTip.show_tip()`, `24,001` lines; `tests/test_t08a_tooltip_clamping.py` `10/10 OK`; targeted `test_t02_next_tooltip` `8/8 OK`, `test_v15_s11e_polish_splash_menu_tooltips` `9/9 OK`; full suite `504 = 461 PASS + 35 SKIP + 6 FAIL + 2 ERROR`).
-- **Windows Manual QA (`M-1..M-6`):** `MANUAL-PENDING` (if single-monitor during QA, `M-5` must be marked `NOT RUN` / `UNVERIFIED`).
-- **Lifecycle:** `ACTIVE` (awaiting `M-1..M-6` QA; main-window off-screen `_deferred_restore()` / `sanitize_window_geometry` sub-item remains open in `OPEN_ISSUES.md`). **N-4 note:** `tools/generate_symbol_index.py --check` is transiently stale until Project Lead post-commit regeneration.
+- **Tooltip fix & TDD:** `QA-VERIFIED` (`92	3	misora.py` at `215bfe8` adding `_get_work_area()` and 4-edge clamping + bottom flip in `ToolTip.show_tip()`, `24,001` lines; `tests/test_t08a_tooltip_clamping.py` `10/10 OK`; targeted `test_t02_next_tooltip` `8/8 OK`, `test_v15_s11e_polish_splash_menu_tooltips` `9/9 OK`; full suite `504 = 461 PASS + 35 SKIP + 6 FAIL + 2 ERROR`; symbol index regenerated at `8488fe1`).
+- **Windows Manual QA (`M-1..M-6`):** `PASS` (commit `215bfe8` / `8488fe1`, `100%` & `125%` DPI and dual-monitor setup for `M-5`, Project Lead; screenshots archived in `D:\Reference\Misora-Reference`).
+- **Lifecycle:** `ACTIVE` (tooltip sub-issue closed/verified; main-window off-screen `_deferred_restore()` / `sanitize_window_geometry` sub-item remains open in `docs/project/OPEN_ISSUES.md`).
 
 Three non-fixture test-hygiene failures recorded:
 1. `tests/test_phase3_performance_config.py::test_05` — local `misora_config.json` isolation hygiene.
