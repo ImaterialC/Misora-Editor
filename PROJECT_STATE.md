@@ -1,8 +1,8 @@
 # Misora — Project State (Layer 0 Dashboard)
 
-**Last reconciled:** 2026-11-28 (T-02 Execution Charter on `v1.4.15`, HEAD `8b75b9e61728f4a5a78d06901b7e7e5006343122`)  
+**Last reconciled:** 2026-11-28 DOCS-01 on `v1.4.15`, HEAD `3edf43e11b3479ac6ab1b20adb03a6e6ad8abfcd`  
 **Repository:** `ImaterialC/Misora-Editor` · **Branch:** `main`  
-**Baseline:** `648cb52b0fccda5e46e26eecf90e3f1dbd719a75` (ENV-01 on S11e)  
+**Historical ENV-01 baseline:** `648cb52b0fccda5e46e26eecf90e3f1dbd719a75` (ENV-01 on S11e)  
 **Current product version:** `1.4.15` (root `__init__.py` is authoritative)
 
 ## 1. Release and roadmap authority
@@ -10,9 +10,9 @@
 - **v1.5.0 release campaign: CANCELLED.** Release status: **NOT RELEASED**. Version promotion: **NOT AUTHORIZED**.
 - Old S12 release audit: **PAUSED / SUPERSEDED**. Do not execute its historical plan as-is.
 - Future S15 work proposal: **CANCELLED**. The completed historical milestone `S15 Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open` (2026-11-25) remains **HISTORICAL-REFERENCE**.
-- ENV-01 is the current authorized documentation/context-hygiene task. It does not authorize product changes, defect fixes, release actions, commits, or pushes.
+- DOCS-01 is the current authorized documentation/context-hygiene task. It does not authorize product changes, defect fixes, release actions, commits, or pushes.
 
-## 2. Verification baseline (post-T-02 automated run)
+## 2. Verification baseline (at `3edf43e`)
 
 Monolithic discovery completed cleanly with `countTestCases() == 494` (`486` post-T-01 baseline + `8` in `tests/test_t02_next_tooltip.py`):
 
@@ -36,8 +36,8 @@ Monolithic discovery completed cleanly with `countTestCases() == 494` (`486` pos
 ### T-02 (`u-08`) status
 
 - **Automated fix & TDD:** `PASS` (`5	5	misora.py` in `lbl_char_overflow` tooltip + 3 docstrings, `tests/test_t02_next_tooltip.py` `8/8 OK`).
-- **Windows Manual QA (`M-1..M-4`):** `MANUAL-PENDING` (T-02 lifecycle remains `ACTIVE` until manual QA passes).
-- **N-4 transient check note:** `tools/generate_symbol_index.py --check` is expected to exit non-zero until Project Lead commits T-02 and regenerates `docs/architecture/MISORA_SYMBOL_INDEX.md`.
+- **Windows Manual QA (`M-1..M-4`):** `PASS` (`v1.4.15` @ `3edf43e11b3479ac6ab1b20adb03a6e6ad8abfcd`, Windows 11 `10.0.26100.6725`, `1920x1080` 100% & 125% DPI, Project Lead). M-1/M-2 (tooltip text) confirmed at both DPI scales; M-3 (Next/Prev tooltips unaffected) confirmed; M-4 (label dynamic update) confirmed `54/54d · 1/3L` with red indicator on overflow.
+- **Lifecycle:** `HISTORICAL-REFERENCE` (closed). T-02 addressed the stale tooltip/docstring only; it is not the same scope as T-08a (window position/DPI layout).
 
 Three non-fixture test-hygiene failures recorded:
 1. `tests/test_phase3_performance_config.py::test_05` — local `misora_config.json` isolation hygiene.
@@ -48,27 +48,22 @@ Fixture-related debt: `tests/test_s8b2_memory_guards.py::test_01..test_05` depen
 
 ## 3. Current issue and QA posture
 
-- T-01..T-04 are reports requiring current-version reproduction/source inspection; they are not confirmed defects merely because they appear in the backlog.
+- **T-01:** `HISTORICAL-REFERENCE` (closed). **T-02:** `HISTORICAL-REFERENCE` (closed).
+- **T-03:** `CONFIRMED` (Windows 8 reproductions with 4 screenshots) + `ROOT-CAUSE: NEEDS-CODE-VERIFY`. `ACTIVE`.
+- **T-04:** `REPORTED` + `NEEDS-REPRO`. `ACTIVE`.
 - T-05..T-10 are configuration/UX/UI proposals requiring triage or design sign-off.
 - T-11..T-14 are future/unscheduled proposals or deferred work; none is authorized by this dashboard.
 - MANUAL-PENDING/revalidation items are tracked in `docs/project/OPEN_ISSUES.md`, including legacy Ribbon Cut/Paste Box checks, S11c/S11d undo/redo and MTL/Box 0 checks, DPI/snapped layout, and Import from XUAT smoke test.
 - `Tcl_AsyncDelete` cross-test teardown is a watch item: seen in earlier S11c/S11d runs, while S11e monolithic discovery completed. Do not report it as a current confirmed failure without reproduction.
 - DEF-01 single-space sentinel is an accepted/deferred compatibility limitation; do not change without a new decision.
+- `tools/generate_symbol_index.py --check` → `CHECK PASS` at `3edf43e`.
 
-## 4. ENV-01 target state
+## 4. Layer 0 structure
 
 Keep Layer 0 lean: this file plus `AGENTS.md` only. Route deeper questions through `docs/ai/CONTEXT_ROUTER.md`. Detailed issue evidence, decisions, migration proof, symbol navigation, and history belong in on-demand documents. Before replacement, copy old root docs as raw bytes and verify SHA-256 plus byte equality; never add a header/TOC or normalize archives.
 
-For ENV-01, these paths are absolutely READ-ONLY: `__init__.py`, `misora.py`, `core/**`, `assets/**`, `tests/**`, `misora.bat`, `requirements.txt`, `misora_config.json`, `backups/**`, and `README.md`. No dependency, release, commit, tag, or push operation is authorized.
-
 Hard size caps: `AGENTS.md` <= 6 KiB (6144 bytes); `PROJECT_STATE.md` <= 15 KiB (15360 bytes). Preferred targets: AGENTS 3–5 KiB; Project State 8–10 KiB. Byte counts, not token estimates, are the acceptance measure.
 
-## 5. Next authorized action
+## 5. Next planned task
 
-1. Verify local `main` at exact S11e HEAD and clean working tree.
-2. Run Antigravity `/plan` in read-only mode; it must STOP before edits.
-3. Obtain independent reviews from Gemini, GPT-6, and Qwen.
-4. Execute only after explicit Project Lead Proceed authorization.
-5. Verify all 11 ENV-01 acceptance gates and the four-AI validation experiment.
-
-Any baseline mismatch, target collision, archive hash mismatch, incomplete migration row, test count other than 475, or request to edit a forbidden path is a STOP condition.
+**T-08a** (window position / screen-edge clamp / DPI), followed by **T-04** (overflow line-count boundary) — **NOT AUTHORIZED**. A new task requires exact baseline, scope, evidence/repro, affected symbols/tests, acceptance criteria, rollback, and explicit Project Lead approval.

@@ -37,7 +37,7 @@
 - `core/ngui_tags.py` is the NGUI tag source; gradients emit `[RRGGBB-RRGGBB]`. Length metrics measure rendered text, not markup.
 - Shortcuts are whitelist-only; respect Text/Entry Ctrl+C/V/X/A, Shift, Caps Lock, AltGr, IME, and modal grabs. Advertised accelerators must work. Icon-only controls need tooltips, text fallback, and theme contrast.
 - One process; no second splash process. Lazy-load dependencies; do not mutate DPI awareness at runtime. Logger writes use a background queue.
-- Native overflow: 50 digit-widths or 3+ hard linebreaks (4+ lines); editor font is an estimate. Preserve Box 0 invariants.
+- Native overflow: 54 digit-widths or 3+ hard linebreaks (4+ lines); editor font is an estimate. Preserve Box 0 invariants.
 
 ## 8. Current release authority and delivery
 - Product `1.4.15`; `v1.5.0` campaign `CANCELLED` / `NOT RELEASED`; promotion `NOT AUTHORIZED`. Old S12 audit `PAUSED / SUPERSEDED`.
