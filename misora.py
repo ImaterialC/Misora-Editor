@@ -5574,8 +5574,8 @@ class MisoraApp(tk.Tk):
         self.lbl_char_overflow.pack(side="right", padx=(4, 2))
         create_tooltip(
             self.lbl_char_overflow,
-            "Native 50 x 3 dialogue rule: <= 50 digit-widths without linebreak AND < 3 linebreaks (<= 3 lines).\n"
-            "Measured using the active editor font as an estimate of the in-game font (NGUI tags excluded)."
+            f"Native {DIALOGUE_MAX_DIGITS}d x {DIALOGUE_MAX_LINES} dialogue rule: <= {DIALOGUE_MAX_DIGITS} digit-widths without linebreak AND < {DIALOGUE_MAX_LINES} linebreaks (<= {DIALOGUE_MAX_LINES} lines).\n"
+            "Line widths measured in the active editor font against a fixed reference boundary calibrated to the in-game box (NGUI tags excluded)."
         )
 
         self.ico_next = self.get_icon("nav_next", (14, 14))
@@ -13420,7 +13420,7 @@ class MisoraApp(tk.Tk):
         return cached
 
     def _get_ruler_measure_font(self) -> tkfont.Font:
-        """Return a cached tkfont.Font locked to Nunito Bold for constant 50d ruler calibration (U19)."""
+        """Return a cached tkfont.Font locked to Nunito Bold for constant 54d ruler calibration (U19)."""
         if hasattr(self, "font_manager"):
             r_fam, r_weight = self.font_manager.resolve_font_parts(
                 PRESET_GLOBAL, available_families=self._get_available_font_families()
@@ -13522,7 +13522,7 @@ class MisoraApp(tk.Tk):
         }
 
     def _update_char_overflow_indicator(self, text: Optional[str] = None) -> None:
-        """Update pixel-calibrated 50d x 3L indicator in dialogue header (U06, DEF-04)."""
+        """Update pixel-calibrated 54d x 3L indicator in dialogue header (U06, DEF-04)."""
         lbl = getattr(self, "lbl_char_overflow", None)
         if not lbl or not lbl.winfo_exists():
             return
@@ -13604,7 +13604,7 @@ class MisoraApp(tk.Tk):
             pass
 
     def _draw_single_pixel_ruler(self, canvas: tk.Canvas, x0: int) -> None:
-        """Render tick marks and constant 50 digit-width overflow zone on a Canvas ruler (U19)."""
+        """Render tick marks and constant 54 digit-width overflow zone on a Canvas ruler (U19)."""
         if not canvas or not canvas.winfo_exists():
             return
         t = self.theme
