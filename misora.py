@@ -199,6 +199,67 @@ def _get_app_version() -> str:
 __version__ = _get_app_version()
 
 
+def _get_work_area(x: int, y: int, fallback_widget: Optional[tk.Widget] = None) -> Tuple[int, int, int, int]:
+    """Return (work_left, work_top, work_right, work_bottom) for the monitor containing (x, y).
+
+    Uses Win32 MonitorFromPoint/GetMonitorInfoW on Windows with explicit ctypes
+    prototypes (use_last_error=True) for taskbar-excluded multi-monitor bounds.
+    Falls back to Tk primary screen dimensions (not per-monitor/taskbar-excluded)
+    when non-Windows, Win32 DLL is unavailable, or Win32 API returns failure.
+    ZERO changes to DPI awareness (Rule 23).
+    """
+    if sys.platform == "win32":
+        from ctypes import wintypes as _wt
+
+        class _RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", _wt.LONG),
+                ("top", _wt.LONG),
+                ("right", _wt.LONG),
+                ("bottom", _wt.LONG),
+            ]
+
+        class _MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", _wt.DWORD),
+                ("rcMonitor", _RECT),
+                ("rcWork", _RECT),
+                ("dwFlags", _wt.DWORD),
+            ]
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+        except OSError:
+            user32 = None
+
+        if user32 is not None:
+            hmonitor_type = getattr(_wt, "HMONITOR", _wt.HANDLE)
+            monitor_from_point = user32.MonitorFromPoint
+            monitor_from_point.argtypes = [_wt.POINT, _wt.DWORD]
+            monitor_from_point.restype = hmonitor_type
+
+            get_monitor_info = user32.GetMonitorInfoW
+            get_monitor_info.argtypes = [hmonitor_type, ctypes.POINTER(_MONITORINFO)]
+            get_monitor_info.restype = _wt.BOOL
+
+            pt = _wt.POINT(int(x), int(y))
+            hmon = monitor_from_point(pt, 2)  # MONITOR_DEFAULTTONEAREST = 2
+            if hmon:
+                mi = _MONITORINFO()
+                mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                if get_monitor_info(hmon, ctypes.byref(mi)):
+                    r = mi.rcWork
+                    return (int(r.left), int(r.top), int(r.right), int(r.bottom))
+    try:
+        if fallback_widget is not None:
+            sw = int(fallback_widget.winfo_screenwidth() or 1920)
+            sh = int(fallback_widget.winfo_screenheight() or 1080)
+            return (0, 0, sw, sh)
+    except (tk.TclError, ValueError, TypeError, AttributeError):
+        pass
+    return (0, 0, 1920, 1080)
+
+
 class ToolTip:
     """Robust hover tooltip for Tkinter widgets with delayed display and safe lifecycle (Part C.5 / TOOLTIP-LIFECYCLE)."""
 
@@ -262,11 +323,9 @@ class ToolTip:
         if self.tip_window or not self.text or not self.widget_exists():
             return
         try:
-            x = self.widget.winfo_rootx() + 8
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
             self.tip_window = tw = tk.Toplevel(self.widget)
             tw.wm_overrideredirect(True)
-            tw.wm_geometry(f"+{x}+{y}")
+            tw.withdraw()
             label = tk.Label(
                 tw,
                 text=self.text,
@@ -281,6 +340,36 @@ class ToolTip:
             )
             label.pack(ipadx=1)
             self._label = label
+
+            tw.update_idletasks()
+            tip_w = tw.winfo_reqwidth()
+            tip_h = tw.winfo_reqheight()
+
+            widget_x = self.widget.winfo_rootx()
+            widget_y = self.widget.winfo_rooty()
+            widget_h = self.widget.winfo_height()
+
+            margin = 2
+            work_left, work_top, work_right, work_bottom = _get_work_area(
+                widget_x, widget_y, fallback_widget=self.widget
+            )
+
+            x = widget_x + 8
+            y = widget_y + widget_h + 4
+
+            if x + tip_w > work_right - margin:
+                x = work_right - tip_w - margin
+            if x < work_left + margin:
+                x = work_left + margin
+            if y + tip_h > work_bottom - margin:
+                y = widget_y - tip_h - 4
+            if y + tip_h > work_bottom - margin:
+                y = work_bottom - tip_h - margin
+            if y < work_top + margin:
+                y = work_top + margin
+
+            tw.wm_geometry(f"+{x}+{y}")
+            tw.deiconify()
         except Exception:
             self.hide_tip()
 

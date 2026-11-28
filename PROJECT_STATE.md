@@ -12,20 +12,20 @@
 - Future S15 work proposal: **CANCELLED**. The completed historical milestone `S15 Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open` (2026-11-25) remains **HISTORICAL-REFERENCE**.
 - DOCS-01 is the current authorized documentation/context-hygiene task. It does not authorize product changes, defect fixes, release actions, commits, or pushes.
 
-## 2. Verification baseline (at `3edf43e`)
+## 2. Verification baseline (at `9fa2663` + T-08a)
 
-Monolithic discovery completed cleanly with `countTestCases() == 494` (`486` post-T-01 baseline + `8` in `tests/test_t02_next_tooltip.py`):
+Monolithic discovery completed cleanly with `countTestCases() == 504` (`494` post-T-02/DOCS-01 baseline + `10` in `tests/test_t08a_tooltip_clamping.py`):
 
 | Result | Count |
 |---|---:|
-| Total tests | 494 |
-| PASS | 451 |
+| Total tests | 504 |
+| PASS | 461 |
 | SKIP | 35 |
 | FAIL | 6 |
 | ERROR | 2 |
-| New T-02 regressions | 0 |
+| New T-08a regressions | 0 |
 
-**494 is the total discovered/executed count, not 494 passing tests.** The 6 failures and 2 errors are unchanged pre-existing S11e baseline debt: 3 non-fixture hygiene failures + 3 fixture failures and 2 fixture errors in `test_s8b2_memory_guards` (plus 35 fixture skips) due to unavailable `storydata_1001005.unity3d`.
+**504 is the total discovered/executed count, not 504 passing tests.** The 6 failures and 2 errors are unchanged pre-existing S11e baseline debt: 3 non-fixture hygiene failures + 3 fixture failures and 2 fixture errors in `test_s8b2_memory_guards` (plus 35 fixture skips) due to unavailable `storydata_1001005.unity3d`.
 
 ### T-01 (`BUG-UI-EMPTY-STATE-01`) status
 
@@ -38,6 +38,12 @@ Monolithic discovery completed cleanly with `countTestCases() == 494` (`486` pos
 - **Automated fix & TDD:** `PASS` (`5	5	misora.py` in `lbl_char_overflow` tooltip + 3 docstrings, `tests/test_t02_next_tooltip.py` `8/8 OK`).
 - **Windows Manual QA (`M-1..M-4`):** `PASS` (`v1.4.15` @ `3edf43e11b3479ac6ab1b20adb03a6e6ad8abfcd`, Windows 11 `10.0.26100.6725`, `1920x1080` 100% & 125% DPI, Project Lead). M-1/M-2 (tooltip text) confirmed at both DPI scales; M-3 (Next/Prev tooltips unaffected) confirmed; M-4 (label dynamic update) confirmed `54/54d · 1/3L` with red indicator on overflow.
 - **Lifecycle:** `HISTORICAL-REFERENCE` (closed). T-02 addressed the stale tooltip/docstring only; it is not the same scope as T-08a (window position/DPI layout).
+
+### T-08a (`BUG-UI-TOOLTIP-CLIP-01`) status
+
+- **Automated fix & TDD:** `PASS` (`92	3	misora.py` adding `_get_work_area()` and 4-edge clamping + bottom flip in `ToolTip.show_tip()`, `24,001` lines; `tests/test_t08a_tooltip_clamping.py` `10/10 OK`; targeted `test_t02_next_tooltip` `8/8 OK`, `test_v15_s11e_polish_splash_menu_tooltips` `9/9 OK`; full suite `504 = 461 PASS + 35 SKIP + 6 FAIL + 2 ERROR`).
+- **Windows Manual QA (`M-1..M-6`):** `MANUAL-PENDING` (if single-monitor during QA, `M-5` must be marked `NOT RUN` / `UNVERIFIED`).
+- **Lifecycle:** `ACTIVE` (awaiting `M-1..M-6` QA; main-window off-screen `_deferred_restore()` / `sanitize_window_geometry` sub-item remains open in `OPEN_ISSUES.md`). **N-4 note:** `tools/generate_symbol_index.py --check` is transiently stale until Project Lead post-commit regeneration.
 
 Three non-fixture test-hygiene failures recorded:
 1. `tests/test_phase3_performance_config.py::test_05` — local `misora_config.json` isolation hygiene.
@@ -56,7 +62,7 @@ Fixture-related debt: `tests/test_s8b2_memory_guards.py::test_01..test_05` depen
 - MANUAL-PENDING/revalidation items are tracked in `docs/project/OPEN_ISSUES.md`, including legacy Ribbon Cut/Paste Box checks, S11c/S11d undo/redo and MTL/Box 0 checks, DPI/snapped layout, and Import from XUAT smoke test.
 - `Tcl_AsyncDelete` cross-test teardown is a watch item: seen in earlier S11c/S11d runs, while S11e monolithic discovery completed. Do not report it as a current confirmed failure without reproduction.
 - DEF-01 single-space sentinel is an accepted/deferred compatibility limitation; do not change without a new decision.
-- `tools/generate_symbol_index.py --check` → `CHECK PASS` at `3edf43e`.
+- `tools/generate_symbol_index.py --check` → transiently stale (N-4) after T-08a added `_get_work_area()` in `misora.py`; regeneration deferred to Project Lead post-commit.
 
 ## 4. Layer 0 structure
 
@@ -66,4 +72,4 @@ Hard size caps: `AGENTS.md` <= 6 KiB (6144 bytes); `PROJECT_STATE.md` <= 15 KiB 
 
 ## 5. Next planned task
 
-**T-08a** (window position / screen-edge clamp / DPI), followed by **T-04** (overflow line-count boundary) — **NOT AUTHORIZED**. A new task requires exact baseline, scope, evidence/repro, affected symbols/tests, acceptance criteria, rollback, and explicit Project Lead approval.
+**T-08a** (`BUG-UI-TOOLTIP-CLIP-01` automated fix landed; `M-1..M-6` `MANUAL-PENDING` and main-window off-screen sub-item open), followed by **T-04** (overflow line-count boundary) — **NOT AUTHORIZED**. A new task requires exact baseline, scope, evidence/repro, affected symbols/tests, acceptance criteria, rollback, and explicit Project Lead approval.
