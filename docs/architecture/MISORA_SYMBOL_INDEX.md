@@ -4,7 +4,7 @@
 > **Navigation aid only:** declarations do not prove runtime reachability, call relationships, test coverage, safety, or dead code.
 > Domain grouping is heuristic, not semantic classification.
 
-- Indexed Source Revision: `fb6088e7161495e13e5a8e88c687d3aea42a9989`
+- Indexed Source Revision: `215bfe8ee9e92608bca38448bcfb996f6a9cdfbb`
 - Indexed Python files: 23
 - Parser: Python `ast` (stdlib); UTF-8 decoding is strict.
 
@@ -34,7 +34,7 @@
 | `core/xuat_cleanup.py` | `c67386319f50a781345b389d01cf32c37296587e5a84ecdc6d7de09c08a6478d` | 32 |
 | `core/xuat_index.py` | `ae0845114a08ecbd30110f5b9a1fe6d99d7475b35aec693b38a2d0140fcd226f` | 33 |
 | `core/xunity_sync.py` | `6db2fb6e245196af3e81fe1782648b8701deb71593724be75fc3ff1ba2a03132` | 21 |
-| `misora.py` | `891f128b5ce4cb98309b063eba3167b8ca2dac4475a4848454ac029c349afb17` | 620 |
+| `misora.py` | `556f46ebc214a6e3b6ddcac6e29cb3c3edce17608a13a25ef3b208787b1eb5b6` | 621 |
 
 ## Symbols
 
@@ -364,624 +364,625 @@
 | Other / unclassified | `core/xunity_sync.py` | 346 | method | `XUnitySyncManager.batch_sync` | `self, targets: List[BatchSyncTarget], search_roots: List[Path], backup: bool=True, backup_dir: Optional[Path]=None, conflict_callback: Optional[Callable[[List[BatchConflictItem]], bool]]=None, is_excluded_fn: Optional[Callable[[Path], bool]]=None, resolve_roots_fn: Optional[Callable[[Iterable[Union[str, Path]]], List[Path]]]=None, backup_path_fn: Optional[Callable[[Union[str, Path], Union[str, Path], str], Path]]=None` |
 | UI / Tk | `misora.py` | 157 | function | `_put_queue_cancellable` | `q: queue.Queue, item: Any, cancel_event: Optional[threading.Event]=None, legacy_flag_getter: Optional[Callable[[], bool]]=None` |
 | UI / Tk | `misora.py` | 179 | function | `_get_app_version` | `` |
-| UI / Tk | `misora.py` | 202 | class | `ToolTip` | `` |
-| UI / Tk | `misora.py` | 205 | method | `ToolTip.__init__` | `self, widget: tk.Widget, text: str, delay_ms: int=350` |
-| UI / Tk | `misora.py` | 219 | method | `ToolTip.set_text` | `self, text: str` |
-| UI / Tk | `misora.py` | 229 | method | `ToolTip.on_enter` | `self, _event=None` |
-| UI / Tk | `misora.py` | 238 | method | `ToolTip.on_leave` | `self, _event=None` |
-| UI / Tk | `misora.py` | 242 | method | `ToolTip.on_destroy` | `self, _event=None` |
-| UI / Tk | `misora.py` | 246 | method | `ToolTip.cancel_timer` | `self` |
-| UI / Tk | `misora.py` | 254 | method | `ToolTip.widget_exists` | `self` |
-| UI / Tk | `misora.py` | 260 | method | `ToolTip.show_tip` | `self` |
-| UI / Tk | `misora.py` | 287 | method | `ToolTip.hide_tip` | `self, _event=None` |
-| UI / Tk | `misora.py` | 298 | function | `create_tooltip` | `widget: tk.Widget, text: str, delay_ms: int=350` |
-| UI / Tk | `misora.py` | 549 | function | `wcag_relative_luminance` | `hex_color: str` |
-| UI / Tk | `misora.py` | 564 | function | `wcag_contrast_ratio` | `hex_a: str, hex_b: str` |
-| UI / Tk | `misora.py` | 572 | function | `best_contrast_fg` | `bg_hex: str, dark_fg: str='#14141a', light_fg: str='#ffffff'` |
-| UI / Tk | `misora.py` | 585 | function | `_ensure_wcag_fg` | `preferred_hex: str, bg_hex: str, dark_fg: str='#14141a', light_fg: str='#ffffff', min_ratio: float=4.5` |
-| UI / Tk | `misora.py` | 599 | function | `_wcag_muted_fg` | `muted_hex: str, bg_hex: str, fallback_fg: str, min_ratio: float=4.6` |
-| UI / Tk | `misora.py` | 620 | function | `init_process_dpi_awareness` | `` |
-| UI / Tk | `misora.py` | 645 | function | `sanitize_window_geometry` | `geom_str: str, screen_w: int, screen_h: int` |
-| UI / Tk | `misora.py` | 673 | class | `NguiColorPickerPopup` | `` |
-| UI / Tk | `misora.py` | 681 | method | `NguiColorPickerPopup.__init__` | `self, parent: 'MisoraApp', primary_hex: str='#7b42bc', secondary_hex: str='#ff7da7'` |
-| UI / Tk | `misora.py` | 740 | method | `NguiColorPickerPopup._build_ui` | `self` |
-| UI / Tk | `misora.py` | 954 | method | `NguiColorPickerPopup._select_stop` | `self, stop_idx: int` |
-| UI / Tk | `misora.py` | 964 | method | `NguiColorPickerPopup._render_hue_bar` | `self` |
-| UI / Tk | `misora.py` | 997 | method | `NguiColorPickerPopup._render_sv_map` | `self` |
-| UI / Tk | `misora.py` | 1035 | method | `NguiColorPickerPopup._render_gradient_preview` | `self` |
-| UI / Tk | `misora.py` | 1073 | method | `NguiColorPickerPopup._sync_ui_from_hsv` | `self` |
-| UI / Tk | `misora.py` | 1111 | method | `NguiColorPickerPopup._on_sv_drag` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 1118 | method | `NguiColorPickerPopup._on_hue_drag` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 1124 | method | `NguiColorPickerPopup._set_color_hex` | `self, hex_str: str` |
-| UI / Tk | `misora.py` | 1138 | method | `NguiColorPickerPopup._on_hex_entry_commit` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 1147 | method | `NguiColorPickerPopup._toggle_eyedropper` | `self` |
-| UI / Tk | `misora.py` | 1166 | method | `NguiColorPickerPopup._poll_eyedropper` | `self` |
-| UI / Tk | `misora.py` | 1228 | method | `NguiColorPickerPopup._stop_eyedropper` | `self` |
-| UI / Tk | `misora.py` | 1245 | method | `NguiColorPickerPopup._commit_single_color` | `self` |
-| UI / Tk | `misora.py` | 1251 | method | `NguiColorPickerPopup._commit_gradient_color` | `self` |
-| UI / Tk | `misora.py` | 1258 | method | `NguiColorPickerPopup._on_escape` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 1264 | method | `NguiColorPickerPopup._on_close` | `self` |
-| UI / Tk | `misora.py` | 1280 | function | `safe_grab_release` | `dialog: Optional[tk.Toplevel]` |
-| UI / Tk | `misora.py` | 1290 | class | `ProjectDiffDialog` | `` |
-| UI / Tk | `misora.py` | 1293 | method | `ProjectDiffDialog.__init__` | `self, parent: 'MisoraApp', diff_entries: List[WorkspaceDiffEntry], target_name: str=''` |
-| Bundle / persistence | `misora.py` | 1408 | function | `write_atomic_utf8` | `path: Union[str, Path], content: str, encoding: str='utf-8', has_bom: bool=False, newline: Optional[str]=None` |
-| Bundle / persistence | `misora.py` | 1419 | function | `make_collision_resistant_backup_path` | `source_path: Union[str, Path], backup_dir: Union[str, Path], tag: str='bak'` |
-| AST / serialization | `misora.py` | 1450 | function | `_get_box_uid` | `box: Any` |
-| UI / Tk | `misora.py` | 1462 | function | `_hash_mtl_source` | `text: str` |
-| UI / Tk | `misora.py` | 1467 | function | `compute_stable_lock_key` | `box_ordinal: int, original_jp_text: str` |
-| UI / Tk | `misora.py` | 1472 | function | `get_document_stable_locks` | `doc: Any, locked_uids: Set[int], original_jp_by_uid: Dict[int, str]` |
-| UI / Tk | `misora.py` | 1489 | function | `restore_stable_locks` | `doc: Any, stable_locks: Iterable[Tuple[int, str]], original_jp_by_uid: Optional[Dict[int, str]]=None` |
-| Search | `misora.py` | 1515 | class | `_ReplaceRowProxy` | `` |
-| Search | `misora.py` | 1518 | method | `_ReplaceRowProxy.__init__` | `self, app: Any` |
-| Search | `misora.py` | 1521 | method | `_ReplaceRowProxy.pack_forget` | `self` |
-| Search | `misora.py` | 1525 | method | `_ReplaceRowProxy.grid_remove` | `self` |
-| Search | `misora.py` | 1529 | method | `_ReplaceRowProxy.pack` | `self, *args: Any, **kwargs: Any` |
-| Search | `misora.py` | 1533 | method | `_ReplaceRowProxy.grid` | `self, *args: Any, **kwargs: Any` |
-| Search | `misora.py` | 1537 | method | `_ReplaceRowProxy.winfo_viewable` | `self` |
-| Search | `misora.py` | 1540 | method | `_ReplaceRowProxy.winfo_manager` | `self` |
-| UI / Tk | `misora.py` | 1544 | class | `_AllScriptPoolCard` | `` |
-| UI / Tk | `misora.py` | 1547 | method | `_AllScriptPoolCard.__init__` | `self, master: tk.Misc, app: 'MisoraApp'` |
-| AST / serialization | `misora.py` | 1636 | class | `_AllScriptBox0Card` | `` |
-| AST / serialization | `misora.py` | 1639 | method | `_AllScriptBox0Card.__init__` | `self, master: tk.Misc, app: 'MisoraApp'` |
-| AST / serialization | `misora.py` | 1700 | class | `_XuatBoxSnapshot` | `` |
-| XUAT / text IO | `misora.py` | 1707 | class | `_XuatDocSnapshot` | `` |
-| XUAT / text IO | `misora.py` | 1710 | method | `_XuatDocSnapshot.__init__` | `self, doc: Any` |
-| XUAT / text IO | `misora.py` | 1735 | method | `_XuatDocSnapshot.get_metadata` | `self` |
-| UI / Tk | `misora.py` | 1740 | class | `_ProgressTask` | `` |
-| UI / Tk | `misora.py` | 1749 | class | `_ProgressTaskManager` | `` |
-| UI / Tk | `misora.py` | 1766 | method | `_ProgressTaskManager.__init__` | `self, app: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 1781 | method | `_ProgressTaskManager.post_start` | `self, task_id: str, gen: int, label: str, cancel_event: Optional[threading.Event]=None` |
-| UI / Tk | `misora.py` | 1790 | method | `_ProgressTaskManager.post_progress` | `self, task_id: str, gen: int, fraction: float, label: Optional[str]=None` |
-| UI / Tk | `misora.py` | 1804 | method | `_ProgressTaskManager.post_complete` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1807 | method | `_ProgressTaskManager.post_fail` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1810 | method | `_ProgressTaskManager.post_cancel` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1816 | method | `_ProgressTaskManager.start` | `self, task_id: str, gen: int, label: str, cancel_event: Optional[threading.Event]=None` |
-| UI / Tk | `misora.py` | 1827 | method | `_ProgressTaskManager.update` | `self, task_id: str, gen: int, fraction: float, label: Optional[str]=None` |
-| UI / Tk | `misora.py` | 1838 | method | `_ProgressTaskManager.complete` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1843 | method | `_ProgressTaskManager.fail` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1848 | method | `_ProgressTaskManager.cancel` | `self, task_id: str, gen: int, message: str=''` |
-| UI / Tk | `misora.py` | 1853 | method | `_ProgressTaskManager._ensure_polling` | `self` |
-| UI / Tk | `misora.py` | 1864 | method | `_ProgressTaskManager._poll` | `self` |
-| UI / Tk | `misora.py` | 1872 | method | `_ProgressTaskManager.drain_now` | `self` |
-| UI / Tk | `misora.py` | 1942 | method | `_ProgressTaskManager._refresh_display` | `self` |
-| UI / Tk | `misora.py` | 1991 | method | `_ProgressTaskManager.shutdown` | `self` |
-| UI / Tk | `misora.py` | 2023 | class | `MisoraApp` | `` |
-| UI / Tk | `misora.py` | 2026 | method | `MisoraApp.__init__` | `self, initial_path: Optional[str]=None, show_splash: bool=True, _progress_callback=None, restore_session: bool=True` |
-| UI / Tk | `misora.py` | 2427 | method | `MisoraApp._close_splash_safely` | `self` |
-| UI / Tk | `misora.py` | 2436 | method | `MisoraApp.withdraw` | `self` |
-| UI / Tk | `misora.py` | 2442 | method | `MisoraApp.deiconify` | `self` |
-| UI / Tk | `misora.py` | 2446 | method | `MisoraApp.get_icon` | `self, name: str, size: Tuple[int, int]=(20, 20), dpi_aware: bool=False` |
-| UI / Tk | `misora.py` | 2450 | method | `MisoraApp.safe_clipboard_get` | `self` |
-| UI / Tk | `misora.py` | 2462 | method | `MisoraApp.safe_clipboard_set` | `self, text: str` |
-| UI / Tk | `misora.py` | 2478 | method | `MisoraApp._install_exception_hooks` | `self` |
-| UI / Tk | `misora.py` | 2487 | method | `MisoraApp.report_callback_exception` | `self, exc, val, tb` |
-| UI / Tk | `misora.py` | 2496 | method | `MisoraApp._on_app_exit` | `self` |
-| UI / Tk | `misora.py` | 2541 | method | `MisoraApp._on_root_destroy` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 2631 | method | `MisoraApp.destroy` | `self` |
-| Bundle / persistence | `misora.py` | 2793 | method | `MisoraApp._load_user_prefs` | `self` |
-| Bundle / persistence | `misora.py` | 2939 | method | `MisoraApp._save_user_prefs` | `self, silent: bool=False` |
-| UI / Tk | `misora.py` | 3017 | method | `MisoraApp._detect_active_preset_name` | `self` |
-| UI / Tk | `misora.py` | 3025 | method | `MisoraApp._is_dark_color` | `hex_color: str` |
-| UI / Tk | `misora.py` | 3029 | method | `MisoraApp._is_light_theme` | `self` |
-| UI / Tk | `misora.py` | 3034 | method | `MisoraApp._shift_hex` | `hex_color: str, delta: int` |
-| UI / Tk | `misora.py` | 3043 | method | `MisoraApp._tag_role` | `self, widget: tk.Widget, role: str` |
-| UI / Tk | `misora.py` | 3049 | method | `MisoraApp.dialogue_font_family` | `self` |
-| UI / Tk | `misora.py` | 3054 | method | `MisoraApp.dialogue_font_family` | `self, value: str` |
-| UI / Tk | `misora.py` | 3061 | method | `MisoraApp.dialogue_font_size` | `self` |
-| UI / Tk | `misora.py` | 3066 | method | `MisoraApp.dialogue_font_size` | `self, value: int` |
-| UI / Tk | `misora.py` | 3072 | method | `MisoraApp._get_available_font_families` | `self` |
-| UI / Tk | `misora.py` | 3078 | method | `MisoraApp._resolve_active_dialogue_font_parts` | `self` |
-| UI / Tk | `misora.py` | 3084 | method | `MisoraApp._get_dialogue_font_tuple` | `self, size: Optional[int]=None, *styles: str` |
-| UI / Tk | `misora.py` | 3097 | method | `MisoraApp._apply_theme_and_fonts_live` | `self, save: bool=True` |
-| UI / Tk | `misora.py` | 3462 | method | `MisoraApp.set_status` | `self, message: str, is_error: bool=False, timeout_ms: Optional[int]=None` |
-| UI / Tk | `misora.py` | 3493 | method | `MisoraApp._reset_status` | `self` |
-| UI / Tk | `misora.py` | 3506 | method | `MisoraApp.show_toast` | `self, message: str, duration_ms: int=2200, is_accent: bool=True, is_error: bool=False, status_bar: bool=True` |
-| UI / Tk | `misora.py` | 3545 | method | `MisoraApp._display_toast` | `self, message: str, duration_ms: int, is_accent: bool, is_error: bool` |
-| UI / Tk | `misora.py` | 3602 | method | `MisoraApp._dismiss_toast` | `self` |
-| UI / Tk | `misora.py` | 3625 | method | `MisoraApp._sweep_cstyle_tags` | `self, widget: Optional[tk.Text]` |
-| UI / Tk | `misora.py` | 3633 | method | `MisoraApp._configure_editor_rich_tags` | `self, widget: tk.Text, d_fam: str, d_sz: int` |
-| UI / Tk | `misora.py` | 3685 | method | `MisoraApp._init_drag_and_drop` | `self` |
-| UI / Tk | `misora.py` | 3797 | method | `MisoraApp._cleanup_drag_and_drop` | `self` |
-| UI / Tk | `misora.py` | 3820 | method | `MisoraApp.on_force_open_file` | `self` |
-| UI / Tk | `misora.py` | 3830 | method | `MisoraApp._check_batch_safety` | `self, files: List[Path]` |
-| UI / Tk | `misora.py` | 3871 | method | `MisoraApp._on_dnd_settings_dialog` | `self` |
-| UI / Tk | `misora.py` | 3961 | method | `MisoraApp._handle_dropped_paths` | `self, paths: List[Path]` |
-| UI / Tk | `misora.py` | 4051 | method | `MisoraApp._process_opened_folder` | `self, folder: Path, source_label: str='Folder'` |
-| UI / Tk | `misora.py` | 4156 | method | `MisoraApp._set_project_folder` | `self, folder: Union[str, Path]` |
-| XUAT / text IO | `misora.py` | 4166 | method | `MisoraApp._resolve_xuat_text_root` | `self, proj_dir: Optional[Path]` |
-| Search | `misora.py` | 4181 | method | `MisoraApp._resolve_project_search_roots` | `self, proj_dir: Optional[Path]` |
-| UI / Tk | `misora.py` | 4218 | method | `MisoraApp._detect_environment` | `self` |
-| Bundle / persistence | `misora.py` | 4248 | method | `MisoraApp._get_backup_dir` | `self` |
-| UI / Tk | `misora.py` | 4258 | method | `MisoraApp._apply_styles` | `self` |
-| UI / Tk | `misora.py` | 4620 | method | `MisoraApp._build_menu` | `self` |
-| Search | `misora.py` | 5040 | method | `MisoraApp._build_search_bar` | `self` |
-| Search | `misora.py` | 5214 | method | `MisoraApp._show_replace_row` | `self` |
-| Search | `misora.py` | 5225 | method | `MisoraApp._hide_replace_row` | `self` |
-| UI / Tk | `misora.py` | 5239 | method | `MisoraApp._build_main_panels` | `self` |
-| UI / Tk | `misora.py` | 6812 | method | `MisoraApp._on_debug_settings_changed` | `self` |
-| UI / Tk | `misora.py` | 6825 | method | `MisoraApp._sync_debug_menu_states` | `self` |
-| UI / Tk | `misora.py` | 6833 | method | `MisoraApp._on_open_debug_log_file` | `self` |
-| UI / Tk | `misora.py` | 6845 | method | `MisoraApp._on_clear_debug_log_file` | `self` |
-| UI / Tk | `misora.py` | 6853 | method | `MisoraApp._on_speaker_dropdown_clicked` | `self` |
-| UI / Tk | `misora.py` | 6903 | method | `MisoraApp._jump_to_speaker` | `self, speaker_name: str` |
-| UI / Tk | `misora.py` | 6939 | method | `MisoraApp._is_widget_in_speaker_popup` | `self, widget: Optional[tk.Misc]` |
-| UI / Tk | `misora.py` | 6956 | method | `MisoraApp._is_speaker_popup_open` | `self` |
-| UI / Tk | `misora.py` | 6965 | method | `MisoraApp._get_speaker_autocomplete_candidates` | `self, filter_text: str` |
-| UI / Tk | `misora.py` | 6993 | method | `MisoraApp._open_speaker_autocomplete` | `self` |
-| UI / Tk | `misora.py` | 7043 | method | `MisoraApp._get_monitor_work_area` | `self, x: int, y: int` |
-| UI / Tk | `misora.py` | 7080 | method | `MisoraApp._refresh_speaker_autocomplete` | `self` |
-| UI / Tk | `misora.py` | 7118 | method | `MisoraApp._close_speaker_autocomplete` | `self` |
-| UI / Tk | `misora.py` | 7139 | method | `MisoraApp._on_speaker_focus_in` | `self` |
-| UI / Tk | `misora.py` | 7151 | method | `MisoraApp._on_speaker_entry_clicked` | `self` |
-| UI / Tk | `misora.py` | 7157 | method | `MisoraApp._on_speaker_key_release` | `self, event: Optional[tk.Event]` |
-| UI / Tk | `misora.py` | 7174 | method | `MisoraApp._on_speaker_nav_down` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 7188 | method | `MisoraApp._on_speaker_nav_up` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 7202 | method | `MisoraApp._on_speaker_enter` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 7217 | method | `MisoraApp._on_speaker_escape` | `self, _event: Optional[tk.Event]=None` |
-| AST / serialization | `misora.py` | 7221 | method | `MisoraApp._on_speaker_listbox_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 7229 | method | `MisoraApp._accept_speaker_autocomplete_selection` | `self` |
-| UI / Tk | `misora.py` | 7250 | method | `MisoraApp._restore_speaker_entry_focus` | `self` |
-| UI / Tk | `misora.py` | 7270 | method | `MisoraApp._on_speaker_focus_out` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 7281 | method | `MisoraApp._on_speaker_focus_out_deferred` | `self` |
-| UI / Tk | `misora.py` | 7294 | method | `MisoraApp._on_speaker_virtual_edit` | `self` |
-| AST / serialization | `misora.py` | 7300 | method | `MisoraApp._assign_speaker_to_current_box` | `self, new_speaker: str` |
-| UI / Tk | `misora.py` | 7306 | method | `MisoraApp._append_speaker_attribute` | `self, attr_suffix: str` |
-| UI / Tk | `misora.py` | 7313 | method | `MisoraApp._prompt_append_speaker_attribute` | `self` |
-| UI / Tk | `misora.py` | 7355 | method | `MisoraApp._is_widget_packed` | `w: tk.Widget` |
-| UI / Tk | `misora.py` | 7361 | method | `MisoraApp._on_toggle_line_numbers` | `self` |
-| UI / Tk | `misora.py` | 7414 | method | `MisoraApp._on_toggle_column_ruler` | `self` |
-| UI / Tk | `misora.py` | 7446 | method | `MisoraApp._update_gutter_clean` | `self` |
-| UI / Tk | `misora.py` | 7461 | method | `MisoraApp._sync_continuous_gutter_scroll` | `self, *args` |
-| UI / Tk | `misora.py` | 7469 | method | `MisoraApp._on_continuous_vscroll` | `self, *args` |
-| UI / Tk | `misora.py` | 7478 | method | `MisoraApp._highlight_secret_whitespace` | `self, text_widget: tk.Text` |
-| UI / Tk | `misora.py` | 7488 | method | `MisoraApp._shortcut_wrap` | `self, open_tag: str, close_tag: str` |
-| UI / Tk | `misora.py` | 7492 | method | `MisoraApp._shortcut_undo` | `self` |
-| UI / Tk | `misora.py` | 7496 | method | `MisoraApp._shortcut_redo` | `self` |
-| UI / Tk | `misora.py` | 7500 | method | `MisoraApp._set_ribbon_colors` | `self, primary_hex: str, secondary_hex: str` |
-| UI / Tk | `misora.py` | 7511 | method | `MisoraApp._apply_active_ribbon_color` | `self` |
-| UI / Tk | `misora.py` | 7515 | method | `MisoraApp._apply_active_ribbon_gradient` | `self` |
-| UI / Tk | `misora.py` | 7520 | method | `MisoraApp.on_open_color_picker` | `self` |
-| UI / Tk | `misora.py` | 7535 | method | `MisoraApp.apply_ngui_wrapper` | `self, open_tag: str, close_tag: str, default_inner: str=''` |
-| UI / Tk | `misora.py` | 7558 | method | `MisoraApp._sync_preview_toggle_availability` | `self` |
-| UI / Tk | `misora.py` | 7575 | method | `MisoraApp._update_top_header_title` | `self` |
-| UI / Tk | `misora.py` | 7587 | method | `MisoraApp._on_toggle_ngui_ribbon` | `self` |
-| UI / Tk | `misora.py` | 7606 | method | `MisoraApp._on_dialogue_preview_configure` | `self, event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 7617 | method | `MisoraApp._hide_dialogue_preview_and_restore_editor` | `self` |
-| UI / Tk | `misora.py` | 7628 | method | `MisoraApp._render_dialogue_preview_frame` | `self, speaker: str, raw_text: str` |
-| UI / Tk | `misora.py` | 7766 | method | `MisoraApp._on_toggle_preview_compiled` | `self` |
-| UI / Tk | `misora.py` | 7832 | method | `MisoraApp._get_or_create_compiled_style_tag` | `self, widget: tk.Text, bold: bool, italic: bool, underline: bool, strike: bool, sub_mode: int, fg_color: Optional[str], font_scale: float=1.0` |
-| UI / Tk | `misora.py` | 7868 | method | `MisoraApp._insert_compiled_ngui_text` | `self, widget: tk.Text, insert_pos: str, raw_text: str, base_tags: Tuple[str, ...]=()` |
-| UI / Tk | `misora.py` | 8006 | method | `MisoraApp._build_side_drawer` | `self` |
-| UI / Tk | `misora.py` | 8070 | method | `MisoraApp._build_customize_tab` | `self, parent: tk.Frame` |
-| UI / Tk | `misora.py` | 8294 | method | `MisoraApp._build_glossary_tab` | `self, parent: tk.Frame` |
-| UI / Tk | `misora.py` | 8369 | method | `MisoraApp._open_side_drawer` | `self, tab: str='customize'` |
-| UI / Tk | `misora.py` | 8381 | method | `MisoraApp._close_side_drawer` | `self` |
-| UI / Tk | `misora.py` | 8392 | method | `MisoraApp._toggle_side_drawer` | `self, tab: str` |
-| UI / Tk | `misora.py` | 8398 | method | `MisoraApp._switch_side_drawer_tab` | `self, tab: str` |
-| UI / Tk | `misora.py` | 8426 | method | `MisoraApp._on_font_pref_changed` | `self` |
-| UI / Tk | `misora.py` | 8455 | method | `MisoraApp._on_custom_font_selected` | `self` |
-| UI / Tk | `misora.py` | 8465 | method | `MisoraApp._refresh_custom_fonts` | `self` |
-| UI / Tk | `misora.py` | 8478 | method | `MisoraApp._open_fonts_folder` | `self` |
-| UI / Tk | `misora.py` | 8490 | method | `MisoraApp._adjust_dialogue_font_size` | `self, delta: int` |
-| UI / Tk | `misora.py` | 8498 | method | `MisoraApp._pick_theme_color` | `self, key: str` |
-| UI / Tk | `misora.py` | 8515 | method | `MisoraApp._commit_theme_hex` | `self, key: str` |
-| UI / Tk | `misora.py` | 8537 | method | `MisoraApp._apply_theme_preset` | `self, preset_name: str` |
-| UI / Tk | `misora.py` | 8560 | method | `MisoraApp._reset_customization_defaults` | `self` |
-| UI / Tk | `misora.py` | 8584 | method | `MisoraApp._filter_glossary` | `self` |
-| UI / Tk | `misora.py` | 8599 | method | `MisoraApp._render_glossary_list` | `self` |
-| UI / Tk | `misora.py` | 8623 | method | `MisoraApp._on_glossary_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 8632 | method | `MisoraApp._on_glossary_double_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 8637 | method | `MisoraApp._insert_selected_glossary_tag` | `self` |
-| UI / Tk | `misora.py` | 8652 | method | `MisoraApp._insert_text_wrapper` | `self, open_tag: str, close_tag: str, default_inner: str=''` |
-| UI / Tk | `misora.py` | 8716 | method | `MisoraApp.on_insert_ruby` | `self` |
-| UI / Tk | `misora.py` | 8860 | method | `MisoraApp._highlight_ngui_tags` | `self` |
-| UI / Tk | `misora.py` | 8893 | method | `MisoraApp._sync_gd_scroll_bounds` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 8906 | method | `MisoraApp._on_gd_scrollbar` | `self, *args: Any` |
-| UI / Tk | `misora.py` | 8913 | method | `MisoraApp._on_gd_mousewheel` | `self, event: tk.Event` |
-| AST / serialization | `misora.py` | 8935 | method | `MisoraApp._auto_resize_dialogue_box` | `self` |
-| UI / Tk | `misora.py` | 8944 | method | `MisoraApp._on_toggle_continuous_view` | `self` |
-| UI / Tk | `misora.py` | 9003 | method | `MisoraApp._build_status_bar` | `self` |
-| UI / Tk | `misora.py` | 9045 | method | `MisoraApp._get_active_text_widget` | `self` |
-| UI / Tk | `misora.py` | 9067 | method | `MisoraApp._get_card_text_widget` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 9083 | method | `MisoraApp._install_shortcuts_bindtag` | `self, widget: tk.Widget` |
-| UI / Tk | `misora.py` | 9092 | method | `MisoraApp._on_misora_shortcut` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 9218 | method | `MisoraApp._show_csif_paste_chooser` | `self, clip_text: str` |
-| UI / Tk | `misora.py` | 9359 | method | `MisoraApp._handle_editor_csif_paste` | `self, widget: tk.Widget, clip_text: str` |
-| UI / Tk | `misora.py` | 9377 | method | `MisoraApp._bind_shortcuts` | `self` |
-| UI / Tk | `misora.py` | 9438 | method | `MisoraApp._toggle_continuous_shortcut` | `self` |
-| UI / Tk | `misora.py` | 9442 | method | `MisoraApp._on_ctrl_h` | `self, _e: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 9447 | method | `MisoraApp._on_ctrl_f` | `self, _e: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 9452 | method | `MisoraApp._on_ctrl_shift_f` | `self, _e: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 9460 | method | `MisoraApp._flush_active_widget` | `self` |
-| UI / Tk | `misora.py` | 9507 | method | `MisoraApp._norm_meta_path_key` | `fp: Optional[Union[str, Path]]` |
-| UI / Tk | `misora.py` | 9516 | method | `MisoraApp.open_file` | `self, file_path: Union[str, Path], reload_from_disk: bool=False, refresh_ui: bool=True` |
-| UI / Tk | `misora.py` | 9763 | method | `MisoraApp._update_empty_state_visibility` | `self` |
-| UI / Tk | `misora.py` | 9788 | method | `MisoraApp._update_views` | `self` |
-| UI / Tk | `misora.py` | 9979 | method | `MisoraApp._update_raw_view` | `self` |
-| UI / Tk | `misora.py` | 10017 | method | `MisoraApp._sync_raw_edit_buttons` | `self` |
-| UI / Tk | `misora.py` | 10041 | method | `MisoraApp._exit_raw_edit_mode` | `self, refresh: bool=True` |
-| UI / Tk | `misora.py` | 10051 | method | `MisoraApp.on_enter_raw_edit_mode` | `self` |
-| UI / Tk | `misora.py` | 10067 | method | `MisoraApp.on_cancel_raw_edit_mode` | `self` |
-| AST / serialization | `misora.py` | 10074 | method | `MisoraApp._parse_and_validate_raw_v2` | `v2_text: str` |
-| UI / Tk | `misora.py` | 10153 | method | `MisoraApp._remap_locks_and_jp_keys` | `self, stable_locks: List[Tuple[int, str]], old_jp_by_ordinal: Dict[int, str], old_clean_by_ordinal: Dict[int, str]` |
-| UI / Tk | `misora.py` | 10186 | method | `MisoraApp.on_apply_raw_commands` | `self` |
-| UI / Tk | `misora.py` | 10281 | method | `MisoraApp._flush_continuous_card_edits` | `self` |
-| UI / Tk | `misora.py` | 10349 | method | `MisoraApp._on_card_text_edited` | `self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text]=None` |
-| UI / Tk | `misora.py` | 10426 | method | `MisoraApp._on_card_focus_in` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 10439 | method | `MisoraApp._clear_card_registry` | `self` |
-| UI / Tk | `misora.py` | 10484 | method | `MisoraApp._highlight_active_card_header` | `self, active_idx: int` |
-| UI / Tk | `misora.py` | 10506 | method | `MisoraApp._sync_header_controls_for_card` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 10543 | method | `MisoraApp._copy_single_card_dialogue` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 10551 | method | `MisoraApp._card_shortcut_wrap` | `self, w: tk.Text, open_t: str, close_t: str` |
-| UI / Tk | `misora.py` | 10563 | method | `MisoraApp._highlight_ngui_tags_for_widget` | `self, w: tk.Text` |
-| UI / Tk | `misora.py` | 10577 | method | `MisoraApp.on_copy_script` | `self` |
-| UI / Tk | `misora.py` | 10592 | method | `MisoraApp._on_cont_mousewheel` | `self, event` |
-| UI / Tk | `misora.py` | 10600 | method | `MisoraApp._resize_cont_canvas` | `self, width: int` |
-| AST / serialization | `misora.py` | 10609 | method | `MisoraApp._on_toggle_select_box_mode` | `self` |
-| AST / serialization | `misora.py` | 10626 | method | `MisoraApp._update_select_all_boxes_ui` | `self` |
-| AST / serialization | `misora.py` | 10652 | method | `MisoraApp._on_select_all_boxes` | `self` |
-| AST / serialization | `misora.py` | 10665 | method | `MisoraApp._on_deselect_all_boxes` | `self` |
-| AST / serialization | `misora.py` | 10676 | method | `MisoraApp._update_dialogue_select_box_ui` | `self` |
-| AST / serialization | `misora.py` | 10695 | method | `MisoraApp._on_dialogue_box_sel_toggle` | `self` |
-| UI / Tk | `misora.py` | 10705 | method | `MisoraApp._reset_speaker_pin` | `self, notify: bool=False` |
-| UI / Tk | `misora.py` | 10717 | method | `MisoraApp._on_toggle_pin_speaker` | `self` |
-| UI / Tk | `misora.py` | 10739 | method | `MisoraApp.on_select_whole_story` | `self` |
-| UI / Tk | `misora.py` | 10760 | method | `MisoraApp.on_text_cut` | `self` |
-| UI / Tk | `misora.py` | 10774 | method | `MisoraApp.on_text_copy` | `self` |
-| UI / Tk | `misora.py` | 10784 | method | `MisoraApp.on_text_paste` | `self` |
-| UI / Tk | `misora.py` | 10797 | method | `MisoraApp._push_undo` | `self, label: str='Edit'` |
-| UI / Tk | `misora.py` | 10805 | method | `MisoraApp._mark_document_dirty` | `self, file_path: Optional[Union[str, Path]]` |
-| UI / Tk | `misora.py` | 10819 | method | `MisoraApp._build_window_title` | `self` |
-| UI / Tk | `misora.py` | 10847 | method | `MisoraApp._dirty_state_changed` | `self` |
-| AST / serialization | `misora.py` | 10871 | method | `MisoraApp._record_saved_checkpoint` | `self, file_path: Optional[Union[str, Path]], doc: Optional[Any], plain_text: str=''` |
-| UI / Tk | `misora.py` | 10893 | method | `MisoraApp._evaluate_checkpoints_for_op` | `self, op: Any` |
-| AST / serialization | `misora.py` | 10955 | method | `MisoraApp._sync_clean_view_to_current_box` | `self` |
-| AST / serialization | `misora.py` | 10998 | method | `MisoraApp.on_box_new` | `self` |
-| AST / serialization | `misora.py` | 11035 | method | `MisoraApp.on_box_copy` | `self` |
-| AST / serialization | `misora.py` | 11063 | method | `MisoraApp.on_box_cut` | `self` |
-| AST / serialization | `misora.py` | 11105 | method | `MisoraApp._clone_box_snapshot` | `snap: BoxSnapshot` |
-| AST / serialization | `misora.py` | 11116 | method | `MisoraApp._show_box_paste_mode_dialog` | `self, block_count: int, sp_desc: str, selected_targets: List[int], total_boxes: int, is_box0: bool=False` |
-| AST / serialization | `misora.py` | 11276 | method | `MisoraApp.on_box_paste` | `self, confirm: bool=True, mode: Optional[str]=None` |
-| UI / Tk | `misora.py` | 11475 | method | `MisoraApp._on_card_paste_caret` | `self, box_idx: int, txt_widget: tk.Text` |
-| UI / Tk | `misora.py` | 11599 | method | `MisoraApp._on_size_dropdown_clicked` | `self` |
-| UI / Tk | `misora.py` | 11614 | method | `MisoraApp.on_insert_font_size` | `self, size_val: Optional[str]` |
-| UI / Tk | `misora.py` | 11649 | method | `MisoraApp._get_as_viewport_size` | `self` |
-| UI / Tk | `misora.py` | 11670 | method | `MisoraApp._compute_as_card_metrics` | `self` |
-| UI / Tk | `misora.py` | 11686 | method | `MisoraApp._ensure_as_pool_capacity` | `self, viewport_h: int` |
-| UI / Tk | `misora.py` | 11717 | method | `MisoraApp._recompute_as_pool_for_height` | `self, viewport_h: int` |
-| UI / Tk | `misora.py` | 11723 | method | `MisoraApp._on_as_viewport_resized` | `self, width: int, height: int` |
-| AST / serialization | `misora.py` | 11747 | method | `MisoraApp._recompute_as_box0_height` | `self, card_w: int` |
-| UI / Tk | `misora.py` | 11771 | method | `MisoraApp._rebuild_as_slots` | `self, card_w: int` |
-| AST / serialization | `misora.py` | 11795 | method | `MisoraApp._ensure_as_box0_card` | `self` |
-| AST / serialization | `misora.py` | 11802 | method | `MisoraApp._bind_as_box0_card` | `self` |
-| UI / Tk | `misora.py` | 11851 | method | `MisoraApp._apply_as_card_visual_state` | `self, card: _AllScriptPoolCard, is_active: bool` |
-| UI / Tk | `misora.py` | 11880 | method | `MisoraApp._patch_as_card_header` | `self, card: _AllScriptPoolCard, box_idx: int` |
-| UI / Tk | `misora.py` | 11909 | method | `MisoraApp._populate_as_card_body` | `self, card: _AllScriptPoolCard, box_idx: int` |
-| UI / Tk | `misora.py` | 11952 | method | `MisoraApp._bind_as_pool_card` | `self, card: _AllScriptPoolCard, box_idx: int` |
-| UI / Tk | `misora.py` | 11973 | method | `MisoraApp._patch_as_visible_card_body` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 11981 | method | `MisoraApp._patch_as_visible_card_header` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 11988 | method | `MisoraApp._refresh_as_visible_selection_slots` | `self` |
-| UI / Tk | `misora.py` | 11998 | method | `MisoraApp._set_as_active_card` | `self, old_idx: Optional[int], new_idx: int` |
-| UI / Tk | `misora.py` | 12014 | method | `MisoraApp._update_as_scrollbar_thumb` | `self, viewport_h: int` |
-| UI / Tk | `misora.py` | 12025 | method | `MisoraApp._layout_as_visible_cards` | `self, viewport_w_override: Optional[int]=None, viewport_h_override: Optional[int]=None, force_rebind: bool=False` |
-| UI / Tk | `misora.py` | 12133 | method | `MisoraApp._on_as_scrollbar` | `self, *args: Any` |
-| UI / Tk | `misora.py` | 12153 | method | `MisoraApp._on_as_mousewheel` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 12169 | method | `MisoraApp._on_as_card_shift_mousewheel` | `self, event: tk.Event, card: _AllScriptPoolCard` |
-| UI / Tk | `misora.py` | 12177 | method | `MisoraApp._on_as_card_key_scroll` | `self, card: _AllScriptPoolCard, direction: str` |
-| UI / Tk | `misora.py` | 12201 | method | `MisoraApp._on_as_card_sel_click` | `self, card: _AllScriptPoolCard` |
-| UI / Tk | `misora.py` | 12213 | method | `MisoraApp._on_as_card_lock_click` | `self, card: _AllScriptPoolCard` |
-| AST / serialization | `misora.py` | 12221 | method | `MisoraApp._on_as_box0_sel_click` | `self` |
-| AST / serialization | `misora.py` | 12232 | method | `MisoraApp._on_as_box0_click` | `self` |
-| AST / serialization | `misora.py` | 12245 | method | `MisoraApp._on_as_box0_double_click` | `self` |
-| UI / Tk | `misora.py` | 12253 | method | `MisoraApp._on_as_card_click` | `self, card: _AllScriptPoolCard` |
-| UI / Tk | `misora.py` | 12268 | method | `MisoraApp._on_as_card_double_click` | `self, card: _AllScriptPoolCard` |
-| UI / Tk | `misora.py` | 12278 | method | `MisoraApp._render_continuous_view` | `self` |
-| AST / serialization | `misora.py` | 12358 | method | `MisoraApp._focus_continuous_box` | `self, box_idx: int, move_cursor: bool=True, char_offset: int=0, explicit_span: Optional[Tuple[int, int]]=None` |
-| AST / serialization | `misora.py` | 12419 | method | `MisoraApp._find_continuous_box_at_index` | `self, tk_index: str` |
-| AST / serialization | `misora.py` | 12425 | method | `MisoraApp._nearest_continuous_box_to_index` | `self, tk_index: str` |
-| UI / Tk | `misora.py` | 12429 | method | `MisoraApp._on_continuous_cursor_moved` | `self, event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 12432 | method | `MisoraApp._on_continuous_key_guard` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 12435 | method | `MisoraApp._on_continuous_copy` | `self, _event: Optional[tk.Event]=None` |
-| UI / Tk | `misora.py` | 12438 | method | `MisoraApp._on_continuous_paste_guard` | `self, _event: tk.Event` |
-| UI / Tk | `misora.py` | 12441 | method | `MisoraApp._on_continuous_cut_guard` | `self, _event: tk.Event` |
-| UI / Tk | `misora.py` | 12444 | method | `MisoraApp._on_continuous_key_release` | `self, _event: tk.Event` |
-| AST / serialization | `misora.py` | 12447 | method | `MisoraApp._sync_continuous_box_from_widget` | `self` |
-| UI / Tk | `misora.py` | 12450 | method | `MisoraApp._highlight_dialogue_matches` | `self, explicit_span: Optional[Tuple[int, int]]=None` |
-| UI / Tk | `misora.py` | 12484 | method | `MisoraApp._highlight_continuous_matches` | `self` |
-| UI / Tk | `misora.py` | 12495 | method | `MisoraApp._update_bottom_tab_styles` | `self` |
-| UI / Tk | `misora.py` | 12524 | method | `MisoraApp._switch_bottom_tab` | `self, tab_name: str, flush: bool=True` |
-| UI / Tk | `misora.py` | 12546 | method | `MisoraApp._rebuild_quick_edit_widgets` | `self, box: Optional[Box], box_idx: Optional[int]` |
-| UI / Tk | `misora.py` | 12617 | method | `MisoraApp._refresh_quick_edit_pane` | `self, force: bool=False` |
-| UI / Tk | `misora.py` | 12679 | method | `MisoraApp._on_quick_edit_focus_out` | `self, _event: tk.Event` |
-| UI / Tk | `misora.py` | 12696 | method | `MisoraApp._on_quick_edit_changed` | `self` |
-| UI / Tk | `misora.py` | 12792 | method | `MisoraApp._flush_quick_edit_session` | `self, sync_from_widget: bool=True` |
-| UI / Tk | `misora.py` | 12860 | method | `MisoraApp._commit_speaker_edit` | `self, source: str='keyboard'` |
-| UI / Tk | `misora.py` | 12957 | method | `MisoraApp._on_speaker_edited` | `self` |
-| AST / serialization | `misora.py` | 12961 | method | `MisoraApp._refresh_continuous_box_header` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 12976 | method | `MisoraApp._on_dialogue_key_up` | `self, _event: tk.Event` |
-| UI / Tk | `misora.py` | 12986 | method | `MisoraApp._on_dialogue_key_down` | `self, _event: tk.Event` |
-| UI / Tk | `misora.py` | 12996 | method | `MisoraApp._commit_widget_edit` | `self, widget: Optional[tk.Widget]=None` |
-| UI / Tk | `misora.py` | 13104 | method | `MisoraApp._on_dialogue_edited` | `self` |
-| AST / serialization | `misora.py` | 13193 | method | `MisoraApp._update_box0_char_counter` | `self` |
-| AST / serialization | `misora.py` | 13203 | method | `MisoraApp._on_box0_metadata_edited` | `self` |
-| UI / Tk | `misora.py` | 13242 | method | `MisoraApp._navigate_pinned_speaker` | `self, direction: str` |
-| AST / serialization | `misora.py` | 13280 | method | `MisoraApp.on_prev_box` | `self` |
-| AST / serialization | `misora.py` | 13305 | method | `MisoraApp.on_next_box` | `self` |
-| AST / serialization | `misora.py` | 13327 | method | `MisoraApp.is_box_locked` | `self, box_idx: int` |
-| UI / Tk | `misora.py` | 13335 | method | `MisoraApp._on_toggle_card_lock` | `self, box_idx: int` |
-| AST / serialization | `misora.py` | 13345 | method | `MisoraApp.on_toggle_lock_current_box` | `self` |
-| AST / serialization | `misora.py` | 13386 | method | `MisoraApp._resync_box_indices_from_uids` | `self` |
-| UI / Tk | `misora.py` | 13400 | method | `MisoraApp._get_dialogue_measure_font` | `self` |
-| UI / Tk | `misora.py` | 13422 | method | `MisoraApp._get_ruler_measure_font` | `self` |
-| UI / Tk | `misora.py` | 13449 | method | `MisoraApp._get_54d_reference_safe_w` | `self` |
-| UI / Tk | `misora.py` | 13455 | method | `MisoraApp._measure_dialogue_metrics` | `self, text: str` |
-| UI / Tk | `misora.py` | 13524 | method | `MisoraApp._update_char_overflow_indicator` | `self, text: Optional[str]=None` |
-| UI / Tk | `misora.py` | 13550 | method | `MisoraApp._apply_overflow_highlights` | `self, widget: Optional[tk.Text]` |
-| UI / Tk | `misora.py` | 13581 | method | `MisoraApp._apply_gutter_overflow_tag` | `self, gutter_widget: Optional[tk.Text]` |
-| UI / Tk | `misora.py` | 13606 | method | `MisoraApp._draw_single_pixel_ruler` | `self, canvas: tk.Canvas, x0: int` |
-| UI / Tk | `misora.py` | 13659 | method | `MisoraApp._redraw_pixel_rulers` | `self` |
-| AST / serialization | `misora.py` | 13688 | method | `MisoraApp.on_revert_box` | `self` |
-| UI / Tk | `misora.py` | 13692 | method | `MisoraApp.on_insert_playername` | `self` |
-| XUAT / text IO | `misora.py` | 13695 | method | `MisoraApp._build_xuat_batch_targets` | `self, doc: Any, boxes_or_indices: Iterable[Any], orig_jp_map: Dict[int, str]` |
-| XUAT / text IO | `misora.py` | 13763 | method | `MisoraApp._clearable_xuat_sets` | `result: BatchSyncResult, meta: Dict[str, Any], extra_uids: Optional[Set[int]]=None` |
-| AST / serialization | `misora.py` | 13784 | method | `MisoraApp._sync_modified_boxes_to_xuat` | `self, doc: Any, boxes_or_indices: Iterable[Any], orig_jp_map: Dict[int, str], backup_dir: Optional[Path]=None` |
-| Bundle / persistence | `misora.py` | 13867 | method | `MisoraApp.on_save` | `self` |
-| Bundle / persistence | `misora.py` | 14026 | method | `MisoraApp._save_active_document_state` | `self` |
-| UI / Tk | `misora.py` | 14065 | method | `MisoraApp._find_open_doc_key` | `self, path: Union[str, Path]` |
-| Bundle / persistence | `misora.py` | 14082 | method | `MisoraApp._save_document_entry` | `self, path: Union[str, Path]` |
-| Bundle / persistence | `misora.py` | 14169 | method | `MisoraApp.on_reload` | `self` |
-| Search | `misora.py` | 14176 | method | `MisoraApp.on_start_search` | `self` |
-| Search | `misora.py` | 14322 | method | `MisoraApp._reset_search_results_state` | `self` |
-| Search | `misora.py` | 14334 | method | `MisoraApp.on_cancel_search` | `self` |
-| Search | `misora.py` | 14346 | method | `MisoraApp._run_background_search` | `self, paths: List[Path], options: SearchOptions, mem_docs: Optional[Dict[Path, Any]]=None, search_seq: int=1, skip_paths: Optional[set]=None, initial_skipped: Optional[List[Tuple[Path, str]]]=None, cancel_event: Optional[threading.Event]=None` |
-| Search | `misora.py` | 14438 | method | `MisoraApp._process_search_queue` | `self` |
-| Search | `misora.py` | 14550 | method | `MisoraApp._render_search_results` | `self` |
-| UI / Tk | `misora.py` | 14613 | method | `MisoraApp._on_results_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 14632 | method | `MisoraApp._on_results_step` | `self, delta: int` |
-| UI / Tk | `misora.py` | 14645 | method | `MisoraApp._select_result_index` | `self, idx: int, jump: bool=True` |
-| Search | `misora.py` | 14733 | method | `MisoraApp.on_clear_search` | `self` |
-| UI / Tk | `misora.py` | 14746 | method | `MisoraApp._sync_recent_files_menu` | `self` |
-| UI / Tk | `misora.py` | 14767 | method | `MisoraApp._clear_recent_files` | `self` |
-| UI / Tk | `misora.py` | 14772 | method | `MisoraApp.on_open_file` | `self` |
-| UI / Tk | `misora.py` | 14810 | method | `MisoraApp.on_open_folder` | `self` |
-| UI / Tk | `misora.py` | 14819 | method | `MisoraApp._get_project_display_path` | `self` |
-| UI / Tk | `misora.py` | 14835 | method | `MisoraApp._on_folder_path_var_trace` | `self` |
-| UI / Tk | `misora.py` | 14852 | method | `MisoraApp._sync_scope_widgets` | `self` |
-| UI / Tk | `misora.py` | 14886 | method | `MisoraApp.on_browse_scope_path` | `self` |
-| UI / Tk | `misora.py` | 14894 | method | `MisoraApp.on_browse_project_folder` | `self` |
-| UI / Tk | `misora.py` | 14909 | method | `MisoraApp.on_show_find` | `self` |
-| UI / Tk | `misora.py` | 14920 | method | `MisoraApp.on_show_find_in_files` | `self` |
-| Search | `misora.py` | 14924 | method | `MisoraApp.on_show_replace` | `self` |
-| Search | `misora.py` | 14934 | method | `MisoraApp._hide_search_bar` | `self` |
-| Search | `misora.py` | 14941 | method | `MisoraApp._apply_compiled_replacement` | `self, text: str, matcher: Callable[[str], List[Any]], replacement: str, is_regex: bool=False, ignore_ws: bool=False, count: int=0, regex_pattern: Optional[re.Pattern]=None` |
-| UI / Tk | `misora.py` | 14988 | method | `MisoraApp._confirm_closed_files_for_op` | `self, op: Any, is_undo: bool=True` |
-| Search | `misora.py` | 15028 | method | `MisoraApp.on_replace_next` | `self` |
-| Search | `misora.py` | 15145 | method | `MisoraApp.on_replace_all` | `self` |
-| UI / Tk | `misora.py` | 15496 | method | `MisoraApp.on_undo` | `self` |
-| UI / Tk | `misora.py` | 15525 | method | `MisoraApp.on_redo` | `self` |
-| Bundle / persistence | `misora.py` | 15555 | method | `MisoraApp._restore_bundle_atomic` | `src_bak_path: Union[str, Path], dst_path: Path` |
-| UI / Tk | `misora.py` | 15585 | method | `MisoraApp._apply_delta` | `self, delta: Any, reverse: bool=False, refresh_ui: bool=True` |
-| UI / Tk | `misora.py` | 15943 | method | `MisoraApp._sync_edit_menu_states` | `self` |
-| UI / Tk | `misora.py` | 15961 | method | `MisoraApp._switch_dock_tab` | `self, tab_name: str` |
-| UI / Tk | `misora.py` | 15980 | method | `MisoraApp._set_left_panel_visible` | `self, visible: bool` |
-| UI / Tk | `misora.py` | 16020 | method | `MisoraApp._on_toggle_left_panel` | `self` |
-| UI / Tk | `misora.py` | 16025 | method | `MisoraApp._toggle_dock_collapse` | `self` |
-| UI / Tk | `misora.py` | 16030 | method | `MisoraApp._refresh_opened_files_list` | `self` |
-| UI / Tk | `misora.py` | 16062 | method | `MisoraApp._on_opened_files_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 16079 | method | `MisoraApp._prune_document_caches` | `self, file_path: Optional[Union[str, Path]], doc: Optional[Any], extra_uids: Optional[Iterable[Any]]=None` |
-| UI / Tk | `misora.py` | 16168 | method | `MisoraApp.close_file` | `self, file_path: Path` |
-| UI / Tk | `misora.py` | 16252 | method | `MisoraApp.close_others` | `self, keep_path: Path` |
-| UI / Tk | `misora.py` | 16260 | method | `MisoraApp.close_all_unmodified` | `self` |
-| UI / Tk | `misora.py` | 16271 | method | `MisoraApp.close_all_files` | `self` |
-| UI / Tk | `misora.py` | 16277 | method | `MisoraApp._close_all_documents_without_prompt` | `self` |
-| Bundle / persistence | `misora.py` | 16321 | method | `MisoraApp.on_save_project` | `self, save_as: bool=False` |
-| Bundle / persistence | `misora.py` | 16344 | method | `MisoraApp.save_project` | `self, workspace_path: Union[str, Path]` |
-| UI / Tk | `misora.py` | 16403 | method | `MisoraApp.on_open_project` | `self` |
-| UI / Tk | `misora.py` | 16414 | method | `MisoraApp.open_project` | `self, workspace_path: Union[str, Path]` |
-| UI / Tk | `misora.py` | 16555 | method | `MisoraApp._on_results_right_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 16573 | method | `MisoraApp._on_opened_files_right_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 16582 | method | `MisoraApp._show_file_context_menu` | `self, event: tk.Event, target_path: Path` |
-| UI / Tk | `misora.py` | 16636 | method | `MisoraApp._open_containing_folder` | `self, target_path: Path` |
-| UI / Tk | `misora.py` | 16646 | method | `MisoraApp._launch_editor_on_file` | `self, exe: str, target_path: Path` |
-| UI / Tk | `misora.py` | 16662 | method | `MisoraApp._choose_app_and_open` | `self, target_path: Path` |
-| UI / Tk | `misora.py` | 16668 | method | `MisoraApp._copy_to_clipboard` | `self, text: str` |
-| UI / Tk | `misora.py` | 16673 | method | `MisoraApp._sync_external_editor_menu` | `self` |
-| UI / Tk | `misora.py` | 16683 | method | `MisoraApp.on_set_external_editor` | `self` |
-| UI / Tk | `misora.py` | 16694 | method | `MisoraApp.on_clear_external_editor` | `self` |
-| UI / Tk | `misora.py` | 16702 | method | `MisoraApp.on_launch_datamine` | `self` |
-| UI / Tk | `misora.py` | 16772 | method | `MisoraApp.on_select_datamine_exe` | `self` |
-| UI / Tk | `misora.py` | 16788 | method | `MisoraApp.on_open_datamine_folder` | `self` |
-| Bundle / persistence | `misora.py` | 16797 | method | `MisoraApp.on_open_backups_folder` | `self` |
-| UI / Tk | `misora.py` | 16801 | method | `MisoraApp.on_open_project_folder` | `self` |
-| UI / Tk | `misora.py` | 16814 | method | `MisoraApp.on_open_bepinex_folder` | `self` |
-| UI / Tk | `misora.py` | 16818 | method | `MisoraApp.on_open_program_folder` | `self` |
-| XUAT / text IO | `misora.py` | 16821 | method | `MisoraApp.on_open_xuat_text_folder` | `self` |
-| UI / Tk | `misora.py` | 16851 | method | `MisoraApp.on_open_redirected_resources_folder` | `self` |
-| Search | `misora.py` | 16873 | method | `MisoraApp.on_open_selected_search_folder` | `self` |
-| UI / Tk | `misora.py` | 16880 | method | `MisoraApp.on_open_paths_dialog` | `self` |
-| UI / Tk | `misora.py` | 17087 | method | `MisoraApp._toggle_side_drawer_pin` | `self` |
-| UI / Tk | `misora.py` | 17097 | method | `MisoraApp.on_open_mtl_settings` | `self` |
-| UI / Tk | `misora.py` | 17101 | method | `MisoraApp.on_open_ai_prompt_settings` | `self` |
-| UI / Tk | `misora.py` | 17105 | method | `MisoraApp.on_open_translator_assistant` | `self` |
-| UI / Tk | `misora.py` | 17126 | method | `MisoraApp._build_mtl_tab` | `self, parent: tk.Frame` |
-| UI / Tk | `misora.py` | 17218 | method | `MisoraApp._build_mtl_all_script_pane` | `self, parent: tk.Frame` |
-| UI / Tk | `misora.py` | 17369 | method | `MisoraApp._apply_mtl_all_script_theme_tags` | `self` |
-| UI / Tk | `misora.py` | 17392 | method | `MisoraApp._set_mtl_drawer_mode` | `self, mode: str` |
-| UI / Tk | `misora.py` | 17436 | method | `MisoraApp._set_mtl_drawer_engine_enabled` | `self, engine_name: str, enabled: bool` |
-| UI / Tk | `misora.py` | 17445 | method | `MisoraApp._on_mtl_drawer_engine_toggled` | `self, engine_name: str` |
-| UI / Tk | `misora.py` | 17452 | method | `MisoraApp._rebuild_mtl_drawer_cards` | `self` |
-| UI / Tk | `misora.py` | 17599 | method | `MisoraApp._on_mtl_globe_open` | `self, engine_name: str` |
-| AST / serialization | `misora.py` | 17619 | method | `MisoraApp._get_mtl_drawer_active_box` | `self` |
-| AST / serialization | `misora.py` | 17628 | method | `MisoraApp._refresh_mtl_drawer_box` | `self` |
-| UI / Tk | `misora.py` | 17686 | method | `MisoraApp._mtl_drawer_cache_put` | `self, engine_name: str, src_hash: str, result: str` |
-| UI / Tk | `misora.py` | 17693 | method | `MisoraApp._on_mtl_drawer_refresh_all` | `self` |
-| UI / Tk | `misora.py` | 17733 | method | `MisoraApp._on_mtl_drawer_refresh_engine` | `self, engine_name: str` |
-| UI / Tk | `misora.py` | 17737 | method | `MisoraApp._dispatch_mtl_drawer_engine` | `self, engine_name: str, bypass_cache: bool=False` |
-| UI / Tk | `misora.py` | 17794 | method | `MisoraApp._poll_mtl_drawer_queue` | `self` |
-| UI / Tk | `misora.py` | 17887 | method | `MisoraApp._on_mtl_drawer_apply_engine` | `self, engine_name: str` |
-| UI / Tk | `misora.py` | 17945 | method | `MisoraApp._is_mtl_empty_or_punct` | `text: str` |
-| UI / Tk | `misora.py` | 17954 | method | `MisoraApp._mtl_all_ctx_key` | `self, box_uid: Any, engine_name: Optional[str]=None` |
-| AST / serialization | `misora.py` | 17958 | method | `MisoraApp._find_box_index_by_uid` | `self, box_uid: Any` |
-| UI / Tk | `misora.py` | 17967 | method | `MisoraApp._flush_mtl_all_scratchpad` | `self` |
-| Bundle / persistence | `misora.py` | 17984 | method | `MisoraApp._load_mtl_all_scratchpad` | `self, force_text: Optional[str]=None` |
-| UI / Tk | `misora.py` | 18027 | method | `MisoraApp._cancel_mtl_all_batch` | `self` |
-| UI / Tk | `misora.py` | 18049 | method | `MisoraApp._on_mtl_all_engine_changed` | `self, _event=None` |
-| UI / Tk | `misora.py` | 18054 | method | `MisoraApp._on_mtl_all_list_click` | `self, event: tk.Event` |
-| UI / Tk | `misora.py` | 18076 | method | `MisoraApp._refresh_mtl_all_script_view` | `self, preserve_scroll: bool=False` |
-| AST / serialization | `misora.py` | 18161 | method | `MisoraApp._dispatch_mtl_all_box` | `self, box_idx: int, box: Box, eng: str, bypass_cache: bool=False` |
-| UI / Tk | `misora.py` | 18211 | method | `MisoraApp._on_mtl_all_script_refresh_selected` | `self` |
-| UI / Tk | `misora.py` | 18229 | method | `MisoraApp._on_mtl_all_script_apply_selected` | `self` |
-| UI / Tk | `misora.py` | 18281 | method | `MisoraApp._on_mtl_all_script_translate_all` | `self` |
-| UI / Tk | `misora.py` | 18414 | method | `MisoraApp._on_mtl_all_script_apply_all` | `self` |
-| AST / serialization | `misora.py` | 18493 | method | `MisoraApp.on_translate_current_box` | `self` |
-| UI / Tk | `misora.py` | 18541 | method | `MisoraApp._poll_mtl_queue` | `self` |
-| UI / Tk | `misora.py` | 18650 | method | `MisoraApp.on_batch_translate` | `self` |
-| UI / Tk | `misora.py` | 18657 | method | `MisoraApp.on_copy_ai_prompt` | `self` |
-| UI / Tk | `misora.py` | 18689 | method | `MisoraApp._show_paste_preview_and_apply` | `self, script_text: str, source_label: str='Script Paste', confirm: bool=True, auto_word_wrap: bool=False` |
-| AST / serialization | `misora.py` | 18916 | method | `MisoraApp.on_paste_cross_box` | `self, confirm: bool=True` |
-| UI / Tk | `misora.py` | 18930 | method | `MisoraApp.on_import_script` | `self, file_path: Optional[Union[str, Path]]=None, confirm: bool=True` |
-| XUAT / text IO | `misora.py` | 18973 | method | `MisoraApp._get_xuat_index_roots` | `self` |
-| XUAT / text IO | `misora.py` | 18982 | method | `MisoraApp._refresh_xuat_index_async` | `self, on_ready: Optional[Callable[[Optional[XuatIndex], Optional[str]], None]]=None, show_progress: bool=True` |
-| XUAT / text IO | `misora.py` | 19041 | method | `MisoraApp._poll_xuat_index_queue` | `self` |
-| XUAT / text IO | `misora.py` | 19098 | method | `MisoraApp._get_or_build_xuat_index` | `self, force_rebuild: bool=False` |
-| XUAT / text IO | `misora.py` | 19109 | method | `MisoraApp.on_import_from_xuat` | `self, xuat_index: Optional[XuatIndex]=None` |
-| XUAT / text IO | `misora.py` | 19134 | method | `MisoraApp._get_xuat_archive_dir` | `self` |
-| Bundle / persistence | `misora.py` | 19141 | method | `MisoraApp._on_toggle_xuat_safety_backup` | `self` |
-| XUAT / text IO | `misora.py` | 19171 | method | `MisoraApp._on_xuat_cleanup_settings_dialog` | `self` |
-| XUAT / text IO | `misora.py` | 19186 | method | `MisoraApp.on_clean_archive_xuat` | `self, xuat_index: Optional[XuatIndex]=None` |
-| UI / Tk | `misora.py` | 19214 | method | `MisoraApp.on_export_script` | `self, file_path: Optional[Union[str, Path]]=None` |
-| UI / Tk | `misora.py` | 19258 | method | `MisoraApp._get_word_wrap_params` | `self` |
-| UI / Tk | `misora.py` | 19264 | method | `MisoraApp.apply_auto_word_wrap` | `self, scope: str='all', reflow_existing_breaks: bool=False` |
-| UI / Tk | `misora.py` | 19402 | method | `MisoraApp.on_open_auto_word_wrap` | `self` |
-| UI / Tk | `misora.py` | 19412 | method | `MisoraApp.on_clear_dialogue_skeleton` | `self` |
-| UI / Tk | `misora.py` | 19474 | method | `MisoraApp.on_register_unity3d_association` | `self` |
-| UI / Tk | `misora.py` | 19539 | method | `MisoraApp.on_about` | `self` |
-| UI / Tk | `misora.py` | 19650 | method | `MisoraApp.on_support_me` | `self` |
-| UI / Tk | `misora.py` | 19667 | class | `SupportMeDialog` | `` |
-| UI / Tk | `misora.py` | 19670 | method | `SupportMeDialog.__init__` | `self, parent: 'MisoraApp', gif_path: Optional[Path]=None` |
-| UI / Tk | `misora.py` | 19778 | method | `SupportMeDialog._hex_to_rgb` | `hex_color: str` |
-| UI / Tk | `misora.py` | 19788 | method | `SupportMeDialog._open_external_url` | `url: str` |
-| UI / Tk | `misora.py` | 19791 | method | `SupportMeDialog._init_gif_player` | `self` |
-| UI / Tk | `misora.py` | 19806 | method | `SupportMeDialog._render_static_fallback` | `self` |
-| UI / Tk | `misora.py` | 19826 | method | `SupportMeDialog._render_gif_frame` | `self, frame_idx: int` |
-| UI / Tk | `misora.py` | 19867 | method | `SupportMeDialog._advance_gif_frame` | `self` |
-| UI / Tk | `misora.py` | 19879 | method | `SupportMeDialog._close_gif_handle` | `self` |
-| UI / Tk | `misora.py` | 19893 | method | `SupportMeDialog._cleanup_resources` | `self` |
-| UI / Tk | `misora.py` | 19907 | method | `SupportMeDialog.close` | `self` |
-| UI / Tk | `misora.py` | 19915 | method | `SupportMeDialog.destroy` | `self` |
-| UI / Tk | `misora.py` | 19923 | class | `ScriptPastePreviewDialog` | `` |
-| UI / Tk | `misora.py` | 19926 | method | `ScriptPastePreviewDialog.__init__` | `self, parent: 'MisoraApp', parsed_result, start_idx: int, source_label: str='Script Paste'` |
-| UI / Tk | `misora.py` | 19985 | method | `ScriptPastePreviewDialog._build_ui` | `self, t: dict, fg_panel: str, fg_editor: str, total_doc_boxes: int, blocks: list, has_meta: bool` |
-| UI / Tk | `misora.py` | 20129 | method | `ScriptPastePreviewDialog._populate_tree` | `self` |
-| UI / Tk | `misora.py` | 20183 | method | `ScriptPastePreviewDialog.on_apply` | `self` |
-| UI / Tk | `misora.py` | 20191 | method | `ScriptPastePreviewDialog.on_cancel` | `self` |
-| UI / Tk | `misora.py` | 20200 | class | `AutoWordWrapDialog` | `` |
-| UI / Tk | `misora.py` | 20203 | method | `AutoWordWrapDialog.__init__` | `self, parent: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 20240 | method | `AutoWordWrapDialog._build_ui` | `self, t: dict, sel_count: int, is_box0: bool, total_boxes: int` |
-| UI / Tk | `misora.py` | 20335 | method | `AutoWordWrapDialog._on_apply` | `self` |
-| UI / Tk | `misora.py` | 20344 | method | `AutoWordWrapDialog._on_close` | `self` |
-| XUAT / text IO | `misora.py` | 20355 | class | `ImportFromXUATDialog` | `` |
-| XUAT / text IO | `misora.py` | 20363 | method | `ImportFromXUATDialog.__init__` | `self, parent: 'MisoraApp', xuat_index: XuatIndex` |
-| XUAT / text IO | `misora.py` | 20412 | method | `ImportFromXUATDialog._build_ui` | `self` |
-| XUAT / text IO | `misora.py` | 20553 | method | `ImportFromXUATDialog._refresh_archive_optout_warning` | `self` |
-| XUAT / text IO | `misora.py` | 20563 | method | `ImportFromXUATDialog._on_rows_configure` | `self, _event: Optional[tk.Event]=None` |
-| XUAT / text IO | `misora.py` | 20567 | method | `ImportFromXUATDialog._on_canvas_configure` | `self, event: tk.Event` |
-| XUAT / text IO | `misora.py` | 20571 | method | `ImportFromXUATDialog._on_outer_mousewheel` | `self, event: tk.Event` |
-| Bundle / persistence | `misora.py` | 20576 | method | `ImportFromXUATDialog._on_reload_index` | `self` |
-| XUAT / text IO | `misora.py` | 20604 | method | `ImportFromXUATDialog._get_immutable_jp_key` | `self, box_idx: int, box: Box` |
-| XUAT / text IO | `misora.py` | 20617 | method | `ImportFromXUATDialog._norm_file_str` | `fp: Optional[Union[str, Path]]` |
-| XUAT / text IO | `misora.py` | 20625 | method | `ImportFromXUATDialog._get_current_doc_revision` | `self` |
-| XUAT / text IO | `misora.py` | 20632 | method | `ImportFromXUATDialog._capture_doc_identity` | `self, doc: Any` |
-| XUAT / text IO | `misora.py` | 20645 | method | `ImportFromXUATDialog._validate_document_identity` | `self` |
-| XUAT / text IO | `misora.py` | 20664 | method | `ImportFromXUATDialog._bind_mousewheel_recursive` | `self, widget: tk.Misc` |
-| XUAT / text IO | `misora.py` | 20676 | method | `ImportFromXUATDialog._build_section_header` | `self, title: str, t: dict` |
-| XUAT / text IO | `misora.py` | 20690 | method | `ImportFromXUATDialog._get_group_rows` | `self, group_key: str` |
-| XUAT / text IO | `misora.py` | 20699 | method | `ImportFromXUATDialog._make_tristate_group_header` | `self, title: str, group_key: str, t: dict` |
-| XUAT / text IO | `misora.py` | 20733 | method | `ImportFromXUATDialog._on_group_select_all` | `self, group_key: str` |
-| XUAT / text IO | `misora.py` | 20752 | method | `ImportFromXUATDialog._update_group_header_state` | `self, group_key: str` |
-| AST / serialization | `misora.py` | 20805 | method | `ImportFromXUATDialog._create_paired_box_row` | `self, *, row_list: List[Dict[str, Any]], header_text: str, left_label: str, right_label: str, left_text: str, lookup: XuatLookupResult, cand_idx: int, lines: int, is_locked: bool, lock_badge: str='', show_scope: bool=False, norm_key: str='', wrap_mode: str='none', group_key: Optional[str]=None, extra_data: Optional[Dict[str, Any]]=None` |
-| XUAT / text IO | `misora.py` | 21071 | method | `ImportFromXUATDialog._populate_rows` | `self` |
-| AST / serialization | `misora.py` | 21264 | method | `ImportFromXUATDialog._bind_paired_box_events` | `self, txt: tk.Text, has_v: bool, has_h: bool` |
-| XUAT / text IO | `misora.py` | 21310 | method | `ImportFromXUATDialog._step_candidate` | `self, row_idx: int, delta: int` |
-| XUAT / text IO | `misora.py` | 21314 | method | `ImportFromXUATDialog._step_section_candidate` | `self, row_list: List[Dict[str, Any]], row_idx: int, delta: int, apply_scope: bool=False` |
-| XUAT / text IO | `misora.py` | 21332 | method | `ImportFromXUATDialog._select_candidate` | `self, row_idx: int, cand_idx: int` |
-| XUAT / text IO | `misora.py` | 21335 | method | `ImportFromXUATDialog._select_section_candidate` | `self, row_list: List[Dict[str, Any]], row_idx: int, cand_idx: int` |
-| XUAT / text IO | `misora.py` | 21365 | method | `ImportFromXUATDialog._apply_conflict_scope` | `self, row_idx: int` |
-| XUAT / text IO | `misora.py` | 21387 | method | `ImportFromXUATDialog._set_filter` | `self, filter_key: str` |
-| AST / serialization | `misora.py` | 21418 | method | `ImportFromXUATDialog._format_box_list` | `nums: List[int]` |
-| XUAT / text IO | `misora.py` | 21423 | method | `ImportFromXUATDialog._on_apply_import` | `self` |
-| XUAT / text IO | `misora.py` | 21723 | method | `ImportFromXUATDialog._on_close` | `self` |
-| XUAT / text IO | `misora.py` | 21752 | class | `XuatCleanupSettingsDialog` | `` |
-| XUAT / text IO | `misora.py` | 21755 | method | `XuatCleanupSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
-| XUAT / text IO | `misora.py` | 21787 | method | `XuatCleanupSettingsDialog._build_ui` | `self, t: dict` |
-| XUAT / text IO | `misora.py` | 21857 | method | `XuatCleanupSettingsDialog._browse_dir` | `self` |
-| XUAT / text IO | `misora.py` | 21866 | method | `XuatCleanupSettingsDialog._reset_default_dir` | `self` |
-| XUAT / text IO | `misora.py` | 21870 | method | `XuatCleanupSettingsDialog._refresh_warning` | `self` |
-| Bundle / persistence | `misora.py` | 21883 | method | `XuatCleanupSettingsDialog._on_save` | `self` |
-| XUAT / text IO | `misora.py` | 21898 | method | `XuatCleanupSettingsDialog._on_close` | `self` |
-| XUAT / text IO | `misora.py` | 21909 | class | `XuatCleanupDialog` | `` |
-| XUAT / text IO | `misora.py` | 21914 | method | `XuatCleanupDialog.__init__` | `self, parent: 'MisoraApp', xuat_index: Optional[XuatIndex], doc: Any, applied_records: Sequence[AppliedXuatRecord]=(), source_fingerprints: Optional[Dict[Path, str]]=None, mode: str='post_import', protected_actors: Iterable[str]=(), xuat_roots: Optional[Sequence[Path]]=None` |
-| XUAT / text IO | `misora.py` | 21992 | method | `XuatCleanupDialog._build_ui` | `self, t: dict` |
-| XUAT / text IO | `misora.py` | 22240 | method | `XuatCleanupDialog._set_controls_busy` | `self, busy: bool` |
-| XUAT / text IO | `misora.py` | 22251 | method | `XuatCleanupDialog._start_async_scan` | `self` |
-| XUAT / text IO | `misora.py` | 22369 | method | `XuatCleanupDialog._format_scan_progress` | `processed: int, total: int` |
-| XUAT / text IO | `misora.py` | 22385 | method | `XuatCleanupDialog._poll_scan_queue` | `self` |
-| XUAT / text IO | `misora.py` | 22428 | method | `XuatCleanupDialog._apply_analysis_to_ui` | `self` |
-| XUAT / text IO | `misora.py` | 22459 | method | `XuatCleanupDialog._populate_candidates` | `self` |
-| XUAT / text IO | `misora.py` | 22479 | method | `XuatCleanupDialog._insert_treeview_batch` | `self, start_idx: int, expected_gen: int` |
-| XUAT / text IO | `misora.py` | 22512 | method | `XuatCleanupDialog._toggle_tree_item` | `self, iid: str` |
-| XUAT / text IO | `misora.py` | 22522 | method | `XuatCleanupDialog._on_tree_click` | `self, event: tk.Event` |
-| XUAT / text IO | `misora.py` | 22532 | method | `XuatCleanupDialog._on_tree_space` | `self, _event: tk.Event` |
-| XUAT / text IO | `misora.py` | 22539 | method | `XuatCleanupDialog._bulk_select` | `self, selected: bool` |
-| XUAT / text IO | `misora.py` | 22551 | method | `XuatCleanupDialog._refresh_safety_banner` | `self` |
-| XUAT / text IO | `misora.py` | 22565 | method | `XuatCleanupDialog._refresh_archive_warning` | `self` |
-| XUAT / text IO | `misora.py` | 22586 | method | `XuatCleanupDialog._browse_archive_dir` | `self` |
-| XUAT / text IO | `misora.py` | 22595 | method | `XuatCleanupDialog._on_toggle_applied` | `self` |
-| XUAT / text IO | `misora.py` | 22607 | method | `XuatCleanupDialog._on_duplicate_scope_changed` | `self` |
-| XUAT / text IO | `misora.py` | 22617 | method | `XuatCleanupDialog._on_execute_cleanup` | `self` |
-| XUAT / text IO | `misora.py` | 22723 | method | `XuatCleanupDialog._cancel_async_work` | `self` |
-| XUAT / text IO | `misora.py` | 22747 | method | `XuatCleanupDialog._on_close` | `self` |
-| UI / Tk | `misora.py` | 22768 | class | `MTLSettingsDialog` | `` |
-| UI / Tk | `misora.py` | 22770 | method | `MTLSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 22930 | method | `MTLSettingsDialog._on_cancel` | `self` |
-| UI / Tk | `misora.py` | 22934 | method | `MTLSettingsDialog._open_ai_prompt` | `self` |
-| UI / Tk | `misora.py` | 22937 | method | `MTLSettingsDialog._get_draft_config` | `self` |
-| UI / Tk | `misora.py` | 22958 | method | `MTLSettingsDialog._on_test_connection` | `self` |
-| UI / Tk | `misora.py` | 22976 | method | `MTLSettingsDialog._schedule_poll` | `self` |
-| UI / Tk | `misora.py` | 22986 | method | `MTLSettingsDialog._poll_worker_queue` | `self` |
-| UI / Tk | `misora.py` | 23006 | method | `MTLSettingsDialog._on_close` | `self` |
-| Bundle / persistence | `misora.py` | 23017 | method | `MTLSettingsDialog._on_save` | `self` |
-| UI / Tk | `misora.py` | 23042 | class | `AIPromptSettingsDialog` | `` |
-| UI / Tk | `misora.py` | 23044 | method | `AIPromptSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 23144 | method | `AIPromptSettingsDialog._on_cancel` | `self` |
-| UI / Tk | `misora.py` | 23148 | method | `AIPromptSettingsDialog._reset_default` | `self` |
-| UI / Tk | `misora.py` | 23152 | method | `AIPromptSettingsDialog._copy_prompt_now` | `self` |
-| UI / Tk | `misora.py` | 23156 | method | `AIPromptSettingsDialog._apply_settings_to_app` | `self` |
-| Bundle / persistence | `misora.py` | 23162 | method | `AIPromptSettingsDialog._save_and_close` | `self` |
-| UI / Tk | `misora.py` | 23174 | class | `TranslatorAssistantDialog` | `` |
-| UI / Tk | `misora.py` | 23179 | method | `TranslatorAssistantDialog.__init__` | `self, parent: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 23310 | method | `TranslatorAssistantDialog._toggle_pin_top` | `self` |
-| UI / Tk | `misora.py` | 23317 | method | `TranslatorAssistantDialog._schedule_poll` | `self` |
-| UI / Tk | `misora.py` | 23327 | method | `TranslatorAssistantDialog._poll_worker_queue` | `self` |
-| UI / Tk | `misora.py` | 23398 | method | `TranslatorAssistantDialog._on_close` | `self` |
-| UI / Tk | `misora.py` | 23410 | method | `TranslatorAssistantDialog._on_engine_change` | `self, _event=None` |
-| AST / serialization | `misora.py` | 23414 | method | `TranslatorAssistantDialog.refresh_box` | `self` |
-| UI / Tk | `misora.py` | 23442 | method | `TranslatorAssistantDialog._on_prev` | `self` |
-| UI / Tk | `misora.py` | 23446 | method | `TranslatorAssistantDialog._on_next` | `self` |
-| UI / Tk | `misora.py` | 23450 | method | `TranslatorAssistantDialog._on_translate` | `self` |
-| UI / Tk | `misora.py` | 23493 | method | `TranslatorAssistantDialog._on_fetch_all` | `self` |
-| UI / Tk | `misora.py` | 23557 | method | `TranslatorAssistantDialog._use_comp_text` | `self, text: str` |
-| UI / Tk | `misora.py` | 23561 | method | `TranslatorAssistantDialog._on_apply` | `self` |
-| UI / Tk | `misora.py` | 23605 | method | `TranslatorAssistantDialog._on_apply_and_next` | `self` |
-| UI / Tk | `misora.py` | 23609 | method | `TranslatorAssistantDialog._on_copy` | `self` |
-| UI / Tk | `misora.py` | 23617 | class | `BatchTranslateDialog` | `` |
-| UI / Tk | `misora.py` | 23619 | method | `BatchTranslateDialog.__init__` | `self, parent: 'MisoraApp'` |
-| UI / Tk | `misora.py` | 23691 | method | `BatchTranslateDialog._end_undo_batch` | `self` |
-| UI / Tk | `misora.py` | 23700 | method | `BatchTranslateDialog._schedule_poll` | `self` |
-| UI / Tk | `misora.py` | 23710 | method | `BatchTranslateDialog._on_close` | `self` |
-| UI / Tk | `misora.py` | 23732 | method | `BatchTranslateDialog._start_batch` | `self` |
-| UI / Tk | `misora.py` | 23816 | method | `BatchTranslateDialog._poll_worker_queue` | `self` |
-| UI / Tk | `misora.py` | 23889 | function | `main` | `` |
+| UI / Tk | `misora.py` | 202 | function | `_get_work_area` | `x: int, y: int, fallback_widget: Optional[tk.Widget]=None` |
+| UI / Tk | `misora.py` | 263 | class | `ToolTip` | `` |
+| UI / Tk | `misora.py` | 266 | method | `ToolTip.__init__` | `self, widget: tk.Widget, text: str, delay_ms: int=350` |
+| UI / Tk | `misora.py` | 280 | method | `ToolTip.set_text` | `self, text: str` |
+| UI / Tk | `misora.py` | 290 | method | `ToolTip.on_enter` | `self, _event=None` |
+| UI / Tk | `misora.py` | 299 | method | `ToolTip.on_leave` | `self, _event=None` |
+| UI / Tk | `misora.py` | 303 | method | `ToolTip.on_destroy` | `self, _event=None` |
+| UI / Tk | `misora.py` | 307 | method | `ToolTip.cancel_timer` | `self` |
+| UI / Tk | `misora.py` | 315 | method | `ToolTip.widget_exists` | `self` |
+| UI / Tk | `misora.py` | 321 | method | `ToolTip.show_tip` | `self` |
+| UI / Tk | `misora.py` | 376 | method | `ToolTip.hide_tip` | `self, _event=None` |
+| UI / Tk | `misora.py` | 387 | function | `create_tooltip` | `widget: tk.Widget, text: str, delay_ms: int=350` |
+| UI / Tk | `misora.py` | 638 | function | `wcag_relative_luminance` | `hex_color: str` |
+| UI / Tk | `misora.py` | 653 | function | `wcag_contrast_ratio` | `hex_a: str, hex_b: str` |
+| UI / Tk | `misora.py` | 661 | function | `best_contrast_fg` | `bg_hex: str, dark_fg: str='#14141a', light_fg: str='#ffffff'` |
+| UI / Tk | `misora.py` | 674 | function | `_ensure_wcag_fg` | `preferred_hex: str, bg_hex: str, dark_fg: str='#14141a', light_fg: str='#ffffff', min_ratio: float=4.5` |
+| UI / Tk | `misora.py` | 688 | function | `_wcag_muted_fg` | `muted_hex: str, bg_hex: str, fallback_fg: str, min_ratio: float=4.6` |
+| UI / Tk | `misora.py` | 709 | function | `init_process_dpi_awareness` | `` |
+| UI / Tk | `misora.py` | 734 | function | `sanitize_window_geometry` | `geom_str: str, screen_w: int, screen_h: int` |
+| UI / Tk | `misora.py` | 762 | class | `NguiColorPickerPopup` | `` |
+| UI / Tk | `misora.py` | 770 | method | `NguiColorPickerPopup.__init__` | `self, parent: 'MisoraApp', primary_hex: str='#7b42bc', secondary_hex: str='#ff7da7'` |
+| UI / Tk | `misora.py` | 829 | method | `NguiColorPickerPopup._build_ui` | `self` |
+| UI / Tk | `misora.py` | 1043 | method | `NguiColorPickerPopup._select_stop` | `self, stop_idx: int` |
+| UI / Tk | `misora.py` | 1053 | method | `NguiColorPickerPopup._render_hue_bar` | `self` |
+| UI / Tk | `misora.py` | 1086 | method | `NguiColorPickerPopup._render_sv_map` | `self` |
+| UI / Tk | `misora.py` | 1124 | method | `NguiColorPickerPopup._render_gradient_preview` | `self` |
+| UI / Tk | `misora.py` | 1162 | method | `NguiColorPickerPopup._sync_ui_from_hsv` | `self` |
+| UI / Tk | `misora.py` | 1200 | method | `NguiColorPickerPopup._on_sv_drag` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 1207 | method | `NguiColorPickerPopup._on_hue_drag` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 1213 | method | `NguiColorPickerPopup._set_color_hex` | `self, hex_str: str` |
+| UI / Tk | `misora.py` | 1227 | method | `NguiColorPickerPopup._on_hex_entry_commit` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 1236 | method | `NguiColorPickerPopup._toggle_eyedropper` | `self` |
+| UI / Tk | `misora.py` | 1255 | method | `NguiColorPickerPopup._poll_eyedropper` | `self` |
+| UI / Tk | `misora.py` | 1317 | method | `NguiColorPickerPopup._stop_eyedropper` | `self` |
+| UI / Tk | `misora.py` | 1334 | method | `NguiColorPickerPopup._commit_single_color` | `self` |
+| UI / Tk | `misora.py` | 1340 | method | `NguiColorPickerPopup._commit_gradient_color` | `self` |
+| UI / Tk | `misora.py` | 1347 | method | `NguiColorPickerPopup._on_escape` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 1353 | method | `NguiColorPickerPopup._on_close` | `self` |
+| UI / Tk | `misora.py` | 1369 | function | `safe_grab_release` | `dialog: Optional[tk.Toplevel]` |
+| UI / Tk | `misora.py` | 1379 | class | `ProjectDiffDialog` | `` |
+| UI / Tk | `misora.py` | 1382 | method | `ProjectDiffDialog.__init__` | `self, parent: 'MisoraApp', diff_entries: List[WorkspaceDiffEntry], target_name: str=''` |
+| Bundle / persistence | `misora.py` | 1497 | function | `write_atomic_utf8` | `path: Union[str, Path], content: str, encoding: str='utf-8', has_bom: bool=False, newline: Optional[str]=None` |
+| Bundle / persistence | `misora.py` | 1508 | function | `make_collision_resistant_backup_path` | `source_path: Union[str, Path], backup_dir: Union[str, Path], tag: str='bak'` |
+| AST / serialization | `misora.py` | 1539 | function | `_get_box_uid` | `box: Any` |
+| UI / Tk | `misora.py` | 1551 | function | `_hash_mtl_source` | `text: str` |
+| UI / Tk | `misora.py` | 1556 | function | `compute_stable_lock_key` | `box_ordinal: int, original_jp_text: str` |
+| UI / Tk | `misora.py` | 1561 | function | `get_document_stable_locks` | `doc: Any, locked_uids: Set[int], original_jp_by_uid: Dict[int, str]` |
+| UI / Tk | `misora.py` | 1578 | function | `restore_stable_locks` | `doc: Any, stable_locks: Iterable[Tuple[int, str]], original_jp_by_uid: Optional[Dict[int, str]]=None` |
+| Search | `misora.py` | 1604 | class | `_ReplaceRowProxy` | `` |
+| Search | `misora.py` | 1607 | method | `_ReplaceRowProxy.__init__` | `self, app: Any` |
+| Search | `misora.py` | 1610 | method | `_ReplaceRowProxy.pack_forget` | `self` |
+| Search | `misora.py` | 1614 | method | `_ReplaceRowProxy.grid_remove` | `self` |
+| Search | `misora.py` | 1618 | method | `_ReplaceRowProxy.pack` | `self, *args: Any, **kwargs: Any` |
+| Search | `misora.py` | 1622 | method | `_ReplaceRowProxy.grid` | `self, *args: Any, **kwargs: Any` |
+| Search | `misora.py` | 1626 | method | `_ReplaceRowProxy.winfo_viewable` | `self` |
+| Search | `misora.py` | 1629 | method | `_ReplaceRowProxy.winfo_manager` | `self` |
+| UI / Tk | `misora.py` | 1633 | class | `_AllScriptPoolCard` | `` |
+| UI / Tk | `misora.py` | 1636 | method | `_AllScriptPoolCard.__init__` | `self, master: tk.Misc, app: 'MisoraApp'` |
+| AST / serialization | `misora.py` | 1725 | class | `_AllScriptBox0Card` | `` |
+| AST / serialization | `misora.py` | 1728 | method | `_AllScriptBox0Card.__init__` | `self, master: tk.Misc, app: 'MisoraApp'` |
+| AST / serialization | `misora.py` | 1789 | class | `_XuatBoxSnapshot` | `` |
+| XUAT / text IO | `misora.py` | 1796 | class | `_XuatDocSnapshot` | `` |
+| XUAT / text IO | `misora.py` | 1799 | method | `_XuatDocSnapshot.__init__` | `self, doc: Any` |
+| XUAT / text IO | `misora.py` | 1824 | method | `_XuatDocSnapshot.get_metadata` | `self` |
+| UI / Tk | `misora.py` | 1829 | class | `_ProgressTask` | `` |
+| UI / Tk | `misora.py` | 1838 | class | `_ProgressTaskManager` | `` |
+| UI / Tk | `misora.py` | 1855 | method | `_ProgressTaskManager.__init__` | `self, app: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 1870 | method | `_ProgressTaskManager.post_start` | `self, task_id: str, gen: int, label: str, cancel_event: Optional[threading.Event]=None` |
+| UI / Tk | `misora.py` | 1879 | method | `_ProgressTaskManager.post_progress` | `self, task_id: str, gen: int, fraction: float, label: Optional[str]=None` |
+| UI / Tk | `misora.py` | 1893 | method | `_ProgressTaskManager.post_complete` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1896 | method | `_ProgressTaskManager.post_fail` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1899 | method | `_ProgressTaskManager.post_cancel` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1905 | method | `_ProgressTaskManager.start` | `self, task_id: str, gen: int, label: str, cancel_event: Optional[threading.Event]=None` |
+| UI / Tk | `misora.py` | 1916 | method | `_ProgressTaskManager.update` | `self, task_id: str, gen: int, fraction: float, label: Optional[str]=None` |
+| UI / Tk | `misora.py` | 1927 | method | `_ProgressTaskManager.complete` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1932 | method | `_ProgressTaskManager.fail` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1937 | method | `_ProgressTaskManager.cancel` | `self, task_id: str, gen: int, message: str=''` |
+| UI / Tk | `misora.py` | 1942 | method | `_ProgressTaskManager._ensure_polling` | `self` |
+| UI / Tk | `misora.py` | 1953 | method | `_ProgressTaskManager._poll` | `self` |
+| UI / Tk | `misora.py` | 1961 | method | `_ProgressTaskManager.drain_now` | `self` |
+| UI / Tk | `misora.py` | 2031 | method | `_ProgressTaskManager._refresh_display` | `self` |
+| UI / Tk | `misora.py` | 2080 | method | `_ProgressTaskManager.shutdown` | `self` |
+| UI / Tk | `misora.py` | 2112 | class | `MisoraApp` | `` |
+| UI / Tk | `misora.py` | 2115 | method | `MisoraApp.__init__` | `self, initial_path: Optional[str]=None, show_splash: bool=True, _progress_callback=None, restore_session: bool=True` |
+| UI / Tk | `misora.py` | 2516 | method | `MisoraApp._close_splash_safely` | `self` |
+| UI / Tk | `misora.py` | 2525 | method | `MisoraApp.withdraw` | `self` |
+| UI / Tk | `misora.py` | 2531 | method | `MisoraApp.deiconify` | `self` |
+| UI / Tk | `misora.py` | 2535 | method | `MisoraApp.get_icon` | `self, name: str, size: Tuple[int, int]=(20, 20), dpi_aware: bool=False` |
+| UI / Tk | `misora.py` | 2539 | method | `MisoraApp.safe_clipboard_get` | `self` |
+| UI / Tk | `misora.py` | 2551 | method | `MisoraApp.safe_clipboard_set` | `self, text: str` |
+| UI / Tk | `misora.py` | 2567 | method | `MisoraApp._install_exception_hooks` | `self` |
+| UI / Tk | `misora.py` | 2576 | method | `MisoraApp.report_callback_exception` | `self, exc, val, tb` |
+| UI / Tk | `misora.py` | 2585 | method | `MisoraApp._on_app_exit` | `self` |
+| UI / Tk | `misora.py` | 2630 | method | `MisoraApp._on_root_destroy` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 2720 | method | `MisoraApp.destroy` | `self` |
+| Bundle / persistence | `misora.py` | 2882 | method | `MisoraApp._load_user_prefs` | `self` |
+| Bundle / persistence | `misora.py` | 3028 | method | `MisoraApp._save_user_prefs` | `self, silent: bool=False` |
+| UI / Tk | `misora.py` | 3106 | method | `MisoraApp._detect_active_preset_name` | `self` |
+| UI / Tk | `misora.py` | 3114 | method | `MisoraApp._is_dark_color` | `hex_color: str` |
+| UI / Tk | `misora.py` | 3118 | method | `MisoraApp._is_light_theme` | `self` |
+| UI / Tk | `misora.py` | 3123 | method | `MisoraApp._shift_hex` | `hex_color: str, delta: int` |
+| UI / Tk | `misora.py` | 3132 | method | `MisoraApp._tag_role` | `self, widget: tk.Widget, role: str` |
+| UI / Tk | `misora.py` | 3138 | method | `MisoraApp.dialogue_font_family` | `self` |
+| UI / Tk | `misora.py` | 3143 | method | `MisoraApp.dialogue_font_family` | `self, value: str` |
+| UI / Tk | `misora.py` | 3150 | method | `MisoraApp.dialogue_font_size` | `self` |
+| UI / Tk | `misora.py` | 3155 | method | `MisoraApp.dialogue_font_size` | `self, value: int` |
+| UI / Tk | `misora.py` | 3161 | method | `MisoraApp._get_available_font_families` | `self` |
+| UI / Tk | `misora.py` | 3167 | method | `MisoraApp._resolve_active_dialogue_font_parts` | `self` |
+| UI / Tk | `misora.py` | 3173 | method | `MisoraApp._get_dialogue_font_tuple` | `self, size: Optional[int]=None, *styles: str` |
+| UI / Tk | `misora.py` | 3186 | method | `MisoraApp._apply_theme_and_fonts_live` | `self, save: bool=True` |
+| UI / Tk | `misora.py` | 3551 | method | `MisoraApp.set_status` | `self, message: str, is_error: bool=False, timeout_ms: Optional[int]=None` |
+| UI / Tk | `misora.py` | 3582 | method | `MisoraApp._reset_status` | `self` |
+| UI / Tk | `misora.py` | 3595 | method | `MisoraApp.show_toast` | `self, message: str, duration_ms: int=2200, is_accent: bool=True, is_error: bool=False, status_bar: bool=True` |
+| UI / Tk | `misora.py` | 3634 | method | `MisoraApp._display_toast` | `self, message: str, duration_ms: int, is_accent: bool, is_error: bool` |
+| UI / Tk | `misora.py` | 3691 | method | `MisoraApp._dismiss_toast` | `self` |
+| UI / Tk | `misora.py` | 3714 | method | `MisoraApp._sweep_cstyle_tags` | `self, widget: Optional[tk.Text]` |
+| UI / Tk | `misora.py` | 3722 | method | `MisoraApp._configure_editor_rich_tags` | `self, widget: tk.Text, d_fam: str, d_sz: int` |
+| UI / Tk | `misora.py` | 3774 | method | `MisoraApp._init_drag_and_drop` | `self` |
+| UI / Tk | `misora.py` | 3886 | method | `MisoraApp._cleanup_drag_and_drop` | `self` |
+| UI / Tk | `misora.py` | 3909 | method | `MisoraApp.on_force_open_file` | `self` |
+| UI / Tk | `misora.py` | 3919 | method | `MisoraApp._check_batch_safety` | `self, files: List[Path]` |
+| UI / Tk | `misora.py` | 3960 | method | `MisoraApp._on_dnd_settings_dialog` | `self` |
+| UI / Tk | `misora.py` | 4050 | method | `MisoraApp._handle_dropped_paths` | `self, paths: List[Path]` |
+| UI / Tk | `misora.py` | 4140 | method | `MisoraApp._process_opened_folder` | `self, folder: Path, source_label: str='Folder'` |
+| UI / Tk | `misora.py` | 4245 | method | `MisoraApp._set_project_folder` | `self, folder: Union[str, Path]` |
+| XUAT / text IO | `misora.py` | 4255 | method | `MisoraApp._resolve_xuat_text_root` | `self, proj_dir: Optional[Path]` |
+| Search | `misora.py` | 4270 | method | `MisoraApp._resolve_project_search_roots` | `self, proj_dir: Optional[Path]` |
+| UI / Tk | `misora.py` | 4307 | method | `MisoraApp._detect_environment` | `self` |
+| Bundle / persistence | `misora.py` | 4337 | method | `MisoraApp._get_backup_dir` | `self` |
+| UI / Tk | `misora.py` | 4347 | method | `MisoraApp._apply_styles` | `self` |
+| UI / Tk | `misora.py` | 4709 | method | `MisoraApp._build_menu` | `self` |
+| Search | `misora.py` | 5129 | method | `MisoraApp._build_search_bar` | `self` |
+| Search | `misora.py` | 5303 | method | `MisoraApp._show_replace_row` | `self` |
+| Search | `misora.py` | 5314 | method | `MisoraApp._hide_replace_row` | `self` |
+| UI / Tk | `misora.py` | 5328 | method | `MisoraApp._build_main_panels` | `self` |
+| UI / Tk | `misora.py` | 6901 | method | `MisoraApp._on_debug_settings_changed` | `self` |
+| UI / Tk | `misora.py` | 6914 | method | `MisoraApp._sync_debug_menu_states` | `self` |
+| UI / Tk | `misora.py` | 6922 | method | `MisoraApp._on_open_debug_log_file` | `self` |
+| UI / Tk | `misora.py` | 6934 | method | `MisoraApp._on_clear_debug_log_file` | `self` |
+| UI / Tk | `misora.py` | 6942 | method | `MisoraApp._on_speaker_dropdown_clicked` | `self` |
+| UI / Tk | `misora.py` | 6992 | method | `MisoraApp._jump_to_speaker` | `self, speaker_name: str` |
+| UI / Tk | `misora.py` | 7028 | method | `MisoraApp._is_widget_in_speaker_popup` | `self, widget: Optional[tk.Misc]` |
+| UI / Tk | `misora.py` | 7045 | method | `MisoraApp._is_speaker_popup_open` | `self` |
+| UI / Tk | `misora.py` | 7054 | method | `MisoraApp._get_speaker_autocomplete_candidates` | `self, filter_text: str` |
+| UI / Tk | `misora.py` | 7082 | method | `MisoraApp._open_speaker_autocomplete` | `self` |
+| UI / Tk | `misora.py` | 7132 | method | `MisoraApp._get_monitor_work_area` | `self, x: int, y: int` |
+| UI / Tk | `misora.py` | 7169 | method | `MisoraApp._refresh_speaker_autocomplete` | `self` |
+| UI / Tk | `misora.py` | 7207 | method | `MisoraApp._close_speaker_autocomplete` | `self` |
+| UI / Tk | `misora.py` | 7228 | method | `MisoraApp._on_speaker_focus_in` | `self` |
+| UI / Tk | `misora.py` | 7240 | method | `MisoraApp._on_speaker_entry_clicked` | `self` |
+| UI / Tk | `misora.py` | 7246 | method | `MisoraApp._on_speaker_key_release` | `self, event: Optional[tk.Event]` |
+| UI / Tk | `misora.py` | 7263 | method | `MisoraApp._on_speaker_nav_down` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 7277 | method | `MisoraApp._on_speaker_nav_up` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 7291 | method | `MisoraApp._on_speaker_enter` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 7306 | method | `MisoraApp._on_speaker_escape` | `self, _event: Optional[tk.Event]=None` |
+| AST / serialization | `misora.py` | 7310 | method | `MisoraApp._on_speaker_listbox_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 7318 | method | `MisoraApp._accept_speaker_autocomplete_selection` | `self` |
+| UI / Tk | `misora.py` | 7339 | method | `MisoraApp._restore_speaker_entry_focus` | `self` |
+| UI / Tk | `misora.py` | 7359 | method | `MisoraApp._on_speaker_focus_out` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 7370 | method | `MisoraApp._on_speaker_focus_out_deferred` | `self` |
+| UI / Tk | `misora.py` | 7383 | method | `MisoraApp._on_speaker_virtual_edit` | `self` |
+| AST / serialization | `misora.py` | 7389 | method | `MisoraApp._assign_speaker_to_current_box` | `self, new_speaker: str` |
+| UI / Tk | `misora.py` | 7395 | method | `MisoraApp._append_speaker_attribute` | `self, attr_suffix: str` |
+| UI / Tk | `misora.py` | 7402 | method | `MisoraApp._prompt_append_speaker_attribute` | `self` |
+| UI / Tk | `misora.py` | 7444 | method | `MisoraApp._is_widget_packed` | `w: tk.Widget` |
+| UI / Tk | `misora.py` | 7450 | method | `MisoraApp._on_toggle_line_numbers` | `self` |
+| UI / Tk | `misora.py` | 7503 | method | `MisoraApp._on_toggle_column_ruler` | `self` |
+| UI / Tk | `misora.py` | 7535 | method | `MisoraApp._update_gutter_clean` | `self` |
+| UI / Tk | `misora.py` | 7550 | method | `MisoraApp._sync_continuous_gutter_scroll` | `self, *args` |
+| UI / Tk | `misora.py` | 7558 | method | `MisoraApp._on_continuous_vscroll` | `self, *args` |
+| UI / Tk | `misora.py` | 7567 | method | `MisoraApp._highlight_secret_whitespace` | `self, text_widget: tk.Text` |
+| UI / Tk | `misora.py` | 7577 | method | `MisoraApp._shortcut_wrap` | `self, open_tag: str, close_tag: str` |
+| UI / Tk | `misora.py` | 7581 | method | `MisoraApp._shortcut_undo` | `self` |
+| UI / Tk | `misora.py` | 7585 | method | `MisoraApp._shortcut_redo` | `self` |
+| UI / Tk | `misora.py` | 7589 | method | `MisoraApp._set_ribbon_colors` | `self, primary_hex: str, secondary_hex: str` |
+| UI / Tk | `misora.py` | 7600 | method | `MisoraApp._apply_active_ribbon_color` | `self` |
+| UI / Tk | `misora.py` | 7604 | method | `MisoraApp._apply_active_ribbon_gradient` | `self` |
+| UI / Tk | `misora.py` | 7609 | method | `MisoraApp.on_open_color_picker` | `self` |
+| UI / Tk | `misora.py` | 7624 | method | `MisoraApp.apply_ngui_wrapper` | `self, open_tag: str, close_tag: str, default_inner: str=''` |
+| UI / Tk | `misora.py` | 7647 | method | `MisoraApp._sync_preview_toggle_availability` | `self` |
+| UI / Tk | `misora.py` | 7664 | method | `MisoraApp._update_top_header_title` | `self` |
+| UI / Tk | `misora.py` | 7676 | method | `MisoraApp._on_toggle_ngui_ribbon` | `self` |
+| UI / Tk | `misora.py` | 7695 | method | `MisoraApp._on_dialogue_preview_configure` | `self, event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 7706 | method | `MisoraApp._hide_dialogue_preview_and_restore_editor` | `self` |
+| UI / Tk | `misora.py` | 7717 | method | `MisoraApp._render_dialogue_preview_frame` | `self, speaker: str, raw_text: str` |
+| UI / Tk | `misora.py` | 7855 | method | `MisoraApp._on_toggle_preview_compiled` | `self` |
+| UI / Tk | `misora.py` | 7921 | method | `MisoraApp._get_or_create_compiled_style_tag` | `self, widget: tk.Text, bold: bool, italic: bool, underline: bool, strike: bool, sub_mode: int, fg_color: Optional[str], font_scale: float=1.0` |
+| UI / Tk | `misora.py` | 7957 | method | `MisoraApp._insert_compiled_ngui_text` | `self, widget: tk.Text, insert_pos: str, raw_text: str, base_tags: Tuple[str, ...]=()` |
+| UI / Tk | `misora.py` | 8095 | method | `MisoraApp._build_side_drawer` | `self` |
+| UI / Tk | `misora.py` | 8159 | method | `MisoraApp._build_customize_tab` | `self, parent: tk.Frame` |
+| UI / Tk | `misora.py` | 8383 | method | `MisoraApp._build_glossary_tab` | `self, parent: tk.Frame` |
+| UI / Tk | `misora.py` | 8458 | method | `MisoraApp._open_side_drawer` | `self, tab: str='customize'` |
+| UI / Tk | `misora.py` | 8470 | method | `MisoraApp._close_side_drawer` | `self` |
+| UI / Tk | `misora.py` | 8481 | method | `MisoraApp._toggle_side_drawer` | `self, tab: str` |
+| UI / Tk | `misora.py` | 8487 | method | `MisoraApp._switch_side_drawer_tab` | `self, tab: str` |
+| UI / Tk | `misora.py` | 8515 | method | `MisoraApp._on_font_pref_changed` | `self` |
+| UI / Tk | `misora.py` | 8544 | method | `MisoraApp._on_custom_font_selected` | `self` |
+| UI / Tk | `misora.py` | 8554 | method | `MisoraApp._refresh_custom_fonts` | `self` |
+| UI / Tk | `misora.py` | 8567 | method | `MisoraApp._open_fonts_folder` | `self` |
+| UI / Tk | `misora.py` | 8579 | method | `MisoraApp._adjust_dialogue_font_size` | `self, delta: int` |
+| UI / Tk | `misora.py` | 8587 | method | `MisoraApp._pick_theme_color` | `self, key: str` |
+| UI / Tk | `misora.py` | 8604 | method | `MisoraApp._commit_theme_hex` | `self, key: str` |
+| UI / Tk | `misora.py` | 8626 | method | `MisoraApp._apply_theme_preset` | `self, preset_name: str` |
+| UI / Tk | `misora.py` | 8649 | method | `MisoraApp._reset_customization_defaults` | `self` |
+| UI / Tk | `misora.py` | 8673 | method | `MisoraApp._filter_glossary` | `self` |
+| UI / Tk | `misora.py` | 8688 | method | `MisoraApp._render_glossary_list` | `self` |
+| UI / Tk | `misora.py` | 8712 | method | `MisoraApp._on_glossary_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 8721 | method | `MisoraApp._on_glossary_double_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 8726 | method | `MisoraApp._insert_selected_glossary_tag` | `self` |
+| UI / Tk | `misora.py` | 8741 | method | `MisoraApp._insert_text_wrapper` | `self, open_tag: str, close_tag: str, default_inner: str=''` |
+| UI / Tk | `misora.py` | 8805 | method | `MisoraApp.on_insert_ruby` | `self` |
+| UI / Tk | `misora.py` | 8949 | method | `MisoraApp._highlight_ngui_tags` | `self` |
+| UI / Tk | `misora.py` | 8982 | method | `MisoraApp._sync_gd_scroll_bounds` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 8995 | method | `MisoraApp._on_gd_scrollbar` | `self, *args: Any` |
+| UI / Tk | `misora.py` | 9002 | method | `MisoraApp._on_gd_mousewheel` | `self, event: tk.Event` |
+| AST / serialization | `misora.py` | 9024 | method | `MisoraApp._auto_resize_dialogue_box` | `self` |
+| UI / Tk | `misora.py` | 9033 | method | `MisoraApp._on_toggle_continuous_view` | `self` |
+| UI / Tk | `misora.py` | 9092 | method | `MisoraApp._build_status_bar` | `self` |
+| UI / Tk | `misora.py` | 9134 | method | `MisoraApp._get_active_text_widget` | `self` |
+| UI / Tk | `misora.py` | 9156 | method | `MisoraApp._get_card_text_widget` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 9172 | method | `MisoraApp._install_shortcuts_bindtag` | `self, widget: tk.Widget` |
+| UI / Tk | `misora.py` | 9181 | method | `MisoraApp._on_misora_shortcut` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 9307 | method | `MisoraApp._show_csif_paste_chooser` | `self, clip_text: str` |
+| UI / Tk | `misora.py` | 9448 | method | `MisoraApp._handle_editor_csif_paste` | `self, widget: tk.Widget, clip_text: str` |
+| UI / Tk | `misora.py` | 9466 | method | `MisoraApp._bind_shortcuts` | `self` |
+| UI / Tk | `misora.py` | 9527 | method | `MisoraApp._toggle_continuous_shortcut` | `self` |
+| UI / Tk | `misora.py` | 9531 | method | `MisoraApp._on_ctrl_h` | `self, _e: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 9536 | method | `MisoraApp._on_ctrl_f` | `self, _e: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 9541 | method | `MisoraApp._on_ctrl_shift_f` | `self, _e: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 9549 | method | `MisoraApp._flush_active_widget` | `self` |
+| UI / Tk | `misora.py` | 9596 | method | `MisoraApp._norm_meta_path_key` | `fp: Optional[Union[str, Path]]` |
+| UI / Tk | `misora.py` | 9605 | method | `MisoraApp.open_file` | `self, file_path: Union[str, Path], reload_from_disk: bool=False, refresh_ui: bool=True` |
+| UI / Tk | `misora.py` | 9852 | method | `MisoraApp._update_empty_state_visibility` | `self` |
+| UI / Tk | `misora.py` | 9877 | method | `MisoraApp._update_views` | `self` |
+| UI / Tk | `misora.py` | 10068 | method | `MisoraApp._update_raw_view` | `self` |
+| UI / Tk | `misora.py` | 10106 | method | `MisoraApp._sync_raw_edit_buttons` | `self` |
+| UI / Tk | `misora.py` | 10130 | method | `MisoraApp._exit_raw_edit_mode` | `self, refresh: bool=True` |
+| UI / Tk | `misora.py` | 10140 | method | `MisoraApp.on_enter_raw_edit_mode` | `self` |
+| UI / Tk | `misora.py` | 10156 | method | `MisoraApp.on_cancel_raw_edit_mode` | `self` |
+| AST / serialization | `misora.py` | 10163 | method | `MisoraApp._parse_and_validate_raw_v2` | `v2_text: str` |
+| UI / Tk | `misora.py` | 10242 | method | `MisoraApp._remap_locks_and_jp_keys` | `self, stable_locks: List[Tuple[int, str]], old_jp_by_ordinal: Dict[int, str], old_clean_by_ordinal: Dict[int, str]` |
+| UI / Tk | `misora.py` | 10275 | method | `MisoraApp.on_apply_raw_commands` | `self` |
+| UI / Tk | `misora.py` | 10370 | method | `MisoraApp._flush_continuous_card_edits` | `self` |
+| UI / Tk | `misora.py` | 10438 | method | `MisoraApp._on_card_text_edited` | `self, box_idx: int, txt_w: tk.Text, gutter: Optional[tk.Text]=None` |
+| UI / Tk | `misora.py` | 10515 | method | `MisoraApp._on_card_focus_in` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 10528 | method | `MisoraApp._clear_card_registry` | `self` |
+| UI / Tk | `misora.py` | 10573 | method | `MisoraApp._highlight_active_card_header` | `self, active_idx: int` |
+| UI / Tk | `misora.py` | 10595 | method | `MisoraApp._sync_header_controls_for_card` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 10632 | method | `MisoraApp._copy_single_card_dialogue` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 10640 | method | `MisoraApp._card_shortcut_wrap` | `self, w: tk.Text, open_t: str, close_t: str` |
+| UI / Tk | `misora.py` | 10652 | method | `MisoraApp._highlight_ngui_tags_for_widget` | `self, w: tk.Text` |
+| UI / Tk | `misora.py` | 10666 | method | `MisoraApp.on_copy_script` | `self` |
+| UI / Tk | `misora.py` | 10681 | method | `MisoraApp._on_cont_mousewheel` | `self, event` |
+| UI / Tk | `misora.py` | 10689 | method | `MisoraApp._resize_cont_canvas` | `self, width: int` |
+| AST / serialization | `misora.py` | 10698 | method | `MisoraApp._on_toggle_select_box_mode` | `self` |
+| AST / serialization | `misora.py` | 10715 | method | `MisoraApp._update_select_all_boxes_ui` | `self` |
+| AST / serialization | `misora.py` | 10741 | method | `MisoraApp._on_select_all_boxes` | `self` |
+| AST / serialization | `misora.py` | 10754 | method | `MisoraApp._on_deselect_all_boxes` | `self` |
+| AST / serialization | `misora.py` | 10765 | method | `MisoraApp._update_dialogue_select_box_ui` | `self` |
+| AST / serialization | `misora.py` | 10784 | method | `MisoraApp._on_dialogue_box_sel_toggle` | `self` |
+| UI / Tk | `misora.py` | 10794 | method | `MisoraApp._reset_speaker_pin` | `self, notify: bool=False` |
+| UI / Tk | `misora.py` | 10806 | method | `MisoraApp._on_toggle_pin_speaker` | `self` |
+| UI / Tk | `misora.py` | 10828 | method | `MisoraApp.on_select_whole_story` | `self` |
+| UI / Tk | `misora.py` | 10849 | method | `MisoraApp.on_text_cut` | `self` |
+| UI / Tk | `misora.py` | 10863 | method | `MisoraApp.on_text_copy` | `self` |
+| UI / Tk | `misora.py` | 10873 | method | `MisoraApp.on_text_paste` | `self` |
+| UI / Tk | `misora.py` | 10886 | method | `MisoraApp._push_undo` | `self, label: str='Edit'` |
+| UI / Tk | `misora.py` | 10894 | method | `MisoraApp._mark_document_dirty` | `self, file_path: Optional[Union[str, Path]]` |
+| UI / Tk | `misora.py` | 10908 | method | `MisoraApp._build_window_title` | `self` |
+| UI / Tk | `misora.py` | 10936 | method | `MisoraApp._dirty_state_changed` | `self` |
+| AST / serialization | `misora.py` | 10960 | method | `MisoraApp._record_saved_checkpoint` | `self, file_path: Optional[Union[str, Path]], doc: Optional[Any], plain_text: str=''` |
+| UI / Tk | `misora.py` | 10982 | method | `MisoraApp._evaluate_checkpoints_for_op` | `self, op: Any` |
+| AST / serialization | `misora.py` | 11044 | method | `MisoraApp._sync_clean_view_to_current_box` | `self` |
+| AST / serialization | `misora.py` | 11087 | method | `MisoraApp.on_box_new` | `self` |
+| AST / serialization | `misora.py` | 11124 | method | `MisoraApp.on_box_copy` | `self` |
+| AST / serialization | `misora.py` | 11152 | method | `MisoraApp.on_box_cut` | `self` |
+| AST / serialization | `misora.py` | 11194 | method | `MisoraApp._clone_box_snapshot` | `snap: BoxSnapshot` |
+| AST / serialization | `misora.py` | 11205 | method | `MisoraApp._show_box_paste_mode_dialog` | `self, block_count: int, sp_desc: str, selected_targets: List[int], total_boxes: int, is_box0: bool=False` |
+| AST / serialization | `misora.py` | 11365 | method | `MisoraApp.on_box_paste` | `self, confirm: bool=True, mode: Optional[str]=None` |
+| UI / Tk | `misora.py` | 11564 | method | `MisoraApp._on_card_paste_caret` | `self, box_idx: int, txt_widget: tk.Text` |
+| UI / Tk | `misora.py` | 11688 | method | `MisoraApp._on_size_dropdown_clicked` | `self` |
+| UI / Tk | `misora.py` | 11703 | method | `MisoraApp.on_insert_font_size` | `self, size_val: Optional[str]` |
+| UI / Tk | `misora.py` | 11738 | method | `MisoraApp._get_as_viewport_size` | `self` |
+| UI / Tk | `misora.py` | 11759 | method | `MisoraApp._compute_as_card_metrics` | `self` |
+| UI / Tk | `misora.py` | 11775 | method | `MisoraApp._ensure_as_pool_capacity` | `self, viewport_h: int` |
+| UI / Tk | `misora.py` | 11806 | method | `MisoraApp._recompute_as_pool_for_height` | `self, viewport_h: int` |
+| UI / Tk | `misora.py` | 11812 | method | `MisoraApp._on_as_viewport_resized` | `self, width: int, height: int` |
+| AST / serialization | `misora.py` | 11836 | method | `MisoraApp._recompute_as_box0_height` | `self, card_w: int` |
+| UI / Tk | `misora.py` | 11860 | method | `MisoraApp._rebuild_as_slots` | `self, card_w: int` |
+| AST / serialization | `misora.py` | 11884 | method | `MisoraApp._ensure_as_box0_card` | `self` |
+| AST / serialization | `misora.py` | 11891 | method | `MisoraApp._bind_as_box0_card` | `self` |
+| UI / Tk | `misora.py` | 11940 | method | `MisoraApp._apply_as_card_visual_state` | `self, card: _AllScriptPoolCard, is_active: bool` |
+| UI / Tk | `misora.py` | 11969 | method | `MisoraApp._patch_as_card_header` | `self, card: _AllScriptPoolCard, box_idx: int` |
+| UI / Tk | `misora.py` | 11998 | method | `MisoraApp._populate_as_card_body` | `self, card: _AllScriptPoolCard, box_idx: int` |
+| UI / Tk | `misora.py` | 12041 | method | `MisoraApp._bind_as_pool_card` | `self, card: _AllScriptPoolCard, box_idx: int` |
+| UI / Tk | `misora.py` | 12062 | method | `MisoraApp._patch_as_visible_card_body` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 12070 | method | `MisoraApp._patch_as_visible_card_header` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 12077 | method | `MisoraApp._refresh_as_visible_selection_slots` | `self` |
+| UI / Tk | `misora.py` | 12087 | method | `MisoraApp._set_as_active_card` | `self, old_idx: Optional[int], new_idx: int` |
+| UI / Tk | `misora.py` | 12103 | method | `MisoraApp._update_as_scrollbar_thumb` | `self, viewport_h: int` |
+| UI / Tk | `misora.py` | 12114 | method | `MisoraApp._layout_as_visible_cards` | `self, viewport_w_override: Optional[int]=None, viewport_h_override: Optional[int]=None, force_rebind: bool=False` |
+| UI / Tk | `misora.py` | 12222 | method | `MisoraApp._on_as_scrollbar` | `self, *args: Any` |
+| UI / Tk | `misora.py` | 12242 | method | `MisoraApp._on_as_mousewheel` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 12258 | method | `MisoraApp._on_as_card_shift_mousewheel` | `self, event: tk.Event, card: _AllScriptPoolCard` |
+| UI / Tk | `misora.py` | 12266 | method | `MisoraApp._on_as_card_key_scroll` | `self, card: _AllScriptPoolCard, direction: str` |
+| UI / Tk | `misora.py` | 12290 | method | `MisoraApp._on_as_card_sel_click` | `self, card: _AllScriptPoolCard` |
+| UI / Tk | `misora.py` | 12302 | method | `MisoraApp._on_as_card_lock_click` | `self, card: _AllScriptPoolCard` |
+| AST / serialization | `misora.py` | 12310 | method | `MisoraApp._on_as_box0_sel_click` | `self` |
+| AST / serialization | `misora.py` | 12321 | method | `MisoraApp._on_as_box0_click` | `self` |
+| AST / serialization | `misora.py` | 12334 | method | `MisoraApp._on_as_box0_double_click` | `self` |
+| UI / Tk | `misora.py` | 12342 | method | `MisoraApp._on_as_card_click` | `self, card: _AllScriptPoolCard` |
+| UI / Tk | `misora.py` | 12357 | method | `MisoraApp._on_as_card_double_click` | `self, card: _AllScriptPoolCard` |
+| UI / Tk | `misora.py` | 12367 | method | `MisoraApp._render_continuous_view` | `self` |
+| AST / serialization | `misora.py` | 12447 | method | `MisoraApp._focus_continuous_box` | `self, box_idx: int, move_cursor: bool=True, char_offset: int=0, explicit_span: Optional[Tuple[int, int]]=None` |
+| AST / serialization | `misora.py` | 12508 | method | `MisoraApp._find_continuous_box_at_index` | `self, tk_index: str` |
+| AST / serialization | `misora.py` | 12514 | method | `MisoraApp._nearest_continuous_box_to_index` | `self, tk_index: str` |
+| UI / Tk | `misora.py` | 12518 | method | `MisoraApp._on_continuous_cursor_moved` | `self, event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 12521 | method | `MisoraApp._on_continuous_key_guard` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 12524 | method | `MisoraApp._on_continuous_copy` | `self, _event: Optional[tk.Event]=None` |
+| UI / Tk | `misora.py` | 12527 | method | `MisoraApp._on_continuous_paste_guard` | `self, _event: tk.Event` |
+| UI / Tk | `misora.py` | 12530 | method | `MisoraApp._on_continuous_cut_guard` | `self, _event: tk.Event` |
+| UI / Tk | `misora.py` | 12533 | method | `MisoraApp._on_continuous_key_release` | `self, _event: tk.Event` |
+| AST / serialization | `misora.py` | 12536 | method | `MisoraApp._sync_continuous_box_from_widget` | `self` |
+| UI / Tk | `misora.py` | 12539 | method | `MisoraApp._highlight_dialogue_matches` | `self, explicit_span: Optional[Tuple[int, int]]=None` |
+| UI / Tk | `misora.py` | 12573 | method | `MisoraApp._highlight_continuous_matches` | `self` |
+| UI / Tk | `misora.py` | 12584 | method | `MisoraApp._update_bottom_tab_styles` | `self` |
+| UI / Tk | `misora.py` | 12613 | method | `MisoraApp._switch_bottom_tab` | `self, tab_name: str, flush: bool=True` |
+| UI / Tk | `misora.py` | 12635 | method | `MisoraApp._rebuild_quick_edit_widgets` | `self, box: Optional[Box], box_idx: Optional[int]` |
+| UI / Tk | `misora.py` | 12706 | method | `MisoraApp._refresh_quick_edit_pane` | `self, force: bool=False` |
+| UI / Tk | `misora.py` | 12768 | method | `MisoraApp._on_quick_edit_focus_out` | `self, _event: tk.Event` |
+| UI / Tk | `misora.py` | 12785 | method | `MisoraApp._on_quick_edit_changed` | `self` |
+| UI / Tk | `misora.py` | 12881 | method | `MisoraApp._flush_quick_edit_session` | `self, sync_from_widget: bool=True` |
+| UI / Tk | `misora.py` | 12949 | method | `MisoraApp._commit_speaker_edit` | `self, source: str='keyboard'` |
+| UI / Tk | `misora.py` | 13046 | method | `MisoraApp._on_speaker_edited` | `self` |
+| AST / serialization | `misora.py` | 13050 | method | `MisoraApp._refresh_continuous_box_header` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 13065 | method | `MisoraApp._on_dialogue_key_up` | `self, _event: tk.Event` |
+| UI / Tk | `misora.py` | 13075 | method | `MisoraApp._on_dialogue_key_down` | `self, _event: tk.Event` |
+| UI / Tk | `misora.py` | 13085 | method | `MisoraApp._commit_widget_edit` | `self, widget: Optional[tk.Widget]=None` |
+| UI / Tk | `misora.py` | 13193 | method | `MisoraApp._on_dialogue_edited` | `self` |
+| AST / serialization | `misora.py` | 13282 | method | `MisoraApp._update_box0_char_counter` | `self` |
+| AST / serialization | `misora.py` | 13292 | method | `MisoraApp._on_box0_metadata_edited` | `self` |
+| UI / Tk | `misora.py` | 13331 | method | `MisoraApp._navigate_pinned_speaker` | `self, direction: str` |
+| AST / serialization | `misora.py` | 13369 | method | `MisoraApp.on_prev_box` | `self` |
+| AST / serialization | `misora.py` | 13394 | method | `MisoraApp.on_next_box` | `self` |
+| AST / serialization | `misora.py` | 13416 | method | `MisoraApp.is_box_locked` | `self, box_idx: int` |
+| UI / Tk | `misora.py` | 13424 | method | `MisoraApp._on_toggle_card_lock` | `self, box_idx: int` |
+| AST / serialization | `misora.py` | 13434 | method | `MisoraApp.on_toggle_lock_current_box` | `self` |
+| AST / serialization | `misora.py` | 13475 | method | `MisoraApp._resync_box_indices_from_uids` | `self` |
+| UI / Tk | `misora.py` | 13489 | method | `MisoraApp._get_dialogue_measure_font` | `self` |
+| UI / Tk | `misora.py` | 13511 | method | `MisoraApp._get_ruler_measure_font` | `self` |
+| UI / Tk | `misora.py` | 13538 | method | `MisoraApp._get_54d_reference_safe_w` | `self` |
+| UI / Tk | `misora.py` | 13544 | method | `MisoraApp._measure_dialogue_metrics` | `self, text: str` |
+| UI / Tk | `misora.py` | 13613 | method | `MisoraApp._update_char_overflow_indicator` | `self, text: Optional[str]=None` |
+| UI / Tk | `misora.py` | 13639 | method | `MisoraApp._apply_overflow_highlights` | `self, widget: Optional[tk.Text]` |
+| UI / Tk | `misora.py` | 13670 | method | `MisoraApp._apply_gutter_overflow_tag` | `self, gutter_widget: Optional[tk.Text]` |
+| UI / Tk | `misora.py` | 13695 | method | `MisoraApp._draw_single_pixel_ruler` | `self, canvas: tk.Canvas, x0: int` |
+| UI / Tk | `misora.py` | 13748 | method | `MisoraApp._redraw_pixel_rulers` | `self` |
+| AST / serialization | `misora.py` | 13777 | method | `MisoraApp.on_revert_box` | `self` |
+| UI / Tk | `misora.py` | 13781 | method | `MisoraApp.on_insert_playername` | `self` |
+| XUAT / text IO | `misora.py` | 13784 | method | `MisoraApp._build_xuat_batch_targets` | `self, doc: Any, boxes_or_indices: Iterable[Any], orig_jp_map: Dict[int, str]` |
+| XUAT / text IO | `misora.py` | 13852 | method | `MisoraApp._clearable_xuat_sets` | `result: BatchSyncResult, meta: Dict[str, Any], extra_uids: Optional[Set[int]]=None` |
+| AST / serialization | `misora.py` | 13873 | method | `MisoraApp._sync_modified_boxes_to_xuat` | `self, doc: Any, boxes_or_indices: Iterable[Any], orig_jp_map: Dict[int, str], backup_dir: Optional[Path]=None` |
+| Bundle / persistence | `misora.py` | 13956 | method | `MisoraApp.on_save` | `self` |
+| Bundle / persistence | `misora.py` | 14115 | method | `MisoraApp._save_active_document_state` | `self` |
+| UI / Tk | `misora.py` | 14154 | method | `MisoraApp._find_open_doc_key` | `self, path: Union[str, Path]` |
+| Bundle / persistence | `misora.py` | 14171 | method | `MisoraApp._save_document_entry` | `self, path: Union[str, Path]` |
+| Bundle / persistence | `misora.py` | 14258 | method | `MisoraApp.on_reload` | `self` |
+| Search | `misora.py` | 14265 | method | `MisoraApp.on_start_search` | `self` |
+| Search | `misora.py` | 14411 | method | `MisoraApp._reset_search_results_state` | `self` |
+| Search | `misora.py` | 14423 | method | `MisoraApp.on_cancel_search` | `self` |
+| Search | `misora.py` | 14435 | method | `MisoraApp._run_background_search` | `self, paths: List[Path], options: SearchOptions, mem_docs: Optional[Dict[Path, Any]]=None, search_seq: int=1, skip_paths: Optional[set]=None, initial_skipped: Optional[List[Tuple[Path, str]]]=None, cancel_event: Optional[threading.Event]=None` |
+| Search | `misora.py` | 14527 | method | `MisoraApp._process_search_queue` | `self` |
+| Search | `misora.py` | 14639 | method | `MisoraApp._render_search_results` | `self` |
+| UI / Tk | `misora.py` | 14702 | method | `MisoraApp._on_results_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 14721 | method | `MisoraApp._on_results_step` | `self, delta: int` |
+| UI / Tk | `misora.py` | 14734 | method | `MisoraApp._select_result_index` | `self, idx: int, jump: bool=True` |
+| Search | `misora.py` | 14822 | method | `MisoraApp.on_clear_search` | `self` |
+| UI / Tk | `misora.py` | 14835 | method | `MisoraApp._sync_recent_files_menu` | `self` |
+| UI / Tk | `misora.py` | 14856 | method | `MisoraApp._clear_recent_files` | `self` |
+| UI / Tk | `misora.py` | 14861 | method | `MisoraApp.on_open_file` | `self` |
+| UI / Tk | `misora.py` | 14899 | method | `MisoraApp.on_open_folder` | `self` |
+| UI / Tk | `misora.py` | 14908 | method | `MisoraApp._get_project_display_path` | `self` |
+| UI / Tk | `misora.py` | 14924 | method | `MisoraApp._on_folder_path_var_trace` | `self` |
+| UI / Tk | `misora.py` | 14941 | method | `MisoraApp._sync_scope_widgets` | `self` |
+| UI / Tk | `misora.py` | 14975 | method | `MisoraApp.on_browse_scope_path` | `self` |
+| UI / Tk | `misora.py` | 14983 | method | `MisoraApp.on_browse_project_folder` | `self` |
+| UI / Tk | `misora.py` | 14998 | method | `MisoraApp.on_show_find` | `self` |
+| UI / Tk | `misora.py` | 15009 | method | `MisoraApp.on_show_find_in_files` | `self` |
+| Search | `misora.py` | 15013 | method | `MisoraApp.on_show_replace` | `self` |
+| Search | `misora.py` | 15023 | method | `MisoraApp._hide_search_bar` | `self` |
+| Search | `misora.py` | 15030 | method | `MisoraApp._apply_compiled_replacement` | `self, text: str, matcher: Callable[[str], List[Any]], replacement: str, is_regex: bool=False, ignore_ws: bool=False, count: int=0, regex_pattern: Optional[re.Pattern]=None` |
+| UI / Tk | `misora.py` | 15077 | method | `MisoraApp._confirm_closed_files_for_op` | `self, op: Any, is_undo: bool=True` |
+| Search | `misora.py` | 15117 | method | `MisoraApp.on_replace_next` | `self` |
+| Search | `misora.py` | 15234 | method | `MisoraApp.on_replace_all` | `self` |
+| UI / Tk | `misora.py` | 15585 | method | `MisoraApp.on_undo` | `self` |
+| UI / Tk | `misora.py` | 15614 | method | `MisoraApp.on_redo` | `self` |
+| Bundle / persistence | `misora.py` | 15644 | method | `MisoraApp._restore_bundle_atomic` | `src_bak_path: Union[str, Path], dst_path: Path` |
+| UI / Tk | `misora.py` | 15674 | method | `MisoraApp._apply_delta` | `self, delta: Any, reverse: bool=False, refresh_ui: bool=True` |
+| UI / Tk | `misora.py` | 16032 | method | `MisoraApp._sync_edit_menu_states` | `self` |
+| UI / Tk | `misora.py` | 16050 | method | `MisoraApp._switch_dock_tab` | `self, tab_name: str` |
+| UI / Tk | `misora.py` | 16069 | method | `MisoraApp._set_left_panel_visible` | `self, visible: bool` |
+| UI / Tk | `misora.py` | 16109 | method | `MisoraApp._on_toggle_left_panel` | `self` |
+| UI / Tk | `misora.py` | 16114 | method | `MisoraApp._toggle_dock_collapse` | `self` |
+| UI / Tk | `misora.py` | 16119 | method | `MisoraApp._refresh_opened_files_list` | `self` |
+| UI / Tk | `misora.py` | 16151 | method | `MisoraApp._on_opened_files_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 16168 | method | `MisoraApp._prune_document_caches` | `self, file_path: Optional[Union[str, Path]], doc: Optional[Any], extra_uids: Optional[Iterable[Any]]=None` |
+| UI / Tk | `misora.py` | 16257 | method | `MisoraApp.close_file` | `self, file_path: Path` |
+| UI / Tk | `misora.py` | 16341 | method | `MisoraApp.close_others` | `self, keep_path: Path` |
+| UI / Tk | `misora.py` | 16349 | method | `MisoraApp.close_all_unmodified` | `self` |
+| UI / Tk | `misora.py` | 16360 | method | `MisoraApp.close_all_files` | `self` |
+| UI / Tk | `misora.py` | 16366 | method | `MisoraApp._close_all_documents_without_prompt` | `self` |
+| Bundle / persistence | `misora.py` | 16410 | method | `MisoraApp.on_save_project` | `self, save_as: bool=False` |
+| Bundle / persistence | `misora.py` | 16433 | method | `MisoraApp.save_project` | `self, workspace_path: Union[str, Path]` |
+| UI / Tk | `misora.py` | 16492 | method | `MisoraApp.on_open_project` | `self` |
+| UI / Tk | `misora.py` | 16503 | method | `MisoraApp.open_project` | `self, workspace_path: Union[str, Path]` |
+| UI / Tk | `misora.py` | 16644 | method | `MisoraApp._on_results_right_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 16662 | method | `MisoraApp._on_opened_files_right_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 16671 | method | `MisoraApp._show_file_context_menu` | `self, event: tk.Event, target_path: Path` |
+| UI / Tk | `misora.py` | 16725 | method | `MisoraApp._open_containing_folder` | `self, target_path: Path` |
+| UI / Tk | `misora.py` | 16735 | method | `MisoraApp._launch_editor_on_file` | `self, exe: str, target_path: Path` |
+| UI / Tk | `misora.py` | 16751 | method | `MisoraApp._choose_app_and_open` | `self, target_path: Path` |
+| UI / Tk | `misora.py` | 16757 | method | `MisoraApp._copy_to_clipboard` | `self, text: str` |
+| UI / Tk | `misora.py` | 16762 | method | `MisoraApp._sync_external_editor_menu` | `self` |
+| UI / Tk | `misora.py` | 16772 | method | `MisoraApp.on_set_external_editor` | `self` |
+| UI / Tk | `misora.py` | 16783 | method | `MisoraApp.on_clear_external_editor` | `self` |
+| UI / Tk | `misora.py` | 16791 | method | `MisoraApp.on_launch_datamine` | `self` |
+| UI / Tk | `misora.py` | 16861 | method | `MisoraApp.on_select_datamine_exe` | `self` |
+| UI / Tk | `misora.py` | 16877 | method | `MisoraApp.on_open_datamine_folder` | `self` |
+| Bundle / persistence | `misora.py` | 16886 | method | `MisoraApp.on_open_backups_folder` | `self` |
+| UI / Tk | `misora.py` | 16890 | method | `MisoraApp.on_open_project_folder` | `self` |
+| UI / Tk | `misora.py` | 16903 | method | `MisoraApp.on_open_bepinex_folder` | `self` |
+| UI / Tk | `misora.py` | 16907 | method | `MisoraApp.on_open_program_folder` | `self` |
+| XUAT / text IO | `misora.py` | 16910 | method | `MisoraApp.on_open_xuat_text_folder` | `self` |
+| UI / Tk | `misora.py` | 16940 | method | `MisoraApp.on_open_redirected_resources_folder` | `self` |
+| Search | `misora.py` | 16962 | method | `MisoraApp.on_open_selected_search_folder` | `self` |
+| UI / Tk | `misora.py` | 16969 | method | `MisoraApp.on_open_paths_dialog` | `self` |
+| UI / Tk | `misora.py` | 17176 | method | `MisoraApp._toggle_side_drawer_pin` | `self` |
+| UI / Tk | `misora.py` | 17186 | method | `MisoraApp.on_open_mtl_settings` | `self` |
+| UI / Tk | `misora.py` | 17190 | method | `MisoraApp.on_open_ai_prompt_settings` | `self` |
+| UI / Tk | `misora.py` | 17194 | method | `MisoraApp.on_open_translator_assistant` | `self` |
+| UI / Tk | `misora.py` | 17215 | method | `MisoraApp._build_mtl_tab` | `self, parent: tk.Frame` |
+| UI / Tk | `misora.py` | 17307 | method | `MisoraApp._build_mtl_all_script_pane` | `self, parent: tk.Frame` |
+| UI / Tk | `misora.py` | 17458 | method | `MisoraApp._apply_mtl_all_script_theme_tags` | `self` |
+| UI / Tk | `misora.py` | 17481 | method | `MisoraApp._set_mtl_drawer_mode` | `self, mode: str` |
+| UI / Tk | `misora.py` | 17525 | method | `MisoraApp._set_mtl_drawer_engine_enabled` | `self, engine_name: str, enabled: bool` |
+| UI / Tk | `misora.py` | 17534 | method | `MisoraApp._on_mtl_drawer_engine_toggled` | `self, engine_name: str` |
+| UI / Tk | `misora.py` | 17541 | method | `MisoraApp._rebuild_mtl_drawer_cards` | `self` |
+| UI / Tk | `misora.py` | 17688 | method | `MisoraApp._on_mtl_globe_open` | `self, engine_name: str` |
+| AST / serialization | `misora.py` | 17708 | method | `MisoraApp._get_mtl_drawer_active_box` | `self` |
+| AST / serialization | `misora.py` | 17717 | method | `MisoraApp._refresh_mtl_drawer_box` | `self` |
+| UI / Tk | `misora.py` | 17775 | method | `MisoraApp._mtl_drawer_cache_put` | `self, engine_name: str, src_hash: str, result: str` |
+| UI / Tk | `misora.py` | 17782 | method | `MisoraApp._on_mtl_drawer_refresh_all` | `self` |
+| UI / Tk | `misora.py` | 17822 | method | `MisoraApp._on_mtl_drawer_refresh_engine` | `self, engine_name: str` |
+| UI / Tk | `misora.py` | 17826 | method | `MisoraApp._dispatch_mtl_drawer_engine` | `self, engine_name: str, bypass_cache: bool=False` |
+| UI / Tk | `misora.py` | 17883 | method | `MisoraApp._poll_mtl_drawer_queue` | `self` |
+| UI / Tk | `misora.py` | 17976 | method | `MisoraApp._on_mtl_drawer_apply_engine` | `self, engine_name: str` |
+| UI / Tk | `misora.py` | 18034 | method | `MisoraApp._is_mtl_empty_or_punct` | `text: str` |
+| UI / Tk | `misora.py` | 18043 | method | `MisoraApp._mtl_all_ctx_key` | `self, box_uid: Any, engine_name: Optional[str]=None` |
+| AST / serialization | `misora.py` | 18047 | method | `MisoraApp._find_box_index_by_uid` | `self, box_uid: Any` |
+| UI / Tk | `misora.py` | 18056 | method | `MisoraApp._flush_mtl_all_scratchpad` | `self` |
+| Bundle / persistence | `misora.py` | 18073 | method | `MisoraApp._load_mtl_all_scratchpad` | `self, force_text: Optional[str]=None` |
+| UI / Tk | `misora.py` | 18116 | method | `MisoraApp._cancel_mtl_all_batch` | `self` |
+| UI / Tk | `misora.py` | 18138 | method | `MisoraApp._on_mtl_all_engine_changed` | `self, _event=None` |
+| UI / Tk | `misora.py` | 18143 | method | `MisoraApp._on_mtl_all_list_click` | `self, event: tk.Event` |
+| UI / Tk | `misora.py` | 18165 | method | `MisoraApp._refresh_mtl_all_script_view` | `self, preserve_scroll: bool=False` |
+| AST / serialization | `misora.py` | 18250 | method | `MisoraApp._dispatch_mtl_all_box` | `self, box_idx: int, box: Box, eng: str, bypass_cache: bool=False` |
+| UI / Tk | `misora.py` | 18300 | method | `MisoraApp._on_mtl_all_script_refresh_selected` | `self` |
+| UI / Tk | `misora.py` | 18318 | method | `MisoraApp._on_mtl_all_script_apply_selected` | `self` |
+| UI / Tk | `misora.py` | 18370 | method | `MisoraApp._on_mtl_all_script_translate_all` | `self` |
+| UI / Tk | `misora.py` | 18503 | method | `MisoraApp._on_mtl_all_script_apply_all` | `self` |
+| AST / serialization | `misora.py` | 18582 | method | `MisoraApp.on_translate_current_box` | `self` |
+| UI / Tk | `misora.py` | 18630 | method | `MisoraApp._poll_mtl_queue` | `self` |
+| UI / Tk | `misora.py` | 18739 | method | `MisoraApp.on_batch_translate` | `self` |
+| UI / Tk | `misora.py` | 18746 | method | `MisoraApp.on_copy_ai_prompt` | `self` |
+| UI / Tk | `misora.py` | 18778 | method | `MisoraApp._show_paste_preview_and_apply` | `self, script_text: str, source_label: str='Script Paste', confirm: bool=True, auto_word_wrap: bool=False` |
+| AST / serialization | `misora.py` | 19005 | method | `MisoraApp.on_paste_cross_box` | `self, confirm: bool=True` |
+| UI / Tk | `misora.py` | 19019 | method | `MisoraApp.on_import_script` | `self, file_path: Optional[Union[str, Path]]=None, confirm: bool=True` |
+| XUAT / text IO | `misora.py` | 19062 | method | `MisoraApp._get_xuat_index_roots` | `self` |
+| XUAT / text IO | `misora.py` | 19071 | method | `MisoraApp._refresh_xuat_index_async` | `self, on_ready: Optional[Callable[[Optional[XuatIndex], Optional[str]], None]]=None, show_progress: bool=True` |
+| XUAT / text IO | `misora.py` | 19130 | method | `MisoraApp._poll_xuat_index_queue` | `self` |
+| XUAT / text IO | `misora.py` | 19187 | method | `MisoraApp._get_or_build_xuat_index` | `self, force_rebuild: bool=False` |
+| XUAT / text IO | `misora.py` | 19198 | method | `MisoraApp.on_import_from_xuat` | `self, xuat_index: Optional[XuatIndex]=None` |
+| XUAT / text IO | `misora.py` | 19223 | method | `MisoraApp._get_xuat_archive_dir` | `self` |
+| Bundle / persistence | `misora.py` | 19230 | method | `MisoraApp._on_toggle_xuat_safety_backup` | `self` |
+| XUAT / text IO | `misora.py` | 19260 | method | `MisoraApp._on_xuat_cleanup_settings_dialog` | `self` |
+| XUAT / text IO | `misora.py` | 19275 | method | `MisoraApp.on_clean_archive_xuat` | `self, xuat_index: Optional[XuatIndex]=None` |
+| UI / Tk | `misora.py` | 19303 | method | `MisoraApp.on_export_script` | `self, file_path: Optional[Union[str, Path]]=None` |
+| UI / Tk | `misora.py` | 19347 | method | `MisoraApp._get_word_wrap_params` | `self` |
+| UI / Tk | `misora.py` | 19353 | method | `MisoraApp.apply_auto_word_wrap` | `self, scope: str='all', reflow_existing_breaks: bool=False` |
+| UI / Tk | `misora.py` | 19491 | method | `MisoraApp.on_open_auto_word_wrap` | `self` |
+| UI / Tk | `misora.py` | 19501 | method | `MisoraApp.on_clear_dialogue_skeleton` | `self` |
+| UI / Tk | `misora.py` | 19563 | method | `MisoraApp.on_register_unity3d_association` | `self` |
+| UI / Tk | `misora.py` | 19628 | method | `MisoraApp.on_about` | `self` |
+| UI / Tk | `misora.py` | 19739 | method | `MisoraApp.on_support_me` | `self` |
+| UI / Tk | `misora.py` | 19756 | class | `SupportMeDialog` | `` |
+| UI / Tk | `misora.py` | 19759 | method | `SupportMeDialog.__init__` | `self, parent: 'MisoraApp', gif_path: Optional[Path]=None` |
+| UI / Tk | `misora.py` | 19867 | method | `SupportMeDialog._hex_to_rgb` | `hex_color: str` |
+| UI / Tk | `misora.py` | 19877 | method | `SupportMeDialog._open_external_url` | `url: str` |
+| UI / Tk | `misora.py` | 19880 | method | `SupportMeDialog._init_gif_player` | `self` |
+| UI / Tk | `misora.py` | 19895 | method | `SupportMeDialog._render_static_fallback` | `self` |
+| UI / Tk | `misora.py` | 19915 | method | `SupportMeDialog._render_gif_frame` | `self, frame_idx: int` |
+| UI / Tk | `misora.py` | 19956 | method | `SupportMeDialog._advance_gif_frame` | `self` |
+| UI / Tk | `misora.py` | 19968 | method | `SupportMeDialog._close_gif_handle` | `self` |
+| UI / Tk | `misora.py` | 19982 | method | `SupportMeDialog._cleanup_resources` | `self` |
+| UI / Tk | `misora.py` | 19996 | method | `SupportMeDialog.close` | `self` |
+| UI / Tk | `misora.py` | 20004 | method | `SupportMeDialog.destroy` | `self` |
+| UI / Tk | `misora.py` | 20012 | class | `ScriptPastePreviewDialog` | `` |
+| UI / Tk | `misora.py` | 20015 | method | `ScriptPastePreviewDialog.__init__` | `self, parent: 'MisoraApp', parsed_result, start_idx: int, source_label: str='Script Paste'` |
+| UI / Tk | `misora.py` | 20074 | method | `ScriptPastePreviewDialog._build_ui` | `self, t: dict, fg_panel: str, fg_editor: str, total_doc_boxes: int, blocks: list, has_meta: bool` |
+| UI / Tk | `misora.py` | 20218 | method | `ScriptPastePreviewDialog._populate_tree` | `self` |
+| UI / Tk | `misora.py` | 20272 | method | `ScriptPastePreviewDialog.on_apply` | `self` |
+| UI / Tk | `misora.py` | 20280 | method | `ScriptPastePreviewDialog.on_cancel` | `self` |
+| UI / Tk | `misora.py` | 20289 | class | `AutoWordWrapDialog` | `` |
+| UI / Tk | `misora.py` | 20292 | method | `AutoWordWrapDialog.__init__` | `self, parent: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 20329 | method | `AutoWordWrapDialog._build_ui` | `self, t: dict, sel_count: int, is_box0: bool, total_boxes: int` |
+| UI / Tk | `misora.py` | 20424 | method | `AutoWordWrapDialog._on_apply` | `self` |
+| UI / Tk | `misora.py` | 20433 | method | `AutoWordWrapDialog._on_close` | `self` |
+| XUAT / text IO | `misora.py` | 20444 | class | `ImportFromXUATDialog` | `` |
+| XUAT / text IO | `misora.py` | 20452 | method | `ImportFromXUATDialog.__init__` | `self, parent: 'MisoraApp', xuat_index: XuatIndex` |
+| XUAT / text IO | `misora.py` | 20501 | method | `ImportFromXUATDialog._build_ui` | `self` |
+| XUAT / text IO | `misora.py` | 20642 | method | `ImportFromXUATDialog._refresh_archive_optout_warning` | `self` |
+| XUAT / text IO | `misora.py` | 20652 | method | `ImportFromXUATDialog._on_rows_configure` | `self, _event: Optional[tk.Event]=None` |
+| XUAT / text IO | `misora.py` | 20656 | method | `ImportFromXUATDialog._on_canvas_configure` | `self, event: tk.Event` |
+| XUAT / text IO | `misora.py` | 20660 | method | `ImportFromXUATDialog._on_outer_mousewheel` | `self, event: tk.Event` |
+| Bundle / persistence | `misora.py` | 20665 | method | `ImportFromXUATDialog._on_reload_index` | `self` |
+| XUAT / text IO | `misora.py` | 20693 | method | `ImportFromXUATDialog._get_immutable_jp_key` | `self, box_idx: int, box: Box` |
+| XUAT / text IO | `misora.py` | 20706 | method | `ImportFromXUATDialog._norm_file_str` | `fp: Optional[Union[str, Path]]` |
+| XUAT / text IO | `misora.py` | 20714 | method | `ImportFromXUATDialog._get_current_doc_revision` | `self` |
+| XUAT / text IO | `misora.py` | 20721 | method | `ImportFromXUATDialog._capture_doc_identity` | `self, doc: Any` |
+| XUAT / text IO | `misora.py` | 20734 | method | `ImportFromXUATDialog._validate_document_identity` | `self` |
+| XUAT / text IO | `misora.py` | 20753 | method | `ImportFromXUATDialog._bind_mousewheel_recursive` | `self, widget: tk.Misc` |
+| XUAT / text IO | `misora.py` | 20765 | method | `ImportFromXUATDialog._build_section_header` | `self, title: str, t: dict` |
+| XUAT / text IO | `misora.py` | 20779 | method | `ImportFromXUATDialog._get_group_rows` | `self, group_key: str` |
+| XUAT / text IO | `misora.py` | 20788 | method | `ImportFromXUATDialog._make_tristate_group_header` | `self, title: str, group_key: str, t: dict` |
+| XUAT / text IO | `misora.py` | 20822 | method | `ImportFromXUATDialog._on_group_select_all` | `self, group_key: str` |
+| XUAT / text IO | `misora.py` | 20841 | method | `ImportFromXUATDialog._update_group_header_state` | `self, group_key: str` |
+| AST / serialization | `misora.py` | 20894 | method | `ImportFromXUATDialog._create_paired_box_row` | `self, *, row_list: List[Dict[str, Any]], header_text: str, left_label: str, right_label: str, left_text: str, lookup: XuatLookupResult, cand_idx: int, lines: int, is_locked: bool, lock_badge: str='', show_scope: bool=False, norm_key: str='', wrap_mode: str='none', group_key: Optional[str]=None, extra_data: Optional[Dict[str, Any]]=None` |
+| XUAT / text IO | `misora.py` | 21160 | method | `ImportFromXUATDialog._populate_rows` | `self` |
+| AST / serialization | `misora.py` | 21353 | method | `ImportFromXUATDialog._bind_paired_box_events` | `self, txt: tk.Text, has_v: bool, has_h: bool` |
+| XUAT / text IO | `misora.py` | 21399 | method | `ImportFromXUATDialog._step_candidate` | `self, row_idx: int, delta: int` |
+| XUAT / text IO | `misora.py` | 21403 | method | `ImportFromXUATDialog._step_section_candidate` | `self, row_list: List[Dict[str, Any]], row_idx: int, delta: int, apply_scope: bool=False` |
+| XUAT / text IO | `misora.py` | 21421 | method | `ImportFromXUATDialog._select_candidate` | `self, row_idx: int, cand_idx: int` |
+| XUAT / text IO | `misora.py` | 21424 | method | `ImportFromXUATDialog._select_section_candidate` | `self, row_list: List[Dict[str, Any]], row_idx: int, cand_idx: int` |
+| XUAT / text IO | `misora.py` | 21454 | method | `ImportFromXUATDialog._apply_conflict_scope` | `self, row_idx: int` |
+| XUAT / text IO | `misora.py` | 21476 | method | `ImportFromXUATDialog._set_filter` | `self, filter_key: str` |
+| AST / serialization | `misora.py` | 21507 | method | `ImportFromXUATDialog._format_box_list` | `nums: List[int]` |
+| XUAT / text IO | `misora.py` | 21512 | method | `ImportFromXUATDialog._on_apply_import` | `self` |
+| XUAT / text IO | `misora.py` | 21812 | method | `ImportFromXUATDialog._on_close` | `self` |
+| XUAT / text IO | `misora.py` | 21841 | class | `XuatCleanupSettingsDialog` | `` |
+| XUAT / text IO | `misora.py` | 21844 | method | `XuatCleanupSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
+| XUAT / text IO | `misora.py` | 21876 | method | `XuatCleanupSettingsDialog._build_ui` | `self, t: dict` |
+| XUAT / text IO | `misora.py` | 21946 | method | `XuatCleanupSettingsDialog._browse_dir` | `self` |
+| XUAT / text IO | `misora.py` | 21955 | method | `XuatCleanupSettingsDialog._reset_default_dir` | `self` |
+| XUAT / text IO | `misora.py` | 21959 | method | `XuatCleanupSettingsDialog._refresh_warning` | `self` |
+| Bundle / persistence | `misora.py` | 21972 | method | `XuatCleanupSettingsDialog._on_save` | `self` |
+| XUAT / text IO | `misora.py` | 21987 | method | `XuatCleanupSettingsDialog._on_close` | `self` |
+| XUAT / text IO | `misora.py` | 21998 | class | `XuatCleanupDialog` | `` |
+| XUAT / text IO | `misora.py` | 22003 | method | `XuatCleanupDialog.__init__` | `self, parent: 'MisoraApp', xuat_index: Optional[XuatIndex], doc: Any, applied_records: Sequence[AppliedXuatRecord]=(), source_fingerprints: Optional[Dict[Path, str]]=None, mode: str='post_import', protected_actors: Iterable[str]=(), xuat_roots: Optional[Sequence[Path]]=None` |
+| XUAT / text IO | `misora.py` | 22081 | method | `XuatCleanupDialog._build_ui` | `self, t: dict` |
+| XUAT / text IO | `misora.py` | 22329 | method | `XuatCleanupDialog._set_controls_busy` | `self, busy: bool` |
+| XUAT / text IO | `misora.py` | 22340 | method | `XuatCleanupDialog._start_async_scan` | `self` |
+| XUAT / text IO | `misora.py` | 22458 | method | `XuatCleanupDialog._format_scan_progress` | `processed: int, total: int` |
+| XUAT / text IO | `misora.py` | 22474 | method | `XuatCleanupDialog._poll_scan_queue` | `self` |
+| XUAT / text IO | `misora.py` | 22517 | method | `XuatCleanupDialog._apply_analysis_to_ui` | `self` |
+| XUAT / text IO | `misora.py` | 22548 | method | `XuatCleanupDialog._populate_candidates` | `self` |
+| XUAT / text IO | `misora.py` | 22568 | method | `XuatCleanupDialog._insert_treeview_batch` | `self, start_idx: int, expected_gen: int` |
+| XUAT / text IO | `misora.py` | 22601 | method | `XuatCleanupDialog._toggle_tree_item` | `self, iid: str` |
+| XUAT / text IO | `misora.py` | 22611 | method | `XuatCleanupDialog._on_tree_click` | `self, event: tk.Event` |
+| XUAT / text IO | `misora.py` | 22621 | method | `XuatCleanupDialog._on_tree_space` | `self, _event: tk.Event` |
+| XUAT / text IO | `misora.py` | 22628 | method | `XuatCleanupDialog._bulk_select` | `self, selected: bool` |
+| XUAT / text IO | `misora.py` | 22640 | method | `XuatCleanupDialog._refresh_safety_banner` | `self` |
+| XUAT / text IO | `misora.py` | 22654 | method | `XuatCleanupDialog._refresh_archive_warning` | `self` |
+| XUAT / text IO | `misora.py` | 22675 | method | `XuatCleanupDialog._browse_archive_dir` | `self` |
+| XUAT / text IO | `misora.py` | 22684 | method | `XuatCleanupDialog._on_toggle_applied` | `self` |
+| XUAT / text IO | `misora.py` | 22696 | method | `XuatCleanupDialog._on_duplicate_scope_changed` | `self` |
+| XUAT / text IO | `misora.py` | 22706 | method | `XuatCleanupDialog._on_execute_cleanup` | `self` |
+| XUAT / text IO | `misora.py` | 22812 | method | `XuatCleanupDialog._cancel_async_work` | `self` |
+| XUAT / text IO | `misora.py` | 22836 | method | `XuatCleanupDialog._on_close` | `self` |
+| UI / Tk | `misora.py` | 22857 | class | `MTLSettingsDialog` | `` |
+| UI / Tk | `misora.py` | 22859 | method | `MTLSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 23019 | method | `MTLSettingsDialog._on_cancel` | `self` |
+| UI / Tk | `misora.py` | 23023 | method | `MTLSettingsDialog._open_ai_prompt` | `self` |
+| UI / Tk | `misora.py` | 23026 | method | `MTLSettingsDialog._get_draft_config` | `self` |
+| UI / Tk | `misora.py` | 23047 | method | `MTLSettingsDialog._on_test_connection` | `self` |
+| UI / Tk | `misora.py` | 23065 | method | `MTLSettingsDialog._schedule_poll` | `self` |
+| UI / Tk | `misora.py` | 23075 | method | `MTLSettingsDialog._poll_worker_queue` | `self` |
+| UI / Tk | `misora.py` | 23095 | method | `MTLSettingsDialog._on_close` | `self` |
+| Bundle / persistence | `misora.py` | 23106 | method | `MTLSettingsDialog._on_save` | `self` |
+| UI / Tk | `misora.py` | 23131 | class | `AIPromptSettingsDialog` | `` |
+| UI / Tk | `misora.py` | 23133 | method | `AIPromptSettingsDialog.__init__` | `self, parent: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 23233 | method | `AIPromptSettingsDialog._on_cancel` | `self` |
+| UI / Tk | `misora.py` | 23237 | method | `AIPromptSettingsDialog._reset_default` | `self` |
+| UI / Tk | `misora.py` | 23241 | method | `AIPromptSettingsDialog._copy_prompt_now` | `self` |
+| UI / Tk | `misora.py` | 23245 | method | `AIPromptSettingsDialog._apply_settings_to_app` | `self` |
+| Bundle / persistence | `misora.py` | 23251 | method | `AIPromptSettingsDialog._save_and_close` | `self` |
+| UI / Tk | `misora.py` | 23263 | class | `TranslatorAssistantDialog` | `` |
+| UI / Tk | `misora.py` | 23268 | method | `TranslatorAssistantDialog.__init__` | `self, parent: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 23399 | method | `TranslatorAssistantDialog._toggle_pin_top` | `self` |
+| UI / Tk | `misora.py` | 23406 | method | `TranslatorAssistantDialog._schedule_poll` | `self` |
+| UI / Tk | `misora.py` | 23416 | method | `TranslatorAssistantDialog._poll_worker_queue` | `self` |
+| UI / Tk | `misora.py` | 23487 | method | `TranslatorAssistantDialog._on_close` | `self` |
+| UI / Tk | `misora.py` | 23499 | method | `TranslatorAssistantDialog._on_engine_change` | `self, _event=None` |
+| AST / serialization | `misora.py` | 23503 | method | `TranslatorAssistantDialog.refresh_box` | `self` |
+| UI / Tk | `misora.py` | 23531 | method | `TranslatorAssistantDialog._on_prev` | `self` |
+| UI / Tk | `misora.py` | 23535 | method | `TranslatorAssistantDialog._on_next` | `self` |
+| UI / Tk | `misora.py` | 23539 | method | `TranslatorAssistantDialog._on_translate` | `self` |
+| UI / Tk | `misora.py` | 23582 | method | `TranslatorAssistantDialog._on_fetch_all` | `self` |
+| UI / Tk | `misora.py` | 23646 | method | `TranslatorAssistantDialog._use_comp_text` | `self, text: str` |
+| UI / Tk | `misora.py` | 23650 | method | `TranslatorAssistantDialog._on_apply` | `self` |
+| UI / Tk | `misora.py` | 23694 | method | `TranslatorAssistantDialog._on_apply_and_next` | `self` |
+| UI / Tk | `misora.py` | 23698 | method | `TranslatorAssistantDialog._on_copy` | `self` |
+| UI / Tk | `misora.py` | 23706 | class | `BatchTranslateDialog` | `` |
+| UI / Tk | `misora.py` | 23708 | method | `BatchTranslateDialog.__init__` | `self, parent: 'MisoraApp'` |
+| UI / Tk | `misora.py` | 23780 | method | `BatchTranslateDialog._end_undo_batch` | `self` |
+| UI / Tk | `misora.py` | 23789 | method | `BatchTranslateDialog._schedule_poll` | `self` |
+| UI / Tk | `misora.py` | 23799 | method | `BatchTranslateDialog._on_close` | `self` |
+| UI / Tk | `misora.py` | 23821 | method | `BatchTranslateDialog._start_batch` | `self` |
+| UI / Tk | `misora.py` | 23905 | method | `BatchTranslateDialog._poll_worker_queue` | `self` |
+| UI / Tk | `misora.py` | 23978 | function | `main` | `` |
 
 ## Safe use
 
