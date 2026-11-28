@@ -1,8 +1,8 @@
 # Misora — Project State (Layer 0 Dashboard)
 
-**Last reconciled:** 2026-11-28 (ENV-01 target draft; re-verify at implementation)  
+**Last reconciled:** 2026-11-28 (T-01 Execution Charter on `v1.4.15`)  
 **Repository:** `ImaterialC/Misora-Editor` · **Branch:** `main`  
-**Baseline:** `ead65077a2a6cf3a664543cfb50f855268a29e2a` (S11e)  
+**Baseline:** `648cb52b0fccda5e46e26eecf90e3f1dbd719a75` (ENV-01 on S11e)  
 **Current product version:** `1.4.15` (root `__init__.py` is authoritative)
 
 ## 1. Release and roadmap authority
@@ -12,20 +12,26 @@
 - Future S15 work proposal: **CANCELLED**. The completed historical milestone `S15 Select Box Both Views + Reserved Lock Slot, Collapsible Left Drawer, Empty State & Batched Multi-Open` (2026-11-25) remains **HISTORICAL-REFERENCE**.
 - ENV-01 is the current authorized documentation/context-hygiene task. It does not authorize product changes, defect fixes, release actions, commits, or pushes.
 
-## 2. S11e verification baseline (recorded; not rerun by ENV-01)
+## 2. Verification baseline (post-T-01 automated run)
 
-The S11e project record reports `countTestCases() == 475` and completed monolithic discovery:
+Monolithic discovery completed cleanly with `countTestCases() == 486` (`475` S11e/ENV-01 baseline + `11` in `tests/test_t01_empty_state_overlay.py`):
 
 | Result | Count |
 |---|---:|
-| Total tests | 475 |
-| PASS | 432 |
+| Total tests | 486 |
+| PASS | 443 |
 | SKIP | 35 |
 | FAIL | 6 |
 | ERROR | 2 |
-| New S11e regressions reported | 0 |
+| New T-01 regressions | 0 |
 
-**475 is the total discovered/executed count, not 475 passing tests.** The 6 failures comprise 3 fixture-related failures and 3 non-fixture hygiene failures. The 2 errors are fixture-related in `test_s8b2_memory_guards`. Thirty-five tests were skipped because the proprietary `storydata_1001005.unity3d` fixture was unavailable in the recorded environment. Recheck local conditions before relying on these counts.
+**486 is the total discovered/executed count, not 486 passing tests.** The 6 failures and 2 errors are unchanged pre-existing S11e baseline debt: 3 non-fixture hygiene failures + 3 fixture failures and 2 fixture errors in `test_s8b2_memory_guards` (plus 35 fixture skips) due to unavailable `storydata_1001005.unity3d`.
+
+### T-01 (`BUG-UI-EMPTY-STATE-01`) status
+
+- **Automated fix & TDD:** `PASS` (`8	8	misora.py` in `_update_empty_state_visibility()`, `tests/test_t01_empty_state_overlay.py` `11/11 OK`).
+- **Windows Manual QA (`M-1..M-12`):** `MANUAL-PENDING` (T-01 lifecycle remains `ACTIVE` until manual QA passes).
+- **N-4 transient check note:** `tools/generate_symbol_index.py --check` is expected to exit non-zero until Project Lead commits T-01 and regenerates `docs/architecture/MISORA_SYMBOL_INDEX.md`.
 
 Three non-fixture test-hygiene failures recorded:
 1. `tests/test_phase3_performance_config.py::test_05` — local `misora_config.json` isolation hygiene.

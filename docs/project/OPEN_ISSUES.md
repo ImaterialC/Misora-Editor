@@ -15,7 +15,7 @@ An item may carry multiple evidence notes, e.g. `REPORTED + NEEDS-REPRO`. Do not
 
 | ID | Legacy ref | Evidence | Lifecycle | Description / closure criteria |
 |---|---|---|---|---|
-| **T-01** | `BUG-UI-EMPTY-STATE-01` | `REPORTED` + `NEEDS-REPRO` | `ACTIVE` | Report: purple Open Files empty-state button/caption remains below `txt_dialogue` while bundles are open, obscuring lower border / `clean_scroll_x`. Reproduce on v1.4.15 with 0/1/2 open docs; open/close one/last doc; switch Dialogue/All Script; check `_deferred_restore()`. Inspect `empty_state_frame.winfo_manager()` as well as `winfo_ismapped()`, parent mapping, and `_update_empty_state_visibility()` lifecycle. Root cause is not established. |
+| **T-01** | `BUG-UI-EMPTY-STATE-01` | `CONFIRMED` | `ACTIVE` | **Automated fix + TDD: `PASS` (`11/11`, `v1.4.15`); Windows QA `M-1..M-12`: `MANUAL-PENDING` (keep `ACTIVE` until manual QA passes).** Root cause: `_update_empty_state_visibility()` (`misora.py:9763-9786`) used `winfo_ismapped()` across 8 checks, which returns `0` for all children while root `Tk()` is withdrawn (startup / splash / `_deferred_restore()`), skipping `pack_forget()` and leaving `gd_scroll_wrap` and `empty_state_frame` dual-packed. Fixed via 8 `winfo_manager() == "pack"` / `!= "pack"` checks (`8	8	misora.py`, `23912` lines preserved). Protected by `tests/test_t01_empty_state_overlay.py` (`4` Probes + `7` Guards). **N-4 note:** `tools/generate_symbol_index.py --check` is expected to exit non-zero on uncommitted/pre-regen `misora.py` (updated SHA-256) until Project Lead commits T-01 and regenerates `docs/architecture/MISORA_SYMBOL_INDEX.md`. |
 | **T-02** | `u-08` | `REPORTED` + `NEEDS-REPRO` | `ACTIVE` | Report: Next-button tooltip displays stale `50x3` instead of `54d x 3`. Verify current runtime text and source of the tooltip. |
 | **T-03** | `u-05` | `REPORTED` + `NEEDS-REPRO` | `ACTIVE` | Report: Pin in All Script appears to turn speaker jumps into multi-select. Reproduce; distinguish active box, `_selected_boxes`, and selection anchor. Do not assume root cause. |
 | **T-04** | `u-02` | `REPORTED` + `NEEDS-REPRO` | `ACTIVE` | Report: red overflow marker may not cover line 4+ (`>3L`) as well as horizontal `>54d`. Verify the current contract and visual behavior. Do not confuse raw newline count with visual wrapping; retain hard-linebreak and rendered-width rules. |
@@ -49,7 +49,7 @@ T-01..T-04 are **not CONFIRMED** at ledger creation. Confirmation requires curre
 - **AGENTS.md §29 Ribbon Cut:** legacy user verification on Windows v1.4.0 reported Ribbon Cut reverted after navigation. Current v1.4.15 status: `NEEDS-REPRO`; explicit manual Windows test required.
 - **AGENTS.md §29 Paste Box:** legacy user verification on Windows v1.4.0 reported Paste Box did nothing in Dialogue and All Script. Current v1.4.15 status: `NEEDS-REPRO`; test both views and Insert/Replace semantics.
 - **Q-04.1.2 / Q-04.1.3:** `NEEDS-REPRO`; Project Lead reproduction confirmation needed if still applicable.
-- **T-01:** reproduce the current empty-state behavior using the sequence in section A.
+- **T-01:** automated fix applied (`misora.py:9767-9785`, `tests/test_t01_empty_state_overlay.py` `11/11 PASS`); Windows manual QA `M-1..M-12` remains `MANUAL-PENDING` before closing T-01.
 
 ### D.2 MANUAL-PENDING
 

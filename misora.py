@@ -9764,25 +9764,25 @@ class MisoraApp(tk.Tk):
         """Show centered empty-state frame when 0 documents are open; pack only active view when >=1."""
         has_docs = bool(self.open_documents) or bool(self.current_doc) or bool(self.current_file_path)
         if not has_docs:
-            if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_ismapped():
+            if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_manager() == "pack":
                 self.gd_scroll_wrap.pack_forget()
-            if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_ismapped():
+            if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_manager() == "pack":
                 self.continuous_wrap.pack_forget()
-            if hasattr(self, "empty_state_frame") and not self.empty_state_frame.winfo_ismapped():
+            if hasattr(self, "empty_state_frame") and self.empty_state_frame.winfo_manager() != "pack":
                 self.empty_state_frame.pack(fill="both", expand=True, padx=4, pady=(0, 4))
         else:
-            if hasattr(self, "empty_state_frame") and self.empty_state_frame.winfo_ismapped():
+            if hasattr(self, "empty_state_frame") and self.empty_state_frame.winfo_manager() == "pack":
                 self.empty_state_frame.pack_forget()
             is_cont = bool(getattr(self, "var_continuous_view", None) and self.var_continuous_view.get())
             if is_cont:
-                if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_ismapped():
+                if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_manager() == "pack":
                     self.gd_scroll_wrap.pack_forget()
-                if hasattr(self, "continuous_wrap") and not self.continuous_wrap.winfo_ismapped():
+                if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_manager() != "pack":
                     self.continuous_wrap.pack(fill="both", expand=True, padx=8, pady=(0, 6))
             else:
-                if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_ismapped():
+                if hasattr(self, "continuous_wrap") and self.continuous_wrap.winfo_manager() == "pack":
                     self.continuous_wrap.pack_forget()
-                if hasattr(self, "gd_scroll_wrap") and not self.gd_scroll_wrap.winfo_ismapped():
+                if hasattr(self, "gd_scroll_wrap") and self.gd_scroll_wrap.winfo_manager() != "pack":
                     self.gd_scroll_wrap.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
     def _update_views(self) -> None:
