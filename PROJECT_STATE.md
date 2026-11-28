@@ -30,8 +30,8 @@ Monolithic discovery completed cleanly with `countTestCases() == 486` (`475` S11
 ### T-01 (`BUG-UI-EMPTY-STATE-01`) status
 
 - **Automated fix & TDD:** `PASS` (`8	8	misora.py` in `_update_empty_state_visibility()`, `tests/test_t01_empty_state_overlay.py` `11/11 OK`).
-- **Windows Manual QA (`M-1..M-12`):** `MANUAL-PENDING` (T-01 lifecycle remains `ACTIVE` until manual QA passes).
-- **N-4 transient check note:** `tools/generate_symbol_index.py --check` is expected to exit non-zero until Project Lead commits T-01 and regenerates `docs/architecture/MISORA_SYMBOL_INDEX.md`.
+- **Windows Manual QA (`M-1..M-12`):** `PASS` (`v1.4.15` @ `33b6f7dc10dcb86b853aa71ab833864eeb843dfa`, Windows 11 `10.0.26100.6725`, `1920x1080`, `125% DPI`, Project Lead).
+- **Lifecycle:** `HISTORICAL-REFERENCE` (closed).
 
 Three non-fixture test-hygiene failures recorded:
 1. `tests/test_phase3_performance_config.py::test_05` — local `misora_config.json` isolation hygiene.
